@@ -1,0 +1,36 @@
+# UI Development Rules
+
+Purpose:
+
+Defines mandatory UI team rules for AI-assisted development.
+
+## Mandatory Rules
+
+- Important requests must use a command prefix from `ssd_governance/ai/prompt_command_standard.md`.
+- If no command is provided for important work, Codex must show command options and wait; it must not implement or update files.
+- `Implement:` requires an active work packet unless the Governance Owner explicitly says the work is setup/bootstrap.
+- Read `ssd_ui/.init/` before UI work.
+- Read the active work packet before task-specific work.
+- Read approved API contracts before API integration.
+- Follow only governance-approved UI technology stack and libraries.
+- For first demo/MVP, the approved UI stack is React + Vite + TypeScript + Tailwind.
+- For first demo/MVP, approved UI hosting is S3 static hosting with safe references `ssd_dev` for DEV and `ssd_uat` for UAT.
+- Do not introduce Next.js, shadcn/ui, charting, GIS/maps, state management, forms, or i18n libraries unless separately approved.
+- Put actual UI implementation only under `ssd_ui/ui/`.
+- Organize actual UI implementation by direct module folder, for example `ssd_ui/ui/portal/`.
+- Do not create `ssd_ui/ui/modules/<module>/`; `ssd_ui/modules/<module>/` is the context/contract folder only.
+- Keep `ssd_ui/modules/` for AI context and module documentation only.
+- Keep `ssd_ui/.init/` for AI bootstrap only.
+- Do not assume API behavior that is not documented.
+- Maintain responsive, cross-browser, and accessibility-aware UI.
+- Support bilingual content rules where required.
+- Do not hardcode secrets, credentials, tokens, or environment-specific URLs.
+- Real `.env` files must remain local/build-server-side only and must not be committed.
+- `.env.example` files may be maintained with placeholder keys only.
+- DEV/UAT/STG/PROD build/deployment secrets must come from approved CI/CD environment secret handling.
+- Keep reusable UI components consistent and avoid duplicate components. Shared UI utilities/components must be approved and documented in the active work packet and module `DEPENDENCIES.md`.
+- Update mandatory UI context files after every change.
+- React, Vite, TypeScript, and Tailwind are approved for first demo/MVP. Do not introduce Next.js, shadcn/ui, charting libraries, map/GIS libraries, state management tools, form libraries, i18n libraries, or accessibility tooling until governance approves them separately.
+- Do not create or modify CI/CD pipelines, UI build automation, artifact publishing, deployment automation, or environment promotion rules without checking `ssd_governance/cicd/`.
+- If a required UI technology is not approved, raise a library approval request through governance.
+- Tool, filesystem, MCP, connector, or terminal access does not permit bypassing command mode, stack approval, work packet scope, UI boundaries, or secret rules.
