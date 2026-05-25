@@ -17,4 +17,9 @@ Defines UI-specific AI skills.
 | UI Context Update | Any completed UI task | Updated context files |
 | UI Stack Compliance Review | New UI framework/library/tool need | Approval requirement or compliance result |
 | React Vite MVP Setup Review | First-demo UI setup or bootstrap | Confirm React, Vite, TypeScript, Tailwind, and S3 static hosting alignment |
+| UI Routing Review | New or changed route structure | Confirm react-router/react-router-dom usage and module-aligned routes |
+| UI Data Fetching Review | UI API integration or server-state change | Confirm TanStack Query usage, loading/error handling, and API contract alignment |
+| UI Form Validation Review | New or changed form | Confirm React Hook Form + Zod usage and documented validation behavior |
+| shadcn UI Component Review | New or changed shadcn/ui component usage | Confirm Tailwind alignment, accessibility baseline, and no unapproved UI dependencies |
+| UI Icon Usage Review | New or changed icon usage | Confirm lucide-react usage, accessible labels, and no unapproved icon library |
 | S3 Static Hosting Review | UI deployment or hosting change | Confirm DEV `ssd_dev` and UAT `ssd_uat` safe references and no secrets in config |

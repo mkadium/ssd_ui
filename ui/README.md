@@ -21,7 +21,9 @@ ssd_ui/ui/
 |   |-- services/
 |   |-- hooks/
 |   |-- routes/
-|   `-- state/
+|   |-- forms/
+|   |-- schemas/
+|   `-- queries/
 `-- shared/
 ```
 
@@ -32,14 +34,16 @@ Use `shared/` only for approved cross-module UI utilities/components. Document s
 1. Read `ssd_ui/.init/`.
 2. Read the active work packet in `ssd_governance/work_packets/`.
 3. Read `ssd_governance/libraries/technology_stack_registry.md`.
-4. Confirm UI framework, package manager, styling, component library, charting, GIS/maps, state management, forms, i18n choices, and any CI/CD/build/deployment tooling are approved.
+4. Confirm UI framework, package manager, styling, routing, component library, data fetching, forms, validation, charting, GIS/maps, state management, i18n choices, and any CI/CD/build/deployment tooling are approved.
 5. Read the target module context under `ssd_ui/modules/<module>/`.
 6. Read approved API contracts from `ssd_api/modules/<module>/`.
 7. Set up the local UI environment only after the stack is approved.
 
 ## Environment Setup Rule
 
-Do not introduce React, Next.js, Tailwind, shadcn/ui, charting libraries, GIS/map libraries, state management, form libraries, i18n libraries, accessibility tools, build tools, CI/CD tools, artifact publishing, or deployment automation unless approved in governance.
+Approved first-demo/MVP UI libraries are React, Vite, TypeScript, Tailwind, react-router/react-router-dom, shadcn/ui, lucide-react, TanStack Query, React Hook Form, and Zod.
+
+Do not introduce Next.js, charting libraries, GIS/map libraries, global client state management libraries, i18n libraries, accessibility tools, other icon libraries, build tools, CI/CD tools, artifact publishing, deployment automation, or extra UI dependencies unless approved in governance.
 
 ## Codex Prompt Guideline
 
