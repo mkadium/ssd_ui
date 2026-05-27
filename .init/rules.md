@@ -29,6 +29,10 @@ Defines mandatory UI team rules for AI-assisted development.
 - Do not assume API behavior that is not documented.
 - Maintain responsive, cross-browser, and accessibility-aware UI.
 - Support bilingual content rules where required.
+- Follow DEC-2026-004 for multilingual/i18n readiness.
+- Use API-provided domain metadata labels for master, template, validation, workflow, dashboard, and reporting content where available.
+- Do not hardcode governed domain labels in UI when they should come from DB/API metadata.
+- Do not introduce a UI i18n library until multilingual UI implementation starts and governance approves the library.
 - Do not hardcode secrets, credentials, tokens, or environment-specific URLs.
 - Real `.env` files must remain local/build-server-side only and must not be committed.
 - `.env.example` files may be maintained with placeholder keys only.

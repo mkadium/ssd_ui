@@ -14,6 +14,7 @@ Defines UI-specific AI skills.
 | Accessibility Review | Public/government-facing UI change | Accessibility notes and gaps |
 | Responsive Review | Layout or screen behavior change | Responsive test notes |
 | Bilingual Review | Content/localization change | Bilingual content notes |
+| UI i18n Readiness Review | UI consumes or displays localized domain labels/messages | Confirm DEC-2026-004 alignment, API-provided labels, fallback expectations, and `BILINGUAL_CONTENT_RULES.md` updates |
 | UI Context Update | Any completed UI task | Updated context files |
 | UI Stack Compliance Review | New UI framework/library/tool need | Approval requirement or compliance result |
 | React Vite MVP Setup Review | First-demo UI setup or bootstrap | Confirm React, Vite, TypeScript, Tailwind, and S3 static hosting alignment |
