@@ -10,5 +10,10 @@ Portal
 
 ## Current Status
 
-PLANNED
+STARTED
+
+## Notes
+
+- Accessibility evidence is not captured yet.
+- Current sync records folder structure only; page-level accessibility review remains pending after UI implementation.
 

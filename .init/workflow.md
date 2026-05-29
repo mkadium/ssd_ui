@@ -8,7 +8,7 @@
 4. Read approved API contracts and API usage rules.
 5. Check existing page flows and component map.
 6. Implement within UI boundaries.
-7. Put implementation changes only under the direct module implementation folder, for example `ssd_ui/ui/<module>/`.
+7. Put implementation changes only under `ssd_ui/ui/`; for the current Vite app, use `ssd_ui/ui/src/` and keep module traceability in `ssd_ui/modules/<module>/`.
 8. Run relevant UI checks or document why not run.
 9. Check CI/CD impact if UI build, artifact, deployment, or environment behavior changes.
 10. Update UI context files under `ssd_ui/modules/<module>/`.

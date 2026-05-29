@@ -6,6 +6,7 @@
 |---|---|---|---|
 | Define portal information architecture | TBD | PENDING | v0.2.0 |
 | Define public/authenticated page flows | TBD | PENDING | v0.2.0 |
+| Wire portal shell to Auth UI state after Auth implementation approval | TBD | PENDING | v0.1.0 |
 
 ---
 
@@ -22,5 +23,5 @@
 
 | Task | Blocked Reason |
 |---|---|
-| API-connected UI implementation | API contracts pending |
+| Non-auth API-connected UI implementation | Non-auth first-demo API contracts pending |
 

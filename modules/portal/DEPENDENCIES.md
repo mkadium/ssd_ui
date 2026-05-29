@@ -4,7 +4,7 @@
 
 | Module | Dependency Type | Purpose |
 |---|---|---|
-| ssd_api/access_management | REQUIRED | Authentication and authorization |
+| ssd_api/auth | REQUIRED | Authentication and authorization |
 | ssd_api/dashboard | REQUIRED | Dashboard data |
 
 ---
@@ -13,7 +13,8 @@
 
 | API | Purpose | Status |
 |---|---|---|
-| TBD | TBD | PLANNED |
+| `ssd_api/modules/auth/API_CONTRACTS.md` | Login, current profile, logout, refresh, password management, permission check | DEV_AUTH_EVIDENCE_CAPTURED |
+| Dashboard API contracts | Dashboard data | PENDING |
 
 ---
 
@@ -37,6 +38,6 @@
 
 | Dependency | Status |
 |---|---|
-| ssd_api/access_management | PLANNED |
+| ssd_api/auth | DEV_AUTH_EVIDENCE_CAPTURED |
 | ssd_api/dashboard | PLANNED |
 

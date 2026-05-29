@@ -18,7 +18,21 @@ Before UI work, read:
 
 ## Boundary
 
-Actual UI implementation belongs only in direct module folders under `ssd_ui/ui/`, for example `ssd_ui/ui/portal/`.
+Actual UI implementation belongs only under `ssd_ui/ui/`.
+
+The current Vite application scaffold is under `ssd_ui/ui/src/` and is organized by shared React application folders:
+
+- `assets/`
+- `components/`
+- `hooks/`
+- `lib/`
+- `pages/`
+- `routes/`
+- `services/`
+- `stores/`
+- `utils/`
+
+Module-specific UI behavior must remain traceable to the relevant module context under `ssd_ui/modules/<module>/`.
 
 UI context, contracts, page flows, component maps, API usage, releases, dependencies, and known issues belong under `ssd_ui/modules/`.
 

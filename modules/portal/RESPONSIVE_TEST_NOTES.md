@@ -10,5 +10,10 @@ Portal
 
 ## Current Status
 
-PLANNED
+STARTED
+
+## Notes
+
+- Responsive evidence is not captured yet.
+- Current sync records folder structure only; page-level responsive validation remains pending after UI implementation.
 
