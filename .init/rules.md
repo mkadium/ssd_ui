@@ -22,7 +22,8 @@ Defines mandatory UI team rules for AI-assisted development.
 - Use shadcn/ui with the approved Tailwind stack only; do not introduce another component library without approval.
 - Use lucide-react as the standard UI icon library; do not introduce another icon library without approval.
 - Put actual UI implementation only under `ssd_ui/ui/`.
-- Organize actual UI implementation by direct module folder, for example `ssd_ui/ui/portal/`.
+- The current Vite app scaffold is organized under `ssd_ui/ui/src/` with shared folders for `assets`, `components`, `hooks`, `lib`, `pages`, `routes`, `services`, `stores`, and `utils`.
+- Keep module ownership traceable through `ssd_ui/modules/<module>/` even when implementation files live in shared `src` folders.
 - Do not create `ssd_ui/ui/modules/<module>/`; `ssd_ui/modules/<module>/` is the context/contract folder only.
 - Keep `ssd_ui/modules/` for AI context and module documentation only.
 - Keep `ssd_ui/.init/` for AI bootstrap only.

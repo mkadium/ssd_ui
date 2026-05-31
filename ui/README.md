@@ -1,63 +1,73 @@
-# UI Implementation Folder
+# React + TypeScript + Vite
 
-This folder contains the actual UI source code.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## Boundary
+Currently, two official plugins are available:
 
-- Put UI implementation code here.
-- Organize implementation by direct module folder, for example `ssd_ui/ui/portal/`.
-- Do not put implementation code in `.init/`.
-- Do not put implementation code in `modules/`.
-- Do not create `ssd_ui/ui/modules/<module>/`.
-- Keep `modules/` for UI contracts, page flows, component maps, API usage, accessibility notes, release notes, dependencies, and task tracking.
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-## Recommended Structure
+## React Compiler
 
-```text
-ssd_ui/ui/
-|-- <module>/
-|   |-- pages/
-|   |-- components/
-|   |-- services/
-|   |-- hooks/
-|   |-- routes/
-|   |-- forms/
-|   |-- schemas/
-|   `-- queries/
-`-- shared/
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```
 
-Use `shared/` only for approved cross-module UI utilities/components. Document shared usage in the active work packet and module `DEPENDENCIES.md`.
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
 
-## Before Starting From Scratch
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
 
-1. Read `ssd_ui/.init/`.
-2. Read the active work packet in `ssd_governance/work_packets/`.
-3. Read `ssd_governance/libraries/technology_stack_registry.md`.
-4. Confirm UI framework, package manager, styling, routing, component library, data fetching, forms, validation, charting, GIS/maps, state management, i18n choices, and any CI/CD/build/deployment tooling are approved.
-5. Read the target module context under `ssd_ui/modules/<module>/`.
-6. Read approved API contracts from `ssd_api/modules/<module>/`.
-7. Set up the local UI environment only after the stack is approved.
-
-## Environment Setup Rule
-
-Approved first-demo/MVP UI libraries are React, Vite, TypeScript, Tailwind, react-router/react-router-dom, shadcn/ui, lucide-react, TanStack Query, React Hook Form, and Zod.
-
-Do not introduce Next.js, charting libraries, GIS/map libraries, global client state management libraries, i18n libraries, accessibility tools, other icon libraries, build tools, CI/CD tools, artifact publishing, deployment automation, or extra UI dependencies unless approved in governance.
-
-## Codex Prompt Guideline
-
-Use this pattern:
-
-```text
-Read ssd_ui/.init, the active work packet, ssd_governance/libraries/technology_stack_registry.md, ssd_ui/modules/<module>/ context files, and approved API contracts.
-If the required UI stack is approved, work only inside the target direct module folder, for example ssd_ui/ui/<module>/.
-Keep UI aligned with API contracts, accessibility, bilingual, and responsive requirements.
-After implementation, update module context files: RELEASE_NOTES.md, AI_CONTEXT.md, DEPENDENCIES.md, PENDING_TASKS.md, VERSION.md, KNOWN_ISSUES.md if applicable, UI_CONTRACTS.md, PAGE_FLOWS.md, COMPONENT_MAP.md, API_USAGE.md, ACCESSIBILITY_NOTES.md, BILINGUAL_CONTENT_RULES.md, and RESPONSIVE_TEST_NOTES.md if changed.
-If pipeline, artifact, deployment, or environment promotion behavior changes, read ssd_governance/cicd and update the active work packet CI/CD impact.
-Do not introduce unapproved libraries or modify governance files unless asked.
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```
-
-## After Every Task
-
-Update the relevant module files under `ssd_ui/modules/<module>/` and update the active work packet if status, blockers, dependencies, API usage, accessibility readiness, CI/CD impact, or handoff readiness changed.

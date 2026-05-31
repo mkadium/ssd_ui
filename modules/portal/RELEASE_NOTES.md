@@ -7,9 +7,9 @@
 | Module | Portal |
 | Team | UI |
 | Current Version | v0.1.0 |
-| Status | PLANNED |
-| Last Updated By | Governance Owner |
-| Last Updated Date | 2026-05-22 |
+| Status | STARTED |
+| Last Updated By | UI Team |
+| Last Updated Date | 2026-05-27 |
 | Jira Tickets | TBD |
 
 ---
@@ -20,6 +20,8 @@
 
 ### New Features
 - Initial UI portal module context created.
+- Synced portal context with current React/Vite `src` folder scaffold.
+- Recorded Auth API readiness impact for authenticated portal planning.
 
 ### Enhancements
 - None.

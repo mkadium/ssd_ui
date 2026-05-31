@@ -8,7 +8,7 @@ Defines UI team ownership.
 
 - Unified portal UI
 - Actual UI implementation under `ssd_ui/ui/`
-- Direct UI module implementation folders under `ssd_ui/ui/<module>/`
+- Current Vite app implementation under `ssd_ui/ui/src/`
 - Dashboard UI
 - CMS UI
 - Admin UI
@@ -24,7 +24,8 @@ Defines UI team ownership.
 ## Folder Boundaries
 
 - `ssd_ui/ui/` is for actual UI implementation code.
-- `ssd_ui/ui/<module>/` is the required module-based implementation path.
+- `ssd_ui/ui/src/` is the current React/Vite implementation root.
+- Module traceability is maintained through `ssd_ui/modules/<module>/` context files when implementation uses shared `src` folders.
 - `ssd_ui/modules/` is for context, UI contracts, page flows, component maps, API usage, release notes, dependencies, pending tasks, versions, known issues, and ownership.
 - `ssd_ui/.init/` is for AI bootstrap and team operating rules.
 - Do not place implementation code in `.init/` or `modules/`.

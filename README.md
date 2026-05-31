@@ -12,7 +12,7 @@ Contains the unified portal UI, dashboard screens, CMS screens, admin screens, G
 
 - `.init/` contains AI bootstrap rules, agents, skills, MCPs, boundaries, prompts, and workflow.
 - `modules/` contains module context, UI contracts, page flows, component maps, API usage, release notes, dependencies, pending tasks, versions, known issues, and ownership.
-- `ui/` contains actual UI implementation code, organized by direct module folder such as `ui/portal/`.
+- `ui/` contains actual UI implementation code. The current Vite app scaffold is under `ui/src/` with shared React folders for assets, components, hooks, libraries, pages, routes, services, stores, and utilities.
 
 ## AI Bootstrap
 
@@ -47,16 +47,26 @@ Each UI module must maintain:
 
 ## Implementation Module Structure
 
-Actual UI code for a module must live under:
+Actual UI code lives under:
 
 ```text
-ssd_ui/ui/<module>/
+ssd_ui/ui/src/
 ```
 
-Example:
+Current scaffold:
 
 ```text
-ssd_ui/ui/portal/
+ssd_ui/ui/src/assets/
+ssd_ui/ui/src/components/
+ssd_ui/ui/src/hooks/
+ssd_ui/ui/src/lib/
+ssd_ui/ui/src/pages/
+ssd_ui/ui/src/routes/
+ssd_ui/ui/src/services/
+ssd_ui/ui/src/stores/
+ssd_ui/ui/src/utils/
 ```
+
+Module behavior, contracts, page flows, component maps, API usage, and release context must still be tracked under `ssd_ui/modules/<module>/`.
 
 Do not place implementation code under `ssd_ui/modules/<module>/`, and do not create `ssd_ui/ui/modules/<module>/`.
