@@ -15,8 +15,9 @@ Defines mandatory UI team rules for AI-assisted development.
 - Follow only governance-approved UI technology stack and libraries.
 - For first demo/MVP, the approved UI stack is React + Vite + TypeScript + Tailwind.
 - For first demo/MVP, approved UI supporting libraries are react-router/react-router-dom, shadcn/ui, lucide-react, TanStack Query, React Hook Form, and Zod.
+- For first demo/MVP, direct `echarts` usage is approved for charts by DEC-2026-005. Do not use `echarts-for-react`, ECharts GIS/map/geo features, or another charting library without separate approval.
 - For first demo/MVP, approved UI hosting is S3 static hosting with safe references `ssd_dev` for DEV and `ssd_uat` for UAT.
-- Do not introduce Next.js, charting, GIS/maps, global client state management, i18n, or additional UI libraries unless separately approved.
+- Do not introduce Next.js, GIS/maps, global client state management, i18n, or additional UI libraries unless separately approved.
 - Use TanStack Query for API/server state only; do not use it as a general local/global state store.
 - Use React Hook Form with Zod for governed forms and validation.
 - Use shadcn/ui with the approved Tailwind stack only; do not introduce another component library without approval.
@@ -40,7 +41,7 @@ Defines mandatory UI team rules for AI-assisted development.
 - DEV/UAT/STG/PROD build/deployment secrets must come from approved CI/CD environment secret handling.
 - Keep reusable UI components consistent and avoid duplicate components. Shared UI utilities/components must be approved and documented in the active work packet and module `DEPENDENCIES.md`.
 - Update mandatory UI context files after every change.
-- React, Vite, TypeScript, Tailwind, react-router/react-router-dom, shadcn/ui, lucide-react, TanStack Query, React Hook Form, and Zod are approved for first demo/MVP. Do not introduce Next.js, charting libraries, map/GIS libraries, global client state management tools, i18n libraries, accessibility tooling, other icon libraries, or extra UI dependencies until governance approves them separately.
+- React, Vite, TypeScript, Tailwind, react-router/react-router-dom, shadcn/ui, lucide-react, TanStack Query, React Hook Form, Zod, and direct `echarts` usage are approved for first demo/MVP. Do not introduce Next.js, additional charting libraries, map/GIS libraries, global client state management tools, i18n libraries, accessibility tooling, other icon libraries, or extra UI dependencies until governance approves them separately.
 - Do not create or modify CI/CD pipelines, UI build automation, artifact publishing, deployment automation, or environment promotion rules without checking `ssd_governance/cicd/`.
 - If a required UI technology is not approved, raise a library approval request through governance.
 - Tool, filesystem, MCP, connector, or terminal access does not permit bypassing command mode, stack approval, work packet scope, UI boundaries, or secret rules.

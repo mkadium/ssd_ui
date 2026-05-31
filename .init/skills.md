@@ -23,4 +23,5 @@ Defines UI-specific AI skills.
 | UI Form Validation Review | New or changed form | Confirm React Hook Form + Zod usage and documented validation behavior |
 | shadcn UI Component Review | New or changed shadcn/ui component usage | Confirm Tailwind alignment, accessibility baseline, and no unapproved UI dependencies |
 | UI Icon Usage Review | New or changed icon usage | Confirm lucide-react usage, accessible labels, and no unapproved icon library |
+| UI Charting Review | New or changed chart/dashboard visualization | Confirm direct `echarts` usage only, no wrappers, no GIS/map/geo usage, accessible chart summaries, and API contract alignment |
 | S3 Static Hosting Review | UI deployment or hosting change | Confirm DEV `ssd_dev` and UAT `ssd_uat` safe references and no secrets in config |

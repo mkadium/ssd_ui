@@ -28,6 +28,7 @@
 | TanStack Query | API/server-state handling | APPROVED |
 | React Hook Form | Form state | APPROVED |
 | Zod | Form validation | APPROVED |
+| echarts | Not needed for Auth; approved for dashboard/workflow charts only | APPROVED_NOT_USED |
 
 ---
 
@@ -35,5 +36,5 @@
 
 | Dependency | Risk |
 |---|---|
-| Non-auth API contracts pending | Authenticated navigation may expose only Auth-derived pages until other module APIs are ready |
+| Local approved dependency installation | `node_modules` is currently missing approved packages, so build could not run until dependencies are installed |
 | Token storage model | First-demo UI must avoid logging tokens and should minimize durable browser storage |

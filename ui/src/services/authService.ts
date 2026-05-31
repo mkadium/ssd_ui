@@ -1,4 +1,4 @@
-import { apiClient } from "@/api/client";
+import { apiRequest } from "@/api/client";
 import type {
   LoginRequest,
   LoginResponse,
@@ -15,52 +15,55 @@ import type {
 
 export const authService = {
   login: async (body: LoginRequest): Promise<LoginResponse> => {
-    const res = await apiClient.post<LoginResponse>("/auth/login", body);
-    return res.data;
+    return apiRequest<LoginResponse>("/auth/login", {
+      method: "POST",
+      auth: false,
+      json: body,
+    });
   },
 
   refresh: async (body: RefreshRequest): Promise<RefreshResponse> => {
-    const res = await apiClient.post<RefreshResponse>("/auth/refresh", body);
-    return res.data;
+    return apiRequest<RefreshResponse>("/auth/refresh", {
+      method: "POST",
+      auth: false,
+      json: body,
+    });
   },
 
   logout: async (): Promise<LogoutResponse> => {
-    const res = await apiClient.post<LogoutResponse>("/auth/logout");
-    return res.data;
+    return apiRequest<LogoutResponse>("/auth/logout", {
+      method: "POST",
+    });
   },
 
   me: async (): Promise<CurrentProfileResponse> => {
-    const res = await apiClient.get<CurrentProfileResponse>("/auth/me");
-    return res.data;
+    return apiRequest<CurrentProfileResponse>("/auth/me");
   },
 
   changePassword: async (
     body: ChangePasswordRequest,
   ): Promise<PasswordUpdateResponse> => {
-    const res = await apiClient.post<PasswordUpdateResponse>(
-      "/auth/password/change",
-      body,
-    );
-    return res.data;
+    return apiRequest<PasswordUpdateResponse>("/auth/password/change", {
+      method: "POST",
+      json: body,
+    });
   },
 
   adminSetPassword: async (
     body: AdminSetPasswordRequest,
   ): Promise<PasswordUpdateResponse> => {
-    const res = await apiClient.post<PasswordUpdateResponse>(
-      "/auth/admin/password/set",
-      body,
-    );
-    return res.data;
+    return apiRequest<PasswordUpdateResponse>("/auth/admin/password/set", {
+      method: "POST",
+      json: body,
+    });
   },
 
   checkPermission: async (
     body: PermissionCheckRequest,
   ): Promise<PermissionCheckResponse> => {
-    const res = await apiClient.post<PermissionCheckResponse>(
-      "/auth/permissions/check",
-      body,
-    );
-    return res.data;
+    return apiRequest<PermissionCheckResponse>("/auth/permissions/check", {
+      method: "POST",
+      json: body,
+    });
   },
 };

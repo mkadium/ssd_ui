@@ -1,0 +1,3117 @@
+import {
+  CheckCircle2,
+  Code2,
+  Edit3,
+  Eye,
+  FileSpreadsheet,
+  Maximize2,
+  Minimize2,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  Trash2,
+  Redo2,
+  Undo2,
+  Wand2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
+
+import { AppShell } from "@/components/layout/AppShell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { dimensionMembers } from "@/data/dimensionsManagement.sample";
+import { nationalIndicatorOptions, unitOptions } from "@/data/mastersManagement.sample";
+import {
+  templateAxes,
+  templateDefinitions,
+  templateMeasures,
+  templateValidationRules,
+  templateVersions,
+  type TemplateDefinitionSample,
+  type TemplateStatus,
+} from "@/data/templatesManagement.sample";
+
+type TemplateTab = "list" | "designer" | "contract";
+type TemplateModal = "create-template" | "view-values" | "template-detail" | "delete-template" | "data-entry-preview" | "json-structure" | null;
+type HeaderType = "Indicator" | "Dimension" | "Measure";
+type AxisAlignment = "row" | "column";
+type DesignerStage = "basics" | "typing" | "options" | "binding" | "generated" | "saved" | "published";
+type BindingObjectCode = "NIF_1_2_1" | "GEOGRAPHY" | "TIME_PERIOD" | "AREA_TYPE" | "GENDER" | "INDICATOR_VALUE";
+type CellRole = "EMPTY" | "INDICATOR" | "HEADER" | "DIMENSION_MEMBER" | "INPUT" | "MEASURE";
+type HorizontalAlign = "left" | "center" | "right";
+type VerticalAlign = "top" | "middle" | "bottom";
+type GeographyScope =
+  | "NATIONAL_ONLY"
+  | "STATE_ONLY"
+  | "NATIONAL_STATE"
+  | "NATIONAL_STATE_DISTRICT"
+  | "HIERARCHY_NATIONAL"
+  | "HIERARCHY_NATIONAL_STATE"
+  | "HIERARCHY_NATIONAL_STATE_DISTRICT";
+
+type CanvasCell = {
+  value?: string;
+  role?: CellRole;
+  boundCode?: string;
+  editable?: boolean;
+  required?: boolean;
+  align?: HorizontalAlign;
+  valign?: VerticalAlign;
+  datatype?: "NUMERIC" | "INTEGER" | "TEXT" | "DATE";
+  validationRule?: string;
+  merge?: { rowSpan: number; colSpan: number };
+  mergeOwner?: string;
+  frozen?: boolean;
+  groupId?: string;
+  groupLabel?: string;
+  groupAnchor?: string;
+  groupFocus?: string;
+  groupBindingCode?: BindingObjectCode;
+  groupAlignment?: AxisAlignment | "context";
+};
+
+type BoundObject = {
+  code: BindingObjectCode;
+  label: string;
+  type: HeaderType;
+  alignment: AxisAlignment | "context";
+  range: string;
+  memberCount: number;
+};
+
+type CanvasOperation = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
+type CanvasSnapshot = {
+  cells: Record<string, CanvasCell>;
+  columnWidths: Record<string, number>;
+  rowHeights: Record<number, number>;
+  boundObjects: BoundObject[];
+  rowAxes: BindingObjectCode[];
+  columnAxes: BindingObjectCode[];
+  visibleColumnCount: number;
+  visibleRowCount: number;
+};
+
+type GridContextMenu = {
+  type: "column" | "row";
+  target: string | number;
+  x: number;
+  y: number;
+} | null;
+
+type NavigationDirection = "up" | "down" | "left" | "right";
+
+type DimensionMemberSample = (typeof dimensionMembers)[number];
+
+type GeographyHierarchyRow = {
+  country?: DimensionMemberSample;
+  state?: DimensionMemberSample;
+  district?: DimensionMemberSample;
+};
+
+type StructuredRowCell = {
+  axisCode: BindingObjectCode;
+  value: string;
+  memberCode?: string;
+  columnLabel: string;
+};
+
+const canvasColumns = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
+const canvasRows = Array.from({ length: 40 }, (_, index) => index + 1);
+const initialVisibleColumnCount = 13;
+const initialVisibleRowCount = 16;
+const rowHeaderWidth = 36;
+const defaultColumnWidths = Object.fromEntries(canvasColumns.map((column) => [column, 112])) as Record<string, number>;
+const defaultRowHeights = Object.fromEntries(canvasRows.map((row) => [row, row === 1 ? 42 : 38])) as Record<number, number>;
+const columnAxisOrder: BindingObjectCode[] = ["TIME_PERIOD", "AREA_TYPE", "GENDER"];
+
+const bindingOptions: Array<{
+  code: BindingObjectCode;
+  type: HeaderType;
+  label: string;
+  searchText: string;
+  defaultAlignment: AxisAlignment | "context";
+  memberCount: number;
+  note: string;
+}> = [
+  {
+    code: "NIF_1_2_1",
+    type: "Indicator",
+    label: "NIF 1.2.1 - Population below poverty line",
+    searchText: "indicator nif poverty population",
+    defaultAlignment: "context",
+    memberCount: 1,
+    note: "Template context and title row",
+  },
+  {
+    code: "GEOGRAPHY",
+    type: "Dimension",
+    label: "Geography",
+    searchText: "geography location state district india",
+    defaultAlignment: "row",
+    memberCount: dimensionMembers.filter((member) => member.dimension_code === "GEOGRAPHY" && member.parent_member_code === "IND").length,
+    note: "Row axis: request-scoped states",
+  },
+  {
+    code: "TIME_PERIOD",
+    type: "Dimension",
+    label: "Time period",
+    searchText: "time year financial period 2011 2012",
+    defaultAlignment: "column",
+    memberCount: 2,
+    note: "Top merged column header",
+  },
+  {
+    code: "AREA_TYPE",
+    type: "Dimension",
+    label: "Area type",
+    searchText: "area type total rural urban",
+    defaultAlignment: "column",
+    memberCount: dimensionMembers.filter((member) => member.dimension_code === "AREA_TYPE").length,
+    note: "Nested column header under time",
+  },
+  {
+    code: "GENDER",
+    type: "Dimension",
+    label: "Gender",
+    searchText: "gender female male",
+    defaultAlignment: "column",
+    memberCount: dimensionMembers.filter((member) => member.dimension_code === "GENDER" && member.member_code !== "GENDER_TOTAL").length,
+    note: "Lowest column subgroup",
+  },
+  {
+    code: "INDICATOR_VALUE",
+    type: "Measure",
+    label: "Indicator value",
+    searchText: "measure indicator value percent numeric",
+    defaultAlignment: "context",
+    memberCount: 1,
+    note: "Editable numeric measure",
+  },
+];
+
+const statusVariant = (status?: string) => {
+  if (["ACTIVE", "YES", "PASS", "READY"].includes(status ?? "")) return "secondary";
+  if (["DRAFT", "WARNING", "PENDING"].includes(status ?? "")) return "outline";
+  if (["RETIRED", "NO", "BLOCKER", "MISSING"].includes(status ?? "")) return "destructive";
+  return "ghost";
+};
+
+const optionFor = (code: BindingObjectCode) => bindingOptions.find((option) => option.code === code) ?? bindingOptions[0];
+
+function addressToCoord(address: string) {
+  const columnLetter = address.match(/[A-Z]+/)?.[0] ?? "A";
+  const row = Number(address.match(/\d+/)?.[0] ?? "1");
+  const col = canvasColumns.indexOf(columnLetter) + 1;
+  return { row, col: Math.max(col, 1) };
+}
+
+function coordToAddress(row: number, col: number) {
+  return `${canvasColumns[col - 1] ?? "A"}${row}`;
+}
+
+const focusTemplateCell = (address: string) => {
+  window.setTimeout(() => {
+    document.querySelector<HTMLElement>(`[data-template-cell="${address}"]`)?.focus();
+  }, 0);
+};
+
+function normalizeRange(anchor: string, focus: string) {
+  const a = addressToCoord(anchor);
+  const b = addressToCoord(focus);
+  const start = { row: Math.min(a.row, b.row), col: Math.min(a.col, b.col) };
+  const end = { row: Math.max(a.row, b.row), col: Math.max(a.col, b.col) };
+  return { start, end };
+}
+
+function rangeLabel(anchor: string, focus: string) {
+  const { start, end } = normalizeRange(anchor, focus);
+  const first = coordToAddress(start.row, start.col);
+  const last = coordToAddress(end.row, end.col);
+  return first === last ? first : `${first}:${last}`;
+}
+
+function rangeAddresses(anchor: string, focus: string) {
+  const { start, end } = normalizeRange(anchor, focus);
+  const addresses: string[] = [];
+  for (let row = start.row; row <= end.row; row += 1) {
+    for (let col = start.col; col <= end.col; col += 1) {
+      addresses.push(coordToAddress(row, col));
+    }
+  }
+  return addresses;
+}
+
+function isInRange(address: string, anchor: string, focus: string) {
+  return rangeAddresses(anchor, focus).includes(address);
+}
+
+function isHierarchyGeographyScope(scope: GeographyScope) {
+  return scope === "HIERARCHY_NATIONAL" || scope === "HIERARCHY_NATIONAL_STATE" || scope === "HIERARCHY_NATIONAL_STATE_DISTRICT";
+}
+
+function getGeographyParts() {
+  const country = dimensionMembers.filter((member) => member.dimension_code === "GEOGRAPHY" && !member.parent_member_code);
+  const states = dimensionMembers.filter((member) => member.dimension_code === "GEOGRAPHY" && member.parent_member_code === "IND");
+  const districts = dimensionMembers.filter((member) => member.dimension_code === "GEOGRAPHY" && member.parent_member_code && member.parent_member_code !== "IND");
+
+  return { country, states, districts };
+}
+
+function getGeographyMembers(scope: GeographyScope) {
+  const { country, states, districts } = getGeographyParts();
+
+  if (scope === "NATIONAL_ONLY" || scope === "HIERARCHY_NATIONAL") return country.slice(0, 1);
+  if (scope === "NATIONAL_STATE") return [...country, ...states].slice(0, 5);
+  if (scope === "NATIONAL_STATE_DISTRICT") return [...country, ...states, ...districts].slice(0, 7);
+  if (scope === "HIERARCHY_NATIONAL_STATE") return states.slice(0, 4);
+  if (scope === "HIERARCHY_NATIONAL_STATE_DISTRICT") return [...states, ...districts].slice(0, 6);
+  return states.slice(0, 4);
+}
+
+function getGeographyHierarchyRows(scope: GeographyScope): GeographyHierarchyRow[] {
+  const { country, states, districts } = getGeographyParts();
+  const national = country[0];
+
+  if (!national || scope === "HIERARCHY_NATIONAL") {
+    return national ? [{ country: national }] : [];
+  }
+
+  if (scope === "HIERARCHY_NATIONAL_STATE") {
+    return states.slice(0, 4).map((state) => ({ country: national, state }));
+  }
+
+  return states.slice(0, 4).flatMap((state) => {
+    const stateDistricts = districts.filter((district) => district.parent_member_code === state.member_code);
+    if (!stateDistricts.length) return [{ country: national, state }];
+    return stateDistricts.map((district) => ({ country: national, state, district }));
+  });
+}
+
+function getGeographyHierarchyColumns(scope: GeographyScope, headerLabel: string) {
+  if (scope === "HIERARCHY_NATIONAL") return [headerLabel || "Location"];
+  if (scope === "HIERARCHY_NATIONAL_STATE") return [headerLabel || "Location", "State"];
+  return [headerLabel || "Location", "State", "District"];
+}
+
+function getInlineCompletion(value: string, suggestion?: (typeof bindingOptions)[number]) {
+  const typed = value.trim();
+  if (!typed || !suggestion) return "";
+
+  const candidates = [suggestion.label, suggestion.code, ...suggestion.searchText.split(" ")].filter(Boolean);
+  const match = candidates.find((candidate) => candidate.toLowerCase().startsWith(typed.toLowerCase()) && candidate.length > typed.length);
+  return match ? match.slice(typed.length) : "";
+}
+
+function getMembersForObject(code: BindingObjectCode, geographyScope: GeographyScope = "STATE_ONLY") {
+  if (code === "GEOGRAPHY") {
+    return getGeographyMembers(geographyScope);
+  }
+  if (code === "TIME_PERIOD") {
+    return dimensionMembers.filter((member) => member.dimension_code === "TIME_PERIOD").slice(0, 2);
+  }
+  if (code === "AREA_TYPE") {
+    return dimensionMembers.filter((member) => member.dimension_code === "AREA_TYPE");
+  }
+  if (code === "GENDER") {
+    return dimensionMembers.filter((member) => member.dimension_code === "GENDER" && member.member_code !== "GENDER_TOTAL");
+  }
+  return [];
+}
+
+function cartesianProduct<T>(sets: T[][]): T[][] {
+  if (!sets.length) return [[]];
+  return sets.reduce<T[][]>(
+    (accumulator, set) => accumulator.flatMap((prefix) => set.map((item) => [...prefix, item])),
+    [[]],
+  );
+}
+
+function buildHeaderCells(template: TemplateDefinitionSample = templateDefinitions[0]) {
+  const headerCells: Record<string, CanvasCell> = {};
+  const owner = "A1";
+  const value = [
+    `Indicator Code: ${template.mapped_indicator_code}`,
+    `Name: ${template.mapped_indicator_name}`,
+    "Measure: Percent",
+    `Source: ${template.source_unit_code}`,
+    "Unit: PERCENT",
+    "Periodicity: ANNUAL",
+  ].join(" | ");
+
+  headerCells[owner] = {
+    value,
+    role: "INDICATOR",
+    boundCode: template.mapped_indicator_code,
+    frozen: true,
+    align: "left",
+    merge: { rowSpan: 1, colSpan: canvasColumns.length },
+    groupId: "indicator-context-row",
+    groupLabel: "Indicator context",
+    groupAnchor: "A1",
+    groupFocus: "M1",
+    groupBindingCode: "NIF_1_2_1",
+    groupAlignment: "context",
+  };
+
+  for (let col = 2; col <= canvasColumns.length; col += 1) {
+    const address = coordToAddress(1, col);
+    headerCells[address] = {
+      value: "",
+      role: "INDICATOR",
+      boundCode: template.mapped_indicator_code,
+      frozen: true,
+      mergeOwner: owner,
+      groupId: "indicator-context-row",
+      groupLabel: "Indicator context",
+      groupAnchor: "A1",
+      groupFocus: "M1",
+      groupBindingCode: "NIF_1_2_1",
+      groupAlignment: "context",
+    };
+  }
+
+  return headerCells;
+}
+
+function getCellClasses(cell: CanvasCell | undefined, selected: boolean) {
+  const role = cell?.role ?? "EMPTY";
+  const roleClass = {
+    EMPTY: "bg-card",
+    INDICATOR: "bg-blue-50 text-blue-900 font-bold",
+    HEADER: "bg-amber-50 text-amber-900 font-bold text-center",
+    DIMENSION_MEMBER: "bg-emerald-50 text-emerald-950 font-semibold",
+    INPUT: "bg-white font-mono",
+    MEASURE: "bg-purple-50 text-purple-900 font-bold",
+  }[role];
+  const align = cell?.align === "center" ? "justify-center text-center" : cell?.align === "right" ? "justify-end text-right" : "justify-start text-left";
+  const frozen = cell?.frozen ? "shadow-[inset_0_0_0_2px_rgba(37,99,235,0.25)]" : "";
+  const selectedClass = selected ? "ring-2 ring-primary/70" : "";
+  return `flex h-full w-full items-center overflow-hidden text-ellipsis whitespace-nowrap px-2 ${roleClass} ${align} ${frozen} ${selectedClass}`;
+}
+
+function Field({ label, value, readOnly = false }: { label: string; value?: string | number; readOnly?: boolean }) {
+  return (
+    <label className="grid gap-1 text-xs font-semibold">
+      {label}
+      <Input defaultValue={value ?? ""} readOnly={readOnly} className={readOnly ? "bg-muted/60" : undefined} />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  options: { value: string; label: string }[];
+  onChange?: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-semibold">
+      {label}
+      <select
+        className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs"
+        value={value}
+        onChange={(event) => onChange?.(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function TemplateModalView({
+  modal,
+  selectedTemplate,
+  bindingObject,
+  geographyScope,
+  generatedColumnCount,
+  generatedRowCount,
+  cells,
+  templateJson,
+  onCreateDraft,
+  onDeleteDraft,
+  onBind,
+  onClose,
+}: {
+  modal: TemplateModal;
+  selectedTemplate: TemplateDefinitionSample;
+  bindingObject: BindingObjectCode;
+  geographyScope: GeographyScope;
+  generatedColumnCount: number;
+  generatedRowCount: number;
+  cells: Record<string, CanvasCell>;
+  templateJson: string;
+  onCreateDraft: () => void;
+  onDeleteDraft: () => void;
+  onBind: () => void;
+  onClose: () => void;
+}) {
+  if (!modal) return null;
+
+  const isDelete = modal === "delete-template";
+  const selectedMembers = getMembersForObject(bindingObject, geographyScope);
+  const titleMap: Record<Exclude<TemplateModal, null>, string> = {
+    "create-template": "Create template draft",
+    "view-values": "Dimension values preview",
+    "template-detail": "Template detail",
+    "delete-template": "Delete template draft",
+    "data-entry-preview": "Data-entry preview",
+    "json-structure": "Dynamic template JSON structure",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="template-modal-title">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+        <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase text-muted-foreground">Templates</p>
+            <h2 id="template-modal-title" className="text-xl font-bold">{titleMap[modal]}</h2>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+            <X aria-hidden="true" className="size-4" />
+          </Button>
+        </div>
+
+        <div className="overflow-y-auto p-5">
+          {modal === "create-template" ? (
+            <div className="grid gap-4">
+              <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
+                <Field label="template_code" value="TPL_NIF_1_2_1_NEW_DRAFT" />
+                <SelectField
+                  label="owning_unit_code"
+                  value="SDG"
+                  options={unitOptions.map((unit) => ({
+                    value: unit.unit_code ?? unit.id,
+                    label: unit.unit_code ?? unit.name ?? unit.id,
+                  }))}
+                />
+                <SelectField
+                  label="national_indicator"
+                  value="NIF_1_2_1"
+                  options={nationalIndicatorOptions.map((indicator) => ({
+                    value: indicator.national_indicator_code ?? indicator.id,
+                    label: `${indicator.national_indicator_code ?? indicator.id} - ${indicator.name ?? ""}`,
+                  }))}
+                />
+              </div>
+              <Field label="template name en-IN" value="NIF 1.2.1 area, gender, and time data entry template" />
+              <label className="grid gap-1 text-xs font-semibold">
+                Description
+                <Textarea defaultValue="Draft starts inactive. User designs a grid, binds dimensions/measures, validates, then publishes." />
+              </label>
+              <div className="rounded-md bg-muted/60 p-3 text-xs text-muted-foreground">
+                New templates start as DRAFT. They become available for collection requests only after template validation and publish.
+              </div>
+            </div>
+          ) : null}
+
+          {modal === "view-values" ? (
+            <div className="grid gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold">{bindingObject}</p>
+                  <p className="text-xs text-muted-foreground">Preview members before writing them into the selected canvas range.</p>
+                </div>
+                <Button type="button" onClick={onBind}>Bind these values</Button>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Member code</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Parent</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedMembers.map((member) => (
+                    <TableRow key={member.member_code}>
+                      <TableCell className="font-mono text-[11px]">{member.member_code}</TableCell>
+                      <TableCell>{member.name}</TableCell>
+                      <TableCell className="font-mono text-[11px]">{member.parent_member_code ?? "NONE"}</TableCell>
+                      <TableCell><Badge variant={statusVariant(member.status)}>{member.status}</Badge></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : null}
+
+          {modal === "template-detail" ? (
+            <dl className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+              {Object.entries(selectedTemplate).map(([key, value]) => (
+                <div key={key} className="rounded-md bg-muted/50 p-3">
+                  <dt className="text-[11px] font-semibold text-muted-foreground">{key}</dt>
+                  <dd className="mt-1 break-words font-mono text-[11px] font-bold">{String(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+
+          {modal === "data-entry-preview" ? (
+            <div className="grid gap-4">
+              <div className="grid grid-cols-4 gap-3 text-xs max-lg:grid-cols-2 max-sm:grid-cols-1">
+                <div className="rounded-md bg-muted/50 p-3">
+                  <p className="font-semibold text-muted-foreground">Indicator</p>
+                  <p className="mt-1 font-bold">NIF 1.2.1</p>
+                </div>
+                <div className="rounded-md bg-muted/50 p-3">
+                  <p className="font-semibold text-muted-foreground">Generated columns</p>
+                  <p className="mt-1 font-bold">{generatedColumnCount}</p>
+                </div>
+                <div className="rounded-md bg-muted/50 p-3">
+                  <p className="font-semibold text-muted-foreground">Preview rows</p>
+                  <p className="mt-1 font-bold">{generatedRowCount}</p>
+                </div>
+                <div className="rounded-md bg-muted/50 p-3">
+                  <p className="font-semibold text-muted-foreground">Submit target</p>
+                  <p className="mt-1 font-bold">Ingestion submission version</p>
+                </div>
+              </div>
+              <CanvasTable
+                cells={cells}
+                selectedAnchor="B5"
+                selectedFocus="B5"
+                editingCell={null}
+                cellText=""
+                optionsOpen={false}
+                suggestions={[]}
+                columnWidths={defaultColumnWidths}
+                rowHeights={defaultRowHeights}
+                columns={canvasColumns.slice(0, initialVisibleColumnCount)}
+                rows={canvasRows.slice(0, initialVisibleRowCount)}
+                onCellClick={() => undefined}
+                onSelectAddress={() => undefined}
+                onCellDoubleClick={() => undefined}
+                onCellTextChange={() => undefined}
+                onStartEdit={() => undefined}
+                onStopEdit={() => undefined}
+                onNavigateCell={() => undefined}
+                onSuggestionClick={() => undefined}
+                onResizeColumn={() => undefined}
+                onResizeRow={() => undefined}
+                onHeaderContextMenu={() => undefined}
+                readOnly
+              />
+              <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-950">
+                Data-entry users see this rendered template only. They do not edit structure; they fill editable data cells and submit to ingestion.
+              </div>
+            </div>
+          ) : null}
+
+          {modal === "json-structure" ? (
+            <div className="grid gap-3">
+              <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-950">
+                This is the live UI object model generated from the current canvas. Data Entry should follow this structure: rows, column axes, editable measure cells, and value bindings all remain keyed by stable codes.
+              </div>
+              <pre className="max-h-[62vh] overflow-auto rounded-md border border-border bg-slate-950 p-4 text-xs text-slate-50">
+                {templateJson}
+              </pre>
+            </div>
+          ) : null}
+
+          {isDelete ? (
+            <div className="rounded-md bg-red-50 p-4 text-sm text-red-900">
+              Delete is a visual state only. Before real deletion, dependency checks must include requests, ingestion submissions, validation runs, review tasks, and dashboard snapshots.
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-border/70 bg-muted/40 px-5 py-4">
+          <span className="text-xs text-muted-foreground">Sample UI only. No template mutation is sent to API or database.</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>Close</Button>
+            {modal === "create-template" ? (
+              <Button type="button" onClick={onCreateDraft}>Create draft and open designer</Button>
+            ) : null}
+            {modal === "delete-template" ? (
+              <Button type="button" variant="destructive" onClick={onDeleteDraft}>Delete draft</Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CanvasTable({
+  cells,
+  selectedAnchor,
+  selectedFocus,
+  editingCell,
+  cellText,
+  optionsOpen,
+  suggestions,
+  columnWidths,
+  rowHeights,
+  columns,
+  rows,
+  onCellClick,
+  onSelectAddress,
+  onCellDoubleClick,
+  onCellTextChange,
+  onStartEdit,
+  onStopEdit,
+  onNavigateCell,
+  onSuggestionClick,
+  onResizeColumn,
+  onResizeRow,
+  onHeaderContextMenu,
+  readOnly = false,
+}: {
+  cells: Record<string, CanvasCell>;
+  selectedAnchor: string;
+  selectedFocus: string;
+  editingCell: string | null;
+  cellText: string;
+  optionsOpen: boolean;
+  suggestions: typeof bindingOptions;
+  columnWidths: Record<string, number>;
+  rowHeights: Record<number, number>;
+  columns: string[];
+  rows: number[];
+  onCellClick: (address: string, event: MouseEvent<HTMLButtonElement | HTMLTableCellElement | HTMLInputElement>) => void;
+  onSelectAddress: (address: string) => void;
+  onCellDoubleClick: (address: string) => void;
+  onCellTextChange: (value: string) => void;
+  onStartEdit: (address: string) => void;
+  onStopEdit: () => void;
+  onNavigateCell: (address: string, direction: NavigationDirection) => void;
+  onSuggestionClick: (option: (typeof bindingOptions)[number]) => void;
+  onResizeColumn: (column: string, width: number) => void;
+  onResizeRow: (row: number, height: number) => void;
+  onHeaderContextMenu: (type: "column" | "row", target: string | number, event: MouseEvent<HTMLElement>) => void;
+  readOnly?: boolean;
+}) {
+  const selectedRangeText = rangeLabel(selectedAnchor, selectedFocus);
+  const singleSelected = selectedAnchor === selectedFocus;
+  const tableWidth = rowHeaderWidth + columns.reduce((total, column) => total + (columnWidths[column] ?? 112), 0);
+  const startColumnResize = (column: string, event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[column] ?? 112;
+    const handleMove = (moveEvent: globalThis.MouseEvent) => {
+      onResizeColumn(column, startWidth + moveEvent.clientX - startX);
+    };
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  };
+
+  const startRowResize = (row: number, event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const startHeight = rowHeights[row] ?? 36;
+    const handleMove = (moveEvent: globalThis.MouseEvent) => {
+      onResizeRow(row, startHeight + moveEvent.clientY - startY);
+    };
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  };
+
+  return (
+    <div className="relative overflow-auto rounded-md border border-border bg-card">
+      <table className="border-collapse text-xs" style={{ width: tableWidth, minWidth: tableWidth }}>
+        <thead>
+          <tr className="bg-muted/70">
+            <th className="h-8 border border-border" style={{ width: rowHeaderWidth, minWidth: 35 }} />
+            {columns.map((column) => (
+              <th
+                key={column}
+                className="relative h-8 border border-border text-center font-bold"
+                style={{ width: columnWidths[column], minWidth: columnWidths[column] }}
+                onContextMenu={(event) => !readOnly && onHeaderContextMenu("column", column, event)}
+              >
+                <div className="flex items-center justify-center">
+                  <span>{column}</span>
+                  {!readOnly ? (
+                    <button
+                      type="button"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize bg-transparent hover:bg-primary/40"
+                      aria-label={`Drag to resize column ${column}`}
+                      onMouseDown={(event) => startColumnResize(column, event)}
+                    />
+                  ) : null}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row}>
+              <th
+                className="relative border border-border bg-muted/70 text-center font-bold"
+                style={{ width: rowHeaderWidth, minWidth: 35, height: rowHeights[row] }}
+                onContextMenu={(event) => !readOnly && onHeaderContextMenu("row", row, event)}
+              >
+                <div className="flex items-center justify-center gap-1">
+                  <span>{row}</span>
+                  {!readOnly ? (
+                    <button
+                      type="button"
+                      className="absolute bottom-0 left-0 h-1.5 w-full cursor-row-resize bg-transparent hover:bg-primary/40"
+                      aria-label={`Drag to resize row ${row}`}
+                      onMouseDown={(event) => startRowResize(row, event)}
+                    />
+                  ) : null}
+                </div>
+              </th>
+              {columns.map((column) => {
+                const address = `${column}${row}`;
+                const cell = cells[address];
+                if (cell?.mergeOwner) return null;
+
+                const selected = isInRange(address, selectedAnchor, selectedFocus);
+                const isActiveInput = !readOnly && singleSelected && selected && address === selectedFocus && editingCell === address;
+                const inlineCompletion = isActiveInput ? getInlineCompletion(cellText, suggestions[0]) : "";
+                const rowSpan = cell?.merge?.rowSpan ?? 1;
+                const colSpan = cell?.merge?.colSpan ?? 1;
+                const spannedColumns = canvasColumns.slice(canvasColumns.indexOf(column), canvasColumns.indexOf(column) + colSpan);
+                const spannedRows = canvasRows.slice(row - 1, row - 1 + rowSpan);
+                const cellStyle: CSSProperties = {
+                  width: spannedColumns.reduce((total, col) => total + (columnWidths[col] ?? 112), 0),
+                  minWidth: spannedColumns.reduce((total, col) => total + (columnWidths[col] ?? 112), 0),
+                  height: spannedRows.reduce((total, rowNumber) => total + (rowHeights[rowNumber] ?? 36), 0),
+                  minHeight: spannedRows.reduce((total, rowNumber) => total + (rowHeights[rowNumber] ?? 36), 0),
+                };
+
+                return (
+                  <td
+                    key={address}
+                    rowSpan={rowSpan}
+                    colSpan={colSpan}
+                    className="border border-border p-0"
+                    style={cellStyle}
+                    onDoubleClick={() => !readOnly && onCellDoubleClick(address)}
+                  >
+                    {isActiveInput ? (
+                      <div className="relative h-full w-full">
+                        {inlineCompletion ? (
+                          <div
+                            className={`${getCellClasses(cell, selected)} pointer-events-none absolute inset-0 text-foreground`}
+                            aria-hidden="true"
+                          >
+                            <span className="text-transparent">{cellText}</span>
+                            <span className="text-muted-foreground/45">{inlineCompletion}</span>
+                          </div>
+                        ) : null}
+                        <input
+                          data-template-cell={address}
+                          className={`${getCellClasses(cell, selected)} relative z-10 outline-none`}
+                          style={{ width: "100%", height: "100%", backgroundColor: "transparent" }}
+                          value={cellText}
+                          onChange={(event) => onCellTextChange(event.target.value)}
+                          onClick={(event) => onCellClick(address, event)}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowUp") {
+                              event.preventDefault();
+                              onNavigateCell(address, "up");
+                              return;
+                            }
+                            if (event.key === "ArrowDown") {
+                              event.preventDefault();
+                              onNavigateCell(address, "down");
+                              return;
+                            }
+                            if (event.key === "ArrowLeft") {
+                              event.preventDefault();
+                              onNavigateCell(address, "left");
+                              return;
+                            }
+                            if (event.key === "ArrowRight") {
+                              event.preventDefault();
+                              onNavigateCell(address, "right");
+                              return;
+                            }
+                            if ((event.key === "Tab" || event.key === "Enter") && cellText.trim() && suggestions[0]) {
+                              event.preventDefault();
+                              onSuggestionClick(suggestions[0]);
+                              onStopEdit();
+                              return;
+                            }
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              onStopEdit();
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              onStopEdit();
+                            }
+                          }}
+                          aria-label={`Edit ${address}`}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        data-template-cell={address}
+                        onClick={(event) => !readOnly && onCellClick(address, event)}
+                        onDoubleClick={() => !readOnly && onCellDoubleClick(address)}
+                        onKeyDown={(event) => {
+                          if (readOnly) return;
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            onStartEdit(address);
+                          }
+                          if (event.key === " ") {
+                            event.preventDefault();
+                            onSelectAddress(address);
+                          }
+                          if (event.key === "ArrowUp") {
+                            event.preventDefault();
+                            onNavigateCell(address, "up");
+                          }
+                          if (event.key === "ArrowDown") {
+                            event.preventDefault();
+                            onNavigateCell(address, "down");
+                          }
+                          if (event.key === "ArrowLeft") {
+                            event.preventDefault();
+                            onNavigateCell(address, "left");
+                          }
+                          if (event.key === "ArrowRight") {
+                            event.preventDefault();
+                            onNavigateCell(address, "right");
+                          }
+                        }}
+                        className={getCellClasses(cell, selected)}
+                        style={{ width: "100%", height: "100%" }}
+                        aria-label={`Select ${address}`}
+                      >
+                        {cell?.value ?? ""}
+                      </button>
+                    )}
+                </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {!readOnly && cellText.trim() && suggestions.length && !optionsOpen ? (
+        <div className="absolute left-20 top-20 z-20 w-[420px] rounded-md border border-border bg-card p-3 shadow-xl">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-bold">Suggestions for {selectedFocus}</p>
+            <Badge variant="outline">{selectedRangeText}</Badge>
+          </div>
+          <div className="grid gap-2">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.code}
+                type="button"
+                className="grid grid-cols-[86px_1fr_auto] items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-left text-xs hover:bg-muted"
+                onClick={() => onSuggestionClick(suggestion)}
+              >
+                <Badge variant="outline">{suggestion.type}</Badge>
+                <span>
+                  <span className="block font-bold">{suggestion.label}</span>
+                  <span className="text-muted-foreground">{suggestion.note}</span>
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground">{suggestion.code}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BindingPanel({
+  selectedCell,
+  selectedRange,
+  cellText,
+  headerType,
+  bindingObject,
+  axisAlignment,
+  geographyScope,
+  showHeader,
+  headerLabel,
+  datatype,
+  required,
+  decimalPlaces,
+  validationRule,
+  horizontalAlign,
+  verticalAlign,
+  suggestions,
+  boundObjects,
+  operations,
+  onCellTextChange,
+  onHeaderTypeChange,
+  onBindingObjectChange,
+  onAxisAlignmentChange,
+  onGeographyScopeChange,
+  onShowHeaderChange,
+  onHeaderLabelChange,
+  onDatatypeChange,
+  onRequiredChange,
+  onDecimalPlacesChange,
+  onValidationRuleChange,
+  onHorizontalAlignChange,
+  onVerticalAlignChange,
+  onViewValues,
+  onBind,
+  onMerge,
+  onUnmerge,
+  onFreeze,
+  onMarkEditable,
+  onUnbindGroup,
+  onClose,
+}: {
+  selectedCell: string;
+  selectedRange: string;
+  cellText: string;
+  headerType: HeaderType;
+  bindingObject: BindingObjectCode;
+  axisAlignment: AxisAlignment;
+  geographyScope: GeographyScope;
+  showHeader: boolean;
+  headerLabel: string;
+  datatype: "NUMERIC" | "INTEGER" | "TEXT" | "DATE";
+  required: boolean;
+  decimalPlaces: number;
+  validationRule: string;
+  horizontalAlign: HorizontalAlign;
+  verticalAlign: VerticalAlign;
+  suggestions: typeof bindingOptions;
+  boundObjects: BoundObject[];
+  operations: CanvasOperation[];
+  onCellTextChange: (value: string) => void;
+  onHeaderTypeChange: (value: HeaderType) => void;
+  onBindingObjectChange: (value: BindingObjectCode) => void;
+  onAxisAlignmentChange: (value: AxisAlignment) => void;
+  onGeographyScopeChange: (value: GeographyScope) => void;
+  onShowHeaderChange: (value: boolean) => void;
+  onHeaderLabelChange: (value: string) => void;
+  onDatatypeChange: (value: "NUMERIC" | "INTEGER" | "TEXT" | "DATE") => void;
+  onRequiredChange: (value: boolean) => void;
+  onDecimalPlacesChange: (value: number) => void;
+  onValidationRuleChange: (value: string) => void;
+  onHorizontalAlignChange: (value: HorizontalAlign) => void;
+  onVerticalAlignChange: (value: VerticalAlign) => void;
+  onViewValues: () => void;
+  onBind: () => void;
+  onMerge: () => void;
+  onUnmerge: () => void;
+  onFreeze: () => void;
+  onMarkEditable: () => void;
+  onUnbindGroup: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Card className="min-w-0">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>Options</CardTitle>
+          <Button type="button" size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close options">
+            <X aria-hidden="true" className="size-4" />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="max-h-[760px] overflow-y-auto">
+        <div className="grid gap-3">
+          <Field label="Selected cell" value={selectedCell} readOnly />
+          <Field label="Selected range" value={selectedRange} readOnly />
+          <label className="grid gap-1 text-xs font-semibold">
+            Cell text / object search
+            <Input value={cellText} onChange={(event) => onCellTextChange(event.target.value)} placeholder="Type area, time, gender, measure..." />
+          </label>
+
+          {cellText ? (
+            <div className="grid gap-1 rounded-md bg-muted/50 p-2">
+              <p className="text-xs font-bold">Full-text matches</p>
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.code}
+                  type="button"
+                  className="grid grid-cols-[80px_1fr] gap-2 rounded-md bg-card px-2 py-2 text-left text-xs hover:bg-muted"
+                  onClick={() => {
+                    onHeaderTypeChange(suggestion.type);
+                    onBindingObjectChange(suggestion.code);
+                    if (suggestion.defaultAlignment !== "context") onAxisAlignmentChange(suggestion.defaultAlignment);
+                  }}
+                >
+                  <Badge variant="outline">{suggestion.type}</Badge>
+                  <span>
+                    <span className="block font-bold">{suggestion.label}</span>
+                    <span className="text-muted-foreground">{suggestion.note}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <SelectField
+            label="Header type"
+            value={headerType}
+            onChange={(value) => onHeaderTypeChange(value as HeaderType)}
+            options={[
+              { value: "Indicator", label: "Indicator" },
+              { value: "Dimension", label: "Dimension" },
+              { value: "Measure", label: "Measure" },
+            ]}
+          />
+          <SelectField
+            label="Object"
+            value={bindingObject}
+            onChange={(value) => onBindingObjectChange(value as BindingObjectCode)}
+            options={bindingOptions
+              .filter((option) => option.type === headerType)
+              .map((option) => ({ value: option.code, label: `${option.label} (${option.memberCount})` }))}
+          />
+          {bindingObject === "GEOGRAPHY" ? (
+            <SelectField
+              label="Geography scope"
+              value={geographyScope}
+              onChange={(value) => onGeographyScopeChange(value as GeographyScope)}
+              options={[
+                { value: "NATIONAL_ONLY", label: "National only" },
+                { value: "STATE_ONLY", label: "State rows only" },
+                { value: "NATIONAL_STATE", label: "National + state rows" },
+                { value: "NATIONAL_STATE_DISTRICT", label: "National + state + district rows" },
+                { value: "HIERARCHY_NATIONAL", label: "Hierarchy columns: national only" },
+                { value: "HIERARCHY_NATIONAL_STATE", label: "Hierarchy columns: national + state" },
+                { value: "HIERARCHY_NATIONAL_STATE_DISTRICT", label: "Hierarchy columns: national + state + district" },
+              ]}
+            />
+          ) : null}
+          <label className="grid gap-1 text-xs font-semibold">
+            Header label
+            <Input value={headerLabel} onChange={(event) => onHeaderLabelChange(event.target.value)} />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={onViewValues}>View values</Button>
+            <Button type="button" onClick={onBind}>Bind values</Button>
+          </div>
+          <SelectField
+            label="Show header"
+            value={String(showHeader)}
+            onChange={(value) => onShowHeaderChange(value === "true")}
+            options={[
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ]}
+          />
+          <SelectField
+            label="Axis alignment"
+            value={axisAlignment}
+            onChange={(value) => onAxisAlignmentChange(value as AxisAlignment)}
+            options={[
+              { value: "row", label: "Row align" },
+              { value: "column", label: "Column align" },
+            ]}
+          />
+          <SelectField
+            label="Column datatype"
+            value={datatype}
+            onChange={(value) => onDatatypeChange(value as "NUMERIC" | "INTEGER" | "TEXT" | "DATE")}
+            options={[
+              { value: "NUMERIC", label: "NUMERIC" },
+              { value: "INTEGER", label: "INTEGER" },
+              { value: "TEXT", label: "TEXT" },
+              { value: "DATE", label: "DATE" },
+            ]}
+          />
+          <SelectField
+            label="Required"
+            value={String(required)}
+            onChange={(value) => onRequiredChange(value === "true")}
+            options={[
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ]}
+          />
+          <label className="grid gap-1 text-xs font-semibold">
+            Decimal places
+            <Input value={decimalPlaces} onChange={(event) => onDecimalPlacesChange(Number(event.target.value) || 0)} />
+          </label>
+          <SelectField
+            label="Validation rules"
+            value={validationRule}
+            onChange={onValidationRuleChange}
+            options={[
+              { value: "NUMERIC_NON_NEGATIVE", label: "Non-negative" },
+              { value: "REQUIRED_WHEN_REQUESTED", label: "Required when requested" },
+              { value: "DECIMAL_PLACES_2", label: "Two decimals" },
+            ]}
+          />
+          <SelectField
+            label="Horizontal align"
+            value={horizontalAlign}
+            onChange={(value) => onHorizontalAlignChange(value as HorizontalAlign)}
+            options={[
+              { value: "left", label: "Left" },
+              { value: "center", label: "Middle" },
+              { value: "right", label: "Right" },
+            ]}
+          />
+          <SelectField
+            label="Vertical align"
+            value={verticalAlign}
+            onChange={(value) => onVerticalAlignChange(value as VerticalAlign)}
+            options={[
+              { value: "top", label: "Top" },
+              { value: "middle", label: "Middle" },
+              { value: "bottom", label: "Bottom" },
+            ]}
+          />
+          <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
+            <Button type="button" variant="outline" onClick={onMerge}>Merge</Button>
+            <Button type="button" variant="outline" onClick={onUnmerge}>Unmerge</Button>
+            <Button type="button" variant="outline" onClick={onFreeze}>Freeze</Button>
+            <Button type="button" variant="outline" onClick={onMarkEditable}>Editable cells</Button>
+            <Button type="button" variant="destructive" onClick={onUnbindGroup} className="col-span-2">Unbind selected group</Button>
+          </div>
+
+          <div className="grid gap-2 border-t border-border pt-3">
+            <p className="text-xs font-bold">Bound objects</p>
+            {boundObjects.length ? (
+              boundObjects.map((binding) => (
+                <div key={binding.code} className="rounded-md bg-muted/40 p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold">{binding.label}</span>
+                    <Badge variant="outline">{binding.alignment}</Badge>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{binding.type} / {binding.range} / {binding.memberCount} member(s)</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">No objects bound yet.</p>
+            )}
+          </div>
+
+          <div className="grid gap-2 border-t border-border pt-3">
+            <p className="text-xs font-bold">Recent canvas actions</p>
+            {operations.slice(-4).map((operation) => (
+              <div key={operation.id} className="rounded-md bg-muted/40 p-2 text-xs">
+                <p className="font-bold">{operation.label}</p>
+                <p className="text-muted-foreground">{operation.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function TemplateManagementPage() {
+  const [templates, setTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
+  const [activeTab, setActiveTab] = useState<TemplateTab>("list");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TemplateStatus | "ALL">("ALL");
+  const [selectedTemplateCode, setSelectedTemplateCode] = useState("TPL_NIF_1_2_1_AREA_GENDER_TIME_DRAFT");
+  const [modal, setModal] = useState<TemplateModal>(null);
+  const [designerStage, setDesignerStage] = useState<DesignerStage>("basics");
+  const [selectedAnchor, setSelectedAnchor] = useState("B2");
+  const [selectedFocus, setSelectedFocus] = useState("B2");
+  const [editingCell, setEditingCell] = useState<string | null>("B2");
+  const [cellText, setCellText] = useState("");
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [headerType, setHeaderType] = useState<HeaderType>("Dimension");
+  const [bindingObject, setBindingObject] = useState<BindingObjectCode>("GEOGRAPHY");
+  const [axisAlignment, setAxisAlignment] = useState<AxisAlignment>("row");
+  const [geographyScope, setGeographyScope] = useState<GeographyScope>("STATE_ONLY");
+  const [showHeader, setShowHeader] = useState(true);
+  const [headerLabel, setHeaderLabel] = useState("Location");
+  const [datatype, setDatatype] = useState<"NUMERIC" | "INTEGER" | "TEXT" | "DATE">("NUMERIC");
+  const [required, setRequired] = useState(true);
+  const [decimalPlaces, setDecimalPlaces] = useState(2);
+  const [validationRule, setValidationRule] = useState("NUMERIC_NON_NEGATIVE");
+  const [horizontalAlign, setHorizontalAlign] = useState<HorizontalAlign>("center");
+  const [verticalAlign, setVerticalAlign] = useState<VerticalAlign>("top");
+  const [cells, setCells] = useState<Record<string, CanvasCell>>(buildHeaderCells());
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(defaultColumnWidths);
+  const [rowHeights, setRowHeights] = useState<Record<number, number>>(defaultRowHeights);
+  const [visibleColumnCount, setVisibleColumnCount] = useState(initialVisibleColumnCount);
+  const [visibleRowCount, setVisibleRowCount] = useState(initialVisibleRowCount);
+  const [rowAxes, setRowAxes] = useState<BindingObjectCode[]>([]);
+  const [columnAxes, setColumnAxes] = useState<BindingObjectCode[]>([]);
+  const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
+  const [gridContextMenu, setGridContextMenu] = useState<GridContextMenu>(null);
+  const [isDesignerFullPage, setIsDesignerFullPage] = useState(false);
+  const [boundObjects, setBoundObjects] = useState<BoundObject[]>([]);
+  const [operations, setOperations] = useState<CanvasOperation[]>([
+    { id: "start", label: "Designer opened", detail: "Blank governed template canvas is ready." },
+  ]);
+  const [activityMessage, setActivityMessage] = useState("Click a cell to type. Suggestions appear while typing. Double-click any cell to open options.");
+
+  const selectedTemplate = templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0];
+  const selectedVersion = templateVersions.find((version) => version.version_code === selectedTemplate.current_version_code) ?? templateVersions[0];
+  const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
+  const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
+  const rulesForVersion = templateValidationRules.filter((rule) => rule.version_code === selectedVersion.version_code);
+  const generatedRows = getMembersForObject("GEOGRAPHY", geographyScope).length;
+  const generatedColumns = getMembersForObject("TIME_PERIOD").length * getMembersForObject("AREA_TYPE").length * getMembersForObject("GENDER").length;
+  const selectedRange = rangeLabel(selectedAnchor, selectedFocus);
+  const visibleColumns = canvasColumns.slice(0, visibleColumnCount);
+  const visibleRows = canvasRows.slice(0, visibleRowCount);
+
+  const suggestions = useMemo(() => {
+    const normalized = cellText.trim().toLowerCase();
+    if (!normalized) return bindingOptions.slice(0, 3);
+    return bindingOptions.filter((option) => `${option.searchText} ${option.label} ${option.code}`.toLowerCase().includes(normalized));
+  }, [cellText]);
+
+  const filteredTemplates = useMemo(() => {
+    const normalized = query.toLowerCase();
+    return templates.filter((template) => {
+      const matchesStatus = statusFilter === "ALL" || template.status === statusFilter;
+      const matchesQuery = Object.values(template).join(" ").toLowerCase().includes(normalized);
+      return matchesStatus && matchesQuery;
+    });
+  }, [query, statusFilter, templates]);
+
+  const statCards = [
+    { label: "Templates", value: templates.length, helper: `${templates.filter((item) => item.status === "ACTIVE").length} active`, detail: "Definitions by selected unit" },
+    { label: "Drafts", value: templates.filter((item) => item.status === "DRAFT").length, helper: "Inactive until publish", detail: "Safe working copies" },
+    { label: "Generated cells", value: generatedRows * generatedColumns, helper: `${generatedRows} rows x ${generatedColumns} columns`, detail: "From dimension bindings" },
+    { label: "Bound objects", value: boundObjects.length, helper: `${rulesForVersion.length} rules available`, detail: "Axes, measure, indicator" },
+  ];
+
+  const templateJson = useMemo(() => {
+    const editableCells = Object.entries(cells)
+      .filter(([, cell]) => cell.role === "INPUT" || cell.editable)
+      .slice(0, 80)
+      .map(([address, cell]) => ({
+        address,
+        measure_code: "INDICATOR_VALUE",
+        value_type: cell.datatype ?? datatype,
+        unit_code: "PERCENT",
+        required: cell.required ?? required,
+        validation_rule: cell.validationRule ?? validationRule,
+        align: cell.align ?? horizontalAlign,
+        vertical_align: cell.valign ?? verticalAlign,
+      }));
+
+    const axisMembers = (code: BindingObjectCode) =>
+      getMembersForObject(code, geographyScope).map((member) => ({
+        member_code: member.member_code,
+        label: member.name,
+        parent_member_code: member.parent_member_code ?? null,
+      }));
+
+    return JSON.stringify(
+      {
+        template_code: selectedTemplate.template_code,
+        template_version_code: selectedTemplate.current_version_code,
+        indicator: {
+          national_indicator_code: selectedTemplate.mapped_indicator_code,
+          global_indicator_code: selectedTemplate.mapped_global_indicator_code,
+          name: selectedTemplate.mapped_indicator_name,
+          source_unit_code: selectedTemplate.source_unit_code,
+        },
+        geography_scope: geographyScope,
+        row_axes: rowAxes.map((code) => ({
+          axis_code: code,
+          axis_role: "ROW",
+          members: axisMembers(code),
+        })),
+        column_axes: columnAxes.map((code) => ({
+          axis_code: code,
+          axis_role: "COLUMN",
+          members: axisMembers(code),
+        })),
+        measure: {
+          measure_code: "INDICATOR_VALUE",
+          value_type: datatype,
+          unit_code: "PERCENT",
+          required,
+          decimal_places: decimalPlaces,
+          validation_rule: validationRule,
+        },
+        editable_cells: editableCells,
+        data_entry_binding_shape: {
+          rows_from: rowAxes,
+          columns_from: columnAxes,
+          value_object: {
+            cell_code: "generated from row/column axis members",
+            value_numeric: "entered by department user",
+            unit_code: "PERCENT",
+            dimensions: ["geography", "time_period", "area_type", "gender"].filter((item) =>
+              [...rowAxes, ...columnAxes].join(" ").toLowerCase().includes(item.split("_")[0]),
+            ),
+          },
+        },
+      },
+      null,
+      2,
+    );
+  }, [cells, columnAxes, datatype, decimalPlaces, geographyScope, horizontalAlign, required, rowAxes, selectedTemplate, validationRule, verticalAlign]);
+
+  const addOperation = (label: string, detail: string) => {
+    setOperations((current) => [...current, { id: `${Date.now()}-${label}`, label, detail }]);
+  };
+
+  const snapshot = useCallback((): CanvasSnapshot => ({
+    cells,
+    columnWidths,
+    rowHeights,
+    boundObjects,
+    rowAxes,
+    columnAxes,
+    visibleColumnCount,
+    visibleRowCount,
+  }), [boundObjects, cells, columnAxes, columnWidths, rowAxes, rowHeights, visibleColumnCount, visibleRowCount]);
+
+  const pushUndo = () => {
+    setUndoStack((current) => [...current, snapshot()].slice(-30));
+    setRedoStack([]);
+  };
+
+  const restoreSnapshot = useCallback((next: CanvasSnapshot) => {
+    setCells(next.cells);
+    setColumnWidths(next.columnWidths);
+    setRowHeights(next.rowHeights);
+    setBoundObjects(next.boundObjects);
+    setRowAxes(next.rowAxes);
+    setColumnAxes(next.columnAxes);
+    setVisibleColumnCount(next.visibleColumnCount);
+    setVisibleRowCount(next.visibleRowCount);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((current) => {
+      const previous = current.at(-1);
+      if (!previous) return current;
+      setRedoStack((redo) => [...redo, snapshot()].slice(-30));
+      restoreSnapshot(previous);
+      return current.slice(0, -1);
+    });
+  }, [restoreSnapshot, snapshot]);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((current) => {
+      const next = current.at(-1);
+      if (!next) return current;
+      setUndoStack((undo) => [...undo, snapshot()].slice(-30));
+      restoreSnapshot(next);
+      return current.slice(0, -1);
+    });
+  }, [restoreSnapshot, snapshot]);
+
+  const setCell = (next: Record<string, CanvasCell>, address: string, update: CanvasCell) => {
+    next[address] = { ...(next[address] ?? {}), ...update };
+  };
+
+  const buildStructuredGrid = (
+    nextRowAxes: BindingObjectCode[],
+    nextColumnAxes: BindingObjectCode[],
+    includeMeasureCells = boundObjects.some((item) => item.code === "INDICATOR_VALUE"),
+    scopeOverride = geographyScope,
+  ) => {
+    const next: Record<string, CanvasCell> = buildHeaderCells(selectedTemplate);
+    const activeGeographyScope = scopeOverride;
+    const usesGeographyHierarchy = nextRowAxes.includes("GEOGRAPHY") && isHierarchyGeographyScope(activeGeographyScope);
+    const regularRowAxes = nextRowAxes.filter((code) => !(code === "GEOGRAPHY" && usesGeographyHierarchy));
+    const regularRowAxisMembers = regularRowAxes.map((code) => ({
+      code,
+      members: getMembersForObject(code, activeGeographyScope),
+    }));
+    const regularRowCombinations = cartesianProduct(regularRowAxisMembers.map((axis) => axis.members));
+    const geographyHeaderLabel = headerLabel || "Location";
+    const geographyHierarchyLabels = usesGeographyHierarchy ? getGeographyHierarchyColumns(activeGeographyScope, geographyHeaderLabel) : [];
+    const rowAxisColumns: Array<{ code: BindingObjectCode; label: string }> = [
+      ...geographyHierarchyLabels.map((label) => ({ code: "GEOGRAPHY" as BindingObjectCode, label })),
+      ...regularRowAxes.map((code) => ({ code, label: code === "GEOGRAPHY" ? geographyHeaderLabel : optionFor(code).label })),
+    ];
+    const geographyRows = usesGeographyHierarchy ? getGeographyHierarchyRows(activeGeographyScope) : [];
+    const hierarchyValues = (row: GeographyHierarchyRow): StructuredRowCell[] => {
+      const values = [row.country, row.state, row.district].slice(0, geographyHierarchyLabels.length);
+      return values.map((member, index) => ({
+        axisCode: "GEOGRAPHY",
+        value: member?.name ?? "",
+        memberCode: member?.member_code,
+        columnLabel: geographyHierarchyLabels[index] ?? geographyHeaderLabel,
+      }));
+    };
+    const rowRecords: StructuredRowCell[][] = usesGeographyHierarchy
+      ? geographyRows.flatMap((geographyRow) =>
+          regularRowCombinations.map((combination) => [
+            ...hierarchyValues(geographyRow),
+            ...combination.map((member, index) => {
+              const code = regularRowAxisMembers[index]?.code ?? "GEOGRAPHY";
+              return {
+                axisCode: code,
+                value: member.name,
+                memberCode: member.member_code,
+                columnLabel: optionFor(code).label,
+              };
+            }),
+          ]),
+        )
+      : regularRowCombinations.map((combination) =>
+          combination.map((member, index) => {
+            const code = regularRowAxisMembers[index]?.code ?? "GEOGRAPHY";
+            return {
+              axisCode: code,
+              value: member.name,
+              memberCode: member.member_code,
+                columnLabel: code === "GEOGRAPHY" ? geographyHeaderLabel : optionFor(code).label,
+            };
+          }),
+        );
+    const rowAxisColumnCount = Math.max(rowAxisColumns.length, 1);
+    const columnsStart = rowAxisColumnCount + 1;
+    const headerStartRow = 2;
+    const axisMembers = nextColumnAxes.map((code) => ({
+      code,
+      members: getMembersForObject(code, activeGeographyScope),
+    }));
+    const headerRowCount = Math.max(axisMembers.length, 1);
+    const dataStartRow = headerStartRow + headerRowCount;
+    const leafColumnCount = Math.max(1, axisMembers.reduce((total, axis) => total * Math.max(axis.members.length, 1), 1));
+    const lastDataColumn = Math.min(canvasColumns.length, columnsStart + leafColumnCount - 1);
+    const requiredVisibleColumns = Math.min(canvasColumns.length, Math.max(initialVisibleColumnCount, lastDataColumn + 1));
+    const requiredVisibleRows = Math.min(canvasRows.length, Math.max(initialVisibleRowCount, dataStartRow + Math.max(rowRecords.length, 6)));
+
+    const set = (address: string, update: CanvasCell) => setCell(next, address, update);
+    const productAfter = (axisIndex: number) =>
+      axisMembers.slice(axisIndex + 1).reduce((total, axis) => total * Math.max(axis.members.length, 1), 1);
+
+    rowAxisColumns.forEach((axis, axisIndex) => {
+      const col = axisIndex + 1;
+      const owner = coordToAddress(headerStartRow, col);
+      const groupAnchor = axis.code === "GEOGRAPHY" && usesGeographyHierarchy ? coordToAddress(headerStartRow, 1) : owner;
+      const groupFocus =
+        axis.code === "GEOGRAPHY" && usesGeographyHierarchy
+          ? coordToAddress(dataStartRow + Math.max(rowRecords.length - 1, 0), geographyHierarchyLabels.length)
+          : coordToAddress(dataStartRow + Math.max(rowRecords.length - 1, 0), col);
+      set(owner, {
+        value: axis.label,
+        role: "HEADER",
+        boundCode: axis.code,
+        align: "center",
+        valign: "middle",
+        frozen: true,
+        merge: { rowSpan: headerRowCount, colSpan: 1 },
+        groupId: `axis-${axis.code}-row`,
+        groupLabel: `${optionFor(axis.code).label} rows`,
+        groupAnchor,
+        groupFocus,
+        groupBindingCode: axis.code,
+        groupAlignment: "row",
+      });
+      for (let row = headerStartRow + 1; row < dataStartRow; row += 1) {
+        set(coordToAddress(row, col), {
+          mergeOwner: owner,
+          groupId: `axis-${axis.code}-row`,
+          groupLabel: `${optionFor(axis.code).label} rows`,
+          groupAnchor,
+          groupFocus,
+          groupBindingCode: axis.code,
+          groupAlignment: "row",
+        });
+      }
+    });
+
+    rowRecords.forEach((record, rowIndex) => {
+      record.forEach((member, axisIndex) => {
+        const code = member.axisCode;
+        const col = axisIndex + 1;
+        const groupAnchor = code === "GEOGRAPHY" && usesGeographyHierarchy ? coordToAddress(headerStartRow, 1) : coordToAddress(headerStartRow, col);
+        const groupFocus =
+          code === "GEOGRAPHY" && usesGeographyHierarchy
+            ? coordToAddress(dataStartRow + Math.max(rowRecords.length - 1, 0), geographyHierarchyLabels.length)
+            : coordToAddress(dataStartRow + Math.max(rowRecords.length - 1, 0), col);
+        set(coordToAddress(dataStartRow + rowIndex, col), {
+          value: member.value,
+          role: "DIMENSION_MEMBER",
+          boundCode: member.memberCode,
+          align: "left",
+          groupId: `axis-${code}-row`,
+          groupLabel: `${optionFor(code).label} rows`,
+          groupAnchor,
+          groupFocus,
+          groupBindingCode: code,
+          groupAlignment: "row",
+        });
+      });
+    });
+
+    axisMembers.forEach((axis, axisIndex) => {
+      const row = headerStartRow + axisIndex;
+      const span = productAfter(axisIndex);
+      const cycle = span * Math.max(axis.members.length, 1);
+      const groupAnchor = coordToAddress(row, columnsStart);
+      const groupFocus = coordToAddress(row, lastDataColumn);
+      for (let col = columnsStart; col <= lastDataColumn; col += cycle) {
+        axis.members.forEach((member, memberIndex) => {
+          const ownerCol = col + memberIndex * span;
+          if (ownerCol > lastDataColumn) return;
+          const owner = coordToAddress(row, ownerCol);
+          const effectiveSpan = Math.min(span, lastDataColumn - ownerCol + 1);
+          set(owner, {
+            value: member.name,
+            role: "HEADER",
+            boundCode: member.member_code,
+            align: "center",
+            valign: "middle",
+            frozen: true,
+            merge: effectiveSpan > 1 ? { rowSpan: 1, colSpan: effectiveSpan } : undefined,
+            groupId: `axis-${axis.code}`,
+            groupLabel: `${optionFor(axis.code).label} columns`,
+            groupAnchor,
+            groupFocus,
+            groupBindingCode: axis.code,
+            groupAlignment: "column",
+          });
+          for (let hiddenCol = ownerCol + 1; hiddenCol < ownerCol + effectiveSpan; hiddenCol += 1) {
+            set(coordToAddress(row, hiddenCol), {
+              mergeOwner: owner,
+              groupId: `axis-${axis.code}`,
+              groupLabel: `${optionFor(axis.code).label} columns`,
+              groupAnchor,
+              groupFocus,
+              groupBindingCode: axis.code,
+              groupAlignment: "column",
+            });
+          }
+        });
+      }
+    });
+
+    if (includeMeasureCells && rowRecords.length) {
+      rowRecords.forEach((_, rowIndex) => {
+        for (let col = columnsStart; col <= lastDataColumn; col += 1) {
+          set(coordToAddress(dataStartRow + rowIndex, col), {
+            value: "",
+            role: "INPUT",
+            boundCode: "INDICATOR_VALUE",
+            editable: true,
+            required,
+            datatype,
+            validationRule,
+            align: horizontalAlign,
+            valign: verticalAlign,
+            groupId: "measure-input-cells",
+            groupLabel: "Indicator value cells",
+            groupAnchor: coordToAddress(dataStartRow, columnsStart),
+            groupFocus: coordToAddress(dataStartRow + rowRecords.length - 1, lastDataColumn),
+            groupBindingCode: "INDICATOR_VALUE",
+            groupAlignment: "context",
+          });
+        }
+      });
+    }
+
+    setVisibleColumnCount(requiredVisibleColumns);
+    setVisibleRowCount(requiredVisibleRows);
+    return next;
+  };
+
+  const clearMergeInRange = (next: Record<string, CanvasCell>, anchor: string, focus: string) => {
+    const addresses = rangeAddresses(anchor, focus);
+    addresses.forEach((address) => {
+      next[address] = { ...(next[address] ?? {}), merge: undefined, mergeOwner: undefined };
+    });
+  };
+
+  const clearCellsInRange = (next: Record<string, CanvasCell>, anchor: string, focus: string) => {
+    rangeAddresses(anchor, focus).forEach((address) => {
+      delete next[address];
+    });
+  };
+
+  const mergeRangeInState = (anchor: string, focus: string) => {
+    const { start, end } = normalizeRange(anchor, focus);
+    const owner = coordToAddress(start.row, start.col);
+    const addresses = rangeAddresses(anchor, focus);
+    const rowSpan = end.row - start.row + 1;
+    const colSpan = end.col - start.col + 1;
+
+    if (rowSpan === 1 && colSpan === 1) return;
+
+    setCells((current) => {
+      const next = { ...current };
+      clearMergeInRange(next, anchor, focus);
+      addresses.forEach((address) => {
+        if (address === owner) {
+          next[address] = { ...(next[address] ?? {}), merge: { rowSpan, colSpan }, mergeOwner: undefined };
+        } else {
+          next[address] = { ...(next[address] ?? {}), merge: undefined, mergeOwner: owner };
+        }
+      });
+      return next;
+    });
+  };
+
+  const applyToSelectedRange = (update: CanvasCell) => {
+    setCells((current) => {
+      const next = { ...current };
+      rangeAddresses(selectedAnchor, selectedFocus).forEach((address) => setCell(next, address, update));
+      return next;
+    });
+  };
+
+  const getSelectableRangeForAddress = (address: string) => {
+    const cell = cells[address];
+    const ownerAddress = cell?.mergeOwner ?? address;
+    const ownerCell = cells[ownerAddress] ?? cell;
+
+    if (ownerCell?.groupAnchor && ownerCell.groupFocus) {
+      return {
+        anchor: ownerCell.groupAnchor,
+        focus: ownerCell.groupFocus,
+        label: ownerCell.groupLabel,
+        value: ownerCell.value ?? "",
+        bindingCode: ownerCell.groupBindingCode,
+        alignment: ownerCell.groupAlignment,
+      };
+    }
+
+    if (ownerCell?.merge) {
+      const ownerCoord = addressToCoord(ownerAddress);
+      return {
+        anchor: ownerAddress,
+        focus: coordToAddress(ownerCoord.row + ownerCell.merge.rowSpan - 1, ownerCoord.col + ownerCell.merge.colSpan - 1),
+        label: ownerCell.value,
+        value: ownerCell.value ?? "",
+        bindingCode: ownerCell.groupBindingCode,
+        alignment: ownerCell.groupAlignment,
+      };
+    }
+
+    return {
+      anchor: address,
+      focus: address,
+      label: undefined,
+      value: ownerCell?.value ?? "",
+      bindingCode: ownerCell?.groupBindingCode,
+      alignment: ownerCell?.groupAlignment,
+    };
+  };
+
+  const handleSelectCell = (address: string, event: MouseEvent<HTMLButtonElement | HTMLTableCellElement | HTMLInputElement>) => {
+    if (event.shiftKey) {
+      setSelectedFocus(address);
+      setEditingCell(null);
+      setDesignerStage("options");
+      focusTemplateCell(address);
+      return;
+    }
+
+    const nextSelection = getSelectableRangeForAddress(address);
+    setSelectedAnchor(nextSelection.anchor);
+    setSelectedFocus(nextSelection.focus);
+    setCellText(nextSelection.value);
+    setEditingCell(address);
+    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
+    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    setDesignerStage("typing");
+    if (nextSelection.label) {
+      setActivityMessage(`${nextSelection.label} selected as a group. Changes apply to ${rangeLabel(nextSelection.anchor, nextSelection.focus)}.`);
+    }
+    focusTemplateCell(address);
+  };
+
+  const handleSelectAddress = (address: string) => {
+    const nextSelection = getSelectableRangeForAddress(address);
+    setSelectedAnchor(nextSelection.anchor);
+    setSelectedFocus(nextSelection.focus);
+    setCellText(nextSelection.value);
+    setEditingCell(null);
+    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
+    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    focusTemplateCell(address);
+  };
+
+  const handleDoubleClick = (address: string) => {
+    const nextSelection = getSelectableRangeForAddress(address);
+    setSelectedAnchor(nextSelection.anchor);
+    setSelectedFocus(nextSelection.focus);
+    setCellText(nextSelection.value);
+    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
+    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    setEditingCell(null);
+    setOptionsOpen(true);
+    setDesignerStage("options");
+  };
+
+  const handleStartEdit = (address: string) => {
+    const nextSelection = getSelectableRangeForAddress(address);
+    setSelectedAnchor(nextSelection.anchor);
+    setSelectedFocus(nextSelection.focus);
+    setCellText(nextSelection.value);
+    setEditingCell(address);
+    setDesignerStage("typing");
+    focusTemplateCell(address);
+  };
+
+  const handleStopEdit = () => {
+    setEditingCell(null);
+    setDesignerStage(optionsOpen ? "options" : "binding");
+    focusTemplateCell(selectedFocus);
+  };
+
+  const handleNavigateCell = (address: string, direction: NavigationDirection) => {
+    const current = addressToCoord(address);
+    const next = {
+      up: coordToAddress(Math.max(1, current.row - 1), current.col),
+      down: coordToAddress(Math.min(canvasRows.length, current.row + 1), current.col),
+      left: coordToAddress(current.row, Math.max(1, current.col - 1)),
+      right: coordToAddress(current.row, Math.min(canvasColumns.length, current.col + 1)),
+    }[direction];
+    const nextSelection = getSelectableRangeForAddress(next);
+    setSelectedAnchor(nextSelection.anchor);
+    setSelectedFocus(nextSelection.focus);
+    setCellText(nextSelection.value);
+    setEditingCell(null);
+    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
+    focusTemplateCell(next);
+  };
+
+  const handleCellTextChange = (value: string) => {
+    setCellText(value);
+    setCells((current) => ({
+      ...current,
+      [selectedFocus]: {
+        ...(current[selectedFocus] ?? {}),
+        value,
+      },
+    }));
+    setDesignerStage(value ? "typing" : "basics");
+  };
+
+  const handleSuggestionClick = (suggestion: (typeof bindingOptions)[number]) => {
+    setHeaderType(suggestion.type);
+    setBindingObject(suggestion.code);
+    setHeaderLabel(suggestion.code === "GEOGRAPHY" ? "Location" : suggestion.label);
+    if (suggestion.defaultAlignment !== "context") setAxisAlignment(suggestion.defaultAlignment);
+    setOptionsOpen(true);
+    setDesignerStage("options");
+    setActivityMessage(`${suggestion.label} selected. Choose options, then click Bind values.`);
+  };
+
+  const handleBindingObjectChange = (code: BindingObjectCode) => {
+    const option = optionFor(code);
+    setBindingObject(code);
+    setHeaderType(option.type);
+    setHeaderLabel(code === "GEOGRAPHY" ? "Location" : option.label);
+    if (option.defaultAlignment !== "context") setAxisAlignment(option.defaultAlignment);
+  };
+
+  const handleHeaderLabelChange = (value: string) => {
+    setHeaderLabel(value);
+    setCells((current) => {
+      const next = { ...current };
+      const selection = getSelectableRangeForAddress(selectedFocus);
+      const ownerAddress = next[selection.anchor]?.mergeOwner ?? selection.anchor;
+      const ownerCell = next[ownerAddress];
+
+      if (ownerCell?.role === "HEADER" && ownerCell.groupBindingCode === bindingObject) {
+        next[ownerAddress] = { ...ownerCell, value };
+        return next;
+      }
+
+      if (bindingObject === "GEOGRAPHY") {
+        const geographyHeader = Object.entries(next).find(([, cell]) =>
+          cell.role === "HEADER" &&
+          cell.groupBindingCode === "GEOGRAPHY" &&
+          cell.groupAlignment === "row" &&
+          !cell.mergeOwner,
+        );
+        if (geographyHeader) {
+          const [address, cell] = geographyHeader;
+          next[address] = { ...cell, value: value || "Location" };
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const recordBinding = (code: BindingObjectCode, range: string, alignment: AxisAlignment | "context") => {
+    const option = optionFor(code);
+    const binding: BoundObject = {
+      code,
+      label: option.label,
+      type: option.type,
+      alignment,
+      range,
+      memberCount: option.memberCount,
+    };
+    setBoundObjects((current) => {
+      const next = current.filter((item) => item.code !== code);
+      return [...next, binding];
+    });
+  };
+
+  const objectsFromAxes = (
+    nextRowAxes: BindingObjectCode[],
+    nextColumnAxes: BindingObjectCode[],
+    includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE"),
+    scopeOverride = geographyScope,
+  ) => {
+    const next: BoundObject[] = [];
+    nextRowAxes.forEach((code, index) => {
+      next.push({
+        code,
+        label: optionFor(code).label,
+        type: "Dimension",
+        alignment: "row",
+        range: `${coordToAddress(2, index + 1)}`,
+        memberCount: getMembersForObject(code, scopeOverride).length,
+      });
+    });
+    nextColumnAxes.forEach((code) => {
+      next.push({
+        code,
+        label: optionFor(code).label,
+        type: "Dimension",
+        alignment: "column",
+        range: code === "TIME_PERIOD" ? "B2" : code === "AREA_TYPE" ? "B3" : "B4",
+        memberCount: getMembersForObject(code, scopeOverride).length,
+      });
+    });
+    if (includeMeasure) {
+      next.push({
+        code: "INDICATOR_VALUE",
+        label: optionFor("INDICATOR_VALUE").label,
+        type: "Measure",
+        alignment: "context",
+        range: "Data cells",
+        memberCount: 1,
+      });
+    }
+    return next;
+  };
+
+  const bindRowDimension = (next: Record<string, CanvasCell>, code: BindingObjectCode) => {
+    const { start } = normalizeRange(selectedAnchor, selectedFocus);
+    const members = getMembersForObject(code, geographyScope);
+    const startRow = start.row + (showHeader ? 1 : 0);
+    const groupId = `${code}-${Date.now()}`;
+    const groupLabel = `${optionFor(code).label} rows`;
+    clearCellsInRange(next, selectedAnchor, selectedFocus);
+
+    if (code === "GEOGRAPHY" && isHierarchyGeographyScope(geographyScope)) {
+      const rows = [
+        { country: "India", state: "Karnataka", district: "Bengaluru Urban" },
+        { country: "India", state: "Karnataka", district: "Mysuru" },
+        { country: "India", state: "Tamil Nadu", district: "" },
+        { country: "India", state: "Maharashtra", district: "" },
+        { country: "India", state: "Kerala", district: "" },
+      ];
+      const headerRow = showHeader ? start.row : undefined;
+      const dataStartRow = start.row + (showHeader ? 1 : 0);
+      const groupAnchor = coordToAddress(start.row, start.col);
+      const groupFocus = coordToAddress(dataStartRow + rows.length - 1, start.col + 2);
+
+      if (headerRow) {
+        ["Country", "State", "District"].forEach((label, index) => {
+          setCell(next, coordToAddress(headerRow, start.col + index), {
+            value: index === 0 ? headerLabel || label : label,
+            role: "HEADER",
+            boundCode: code,
+            align: "center",
+            frozen: true,
+            groupId,
+            groupLabel,
+            groupAnchor,
+            groupFocus,
+            groupBindingCode: code,
+            groupAlignment: "row",
+          });
+        });
+      }
+
+      rows.forEach((row, rowIndex) => {
+        [row.country, row.state, row.district].forEach((value, colIndex) => {
+          setCell(next, coordToAddress(dataStartRow + rowIndex, start.col + colIndex), {
+            value,
+            role: "DIMENSION_MEMBER",
+            boundCode: code,
+            align: "left",
+            groupId,
+            groupLabel,
+            groupAnchor,
+            groupFocus,
+            groupBindingCode: code,
+            groupAlignment: "row",
+          });
+        });
+      });
+      return;
+    }
+
+    const groupAnchor = coordToAddress(start.row, start.col);
+    const groupFocus = coordToAddress(startRow + members.length - 1, start.col);
+    if (showHeader) {
+      setCell(next, coordToAddress(start.row, start.col), {
+        value: headerLabel,
+        role: "HEADER",
+        boundCode: code,
+        align: horizontalAlign,
+        valign: verticalAlign,
+        frozen: true,
+        groupId,
+        groupLabel,
+        groupAnchor,
+        groupFocus,
+        groupBindingCode: code,
+        groupAlignment: "row",
+      });
+    }
+    members.forEach((member, index) => {
+      setCell(next, coordToAddress(startRow + index, start.col), {
+        value: member.name,
+        role: "DIMENSION_MEMBER",
+        boundCode: member.member_code,
+        align: "left",
+        groupId,
+        groupLabel,
+        groupAnchor,
+        groupFocus,
+        groupBindingCode: code,
+        groupAlignment: "row",
+      });
+    });
+  };
+
+  const bindColumnDimension = (next: Record<string, CanvasCell>, code: BindingObjectCode) => {
+    const { start, end } = normalizeRange(selectedAnchor, selectedFocus);
+    const width = end.col - start.col + 1;
+    const members = getMembersForObject(code, geographyScope);
+    const groupId = `${code}-${Date.now()}`;
+    const groupLabel = `${optionFor(code).label} columns`;
+    const groupAnchor = coordToAddress(start.row, start.col);
+    const groupFocus = coordToAddress(end.row, Math.max(end.col, start.col + members.length - 1));
+    const groupFields = {
+      groupId,
+      groupLabel,
+      groupAnchor,
+      groupFocus,
+      groupBindingCode: code,
+      groupAlignment: "column" as const,
+    };
+    clearCellsInRange(next, selectedAnchor, selectedFocus);
+    clearMergeInRange(next, selectedAnchor, selectedFocus);
+
+    if (code === "GEOGRAPHY") {
+      const valueRow = start.row + (showHeader ? 1 : 0);
+      clearCellsInRange(next, coordToAddress(start.row, start.col), coordToAddress(valueRow, start.col + Math.max(members.length - 1, 0)));
+      const geoGroupFields = {
+        ...groupFields,
+        groupFocus: coordToAddress(valueRow, start.col + Math.max(members.length - 1, 0)),
+      };
+      if (showHeader) {
+        const headerOwner = coordToAddress(start.row, start.col);
+        const headerSpan = Math.max(members.length, 1);
+        setCell(next, headerOwner, {
+          value: headerLabel || "Location",
+          role: "HEADER",
+          boundCode: code,
+          align: "center",
+          frozen: true,
+          merge: { rowSpan: 1, colSpan: headerSpan },
+          ...geoGroupFields,
+        });
+        for (let hiddenCol = start.col + 1; hiddenCol < start.col + headerSpan; hiddenCol += 1) {
+          setCell(next, coordToAddress(start.row, hiddenCol), { mergeOwner: headerOwner, merge: undefined, ...geoGroupFields });
+        }
+      }
+      members.forEach((member, index) => {
+        setCell(next, coordToAddress(valueRow, start.col + index), {
+          value: member.name,
+          role: "DIMENSION_MEMBER",
+          boundCode: member.member_code,
+          align: "center",
+          ...geoGroupFields,
+        });
+      });
+      return;
+    }
+
+    if (code === "TIME_PERIOD") {
+      const span = Math.max(1, Math.floor(width / Math.max(members.length, 1)));
+      members.forEach((member, index) => {
+        const col = start.col + index * span;
+        const owner = coordToAddress(start.row, col);
+        const lastCol = index === members.length - 1 ? end.col : col + span - 1;
+        setCell(next, owner, {
+          value: member.name,
+          role: "HEADER",
+          boundCode: member.member_code,
+          align: "center",
+          frozen: true,
+          ...groupFields,
+          merge: { rowSpan: 1, colSpan: lastCol - col + 1 },
+          mergeOwner: undefined,
+        });
+        for (let hiddenCol = col + 1; hiddenCol <= lastCol; hiddenCol += 1) {
+          setCell(next, coordToAddress(start.row, hiddenCol), { mergeOwner: owner, merge: undefined, ...groupFields });
+        }
+      });
+      return;
+    }
+
+    if (code === "AREA_TYPE") {
+      const timeMembers = getMembersForObject("TIME_PERIOD").slice(0, 2);
+      const areaMembers = members;
+      const requiredWidth = timeMembers.length * areaMembers.length;
+      const timeRow = Math.max(2, start.row - 1);
+      const areaRow = start.row;
+      const locationColumn = Math.max(1, start.col - 1);
+      const areaGroupFields = {
+        ...groupFields,
+        groupFocus: coordToAddress(areaRow, start.col + requiredWidth - 1),
+      };
+      clearCellsInRange(next, coordToAddress(timeRow, locationColumn), coordToAddress(areaRow, start.col + requiredWidth - 1));
+      clearMergeInRange(next, coordToAddress(timeRow, start.col), coordToAddress(areaRow, start.col + requiredWidth - 1));
+      timeMembers.forEach((timeMember, timeIndex) => {
+        const timeCol = start.col + timeIndex * areaMembers.length;
+        const timeOwner = coordToAddress(timeRow, timeCol);
+        setCell(next, timeOwner, {
+          value: timeMember.name,
+          role: "HEADER",
+          boundCode: timeMember.member_code,
+          align: "center",
+          frozen: true,
+          merge: { rowSpan: 1, colSpan: areaMembers.length },
+          ...areaGroupFields,
+        });
+        for (let hiddenCol = timeCol + 1; hiddenCol < timeCol + areaMembers.length; hiddenCol += 1) {
+          setCell(next, coordToAddress(timeRow, hiddenCol), { mergeOwner: timeOwner, merge: undefined, ...areaGroupFields });
+        }
+        members.forEach((member) => {
+          const col = timeCol + areaMembers.indexOf(member);
+          setCell(next, coordToAddress(areaRow, col), {
+            value: member.name,
+            role: "HEADER",
+            boundCode: member.member_code,
+            align: "center",
+            frozen: true,
+            ...areaGroupFields,
+            mergeOwner: undefined,
+          });
+        });
+      });
+      if (showHeader) {
+        const locationOwner = coordToAddress(timeRow, locationColumn);
+        setCell(next, locationOwner, {
+          value: "Location",
+          role: "HEADER",
+          boundCode: "GEOGRAPHY",
+          align: "center",
+          frozen: true,
+          merge: { rowSpan: 2, colSpan: 1 },
+          groupId: "location-header",
+          groupLabel: "Location header",
+          groupAnchor: locationOwner,
+          groupFocus: coordToAddress(areaRow, locationColumn),
+          groupBindingCode: "GEOGRAPHY",
+          groupAlignment: "row",
+        });
+        setCell(next, coordToAddress(areaRow, locationColumn), {
+          mergeOwner: locationOwner,
+          merge: undefined,
+          groupId: "location-header",
+          groupLabel: "Location header",
+          groupAnchor: locationOwner,
+          groupFocus: coordToAddress(areaRow, locationColumn),
+          groupBindingCode: "GEOGRAPHY",
+          groupAlignment: "row",
+        });
+      }
+      return;
+    }
+
+    const values = code === "GENDER" ? members : members.slice(0, width);
+    for (let col = start.col; col <= end.col; col += 1) {
+      const member = values[(col - start.col) % values.length];
+      setCell(next, coordToAddress(start.row, col), {
+        value: member?.name ?? "",
+        role: "HEADER",
+        boundCode: member?.member_code,
+        align: "center",
+        frozen: true,
+        ...groupFields,
+      });
+    }
+  };
+
+  const bindSelectedObject = (alignmentOverride: AxisAlignment = axisAlignment) => {
+    const option = optionFor(bindingObject);
+    const effectiveAlignment =
+      headerType === "Dimension" && bindingObject === "GEOGRAPHY" && isHierarchyGeographyScope(geographyScope)
+        ? "row"
+        : alignmentOverride;
+    const range = selectedRange;
+    pushUndo();
+
+    if (headerType === "Dimension") {
+      const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
+      let nextRowAxes = rowAxes;
+      let nextColumnAxes = columnAxes;
+
+      if (effectiveAlignment === "row") {
+        nextColumnAxes = nextColumnAxes.filter((code) => code !== bindingObject);
+        nextRowAxes = [...nextRowAxes.filter((code) => code !== bindingObject), bindingObject];
+      } else if (effectiveAlignment === "column") {
+        nextRowAxes = nextRowAxes.filter((code) => code !== bindingObject);
+        const requiredCodes =
+          bindingObject === "GENDER"
+            ? ["TIME_PERIOD", "AREA_TYPE", "GENDER"]
+            : bindingObject === "AREA_TYPE"
+              ? ["TIME_PERIOD", "AREA_TYPE"]
+              : [bindingObject];
+        nextColumnAxes = columnAxisOrder.filter((code) => [...new Set([...nextColumnAxes, ...requiredCodes])].includes(code));
+        if (bindingObject === "GEOGRAPHY") nextColumnAxes = ["GEOGRAPHY"];
+      }
+
+      const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, includeMeasure);
+      setRowAxes(nextRowAxes);
+      setColumnAxes(nextColumnAxes);
+      setCells(nextCells);
+      setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, includeMeasure));
+      setDesignerStage("binding");
+      setActivityMessage(`${option.label} rebound as ${effectiveAlignment} axis. Existing headers were regenerated to match the template structure.`);
+      addOperation("Bind axis", `${option.label} regenerated as ${effectiveAlignment} axis.`);
+      return;
+    }
+
+    if (bindingObject === "INDICATOR_VALUE" && (rowAxes.length || columnAxes.length)) {
+      const nextCells = buildStructuredGrid(rowAxes, columnAxes, true);
+      setCells(nextCells);
+      setBoundObjects(objectsFromAxes(rowAxes, columnAxes, true));
+      setDesignerStage("binding");
+      setActivityMessage("Editable measure cells generated across the current row and column axes.");
+      addOperation("Bind measure", "Indicator value cells generated across the current template grid.");
+      return;
+    }
+
+    setCells((current) => {
+      const next = { ...current };
+
+      if (bindingObject === "NIF_1_2_1") {
+        const { start, end } = normalizeRange(selectedAnchor, selectedFocus);
+        const owner = coordToAddress(start.row, start.col);
+        const rowSpan = end.row - start.row + 1;
+        const colSpan = end.col - start.col + 1;
+        const groupId = `indicator-${Date.now()}`;
+        clearMergeInRange(next, selectedAnchor, selectedFocus);
+        setCell(next, coordToAddress(start.row, start.col), {
+          value: "Indicator Code: NIF_1_2_1 | Name: Population below poverty line | Measure: Percent | Source: SSD_DEMO_SOURCE | Unit: PERCENT | Periodicity: ANNUAL",
+          role: "INDICATOR",
+          boundCode: "NIF_1_2_1",
+          frozen: true,
+          align: "left",
+          merge: rowSpan > 1 || colSpan > 1 ? { rowSpan, colSpan } : undefined,
+          groupId,
+          groupLabel: "Indicator context",
+          groupAnchor: owner,
+          groupFocus: coordToAddress(end.row, end.col),
+          groupBindingCode: "NIF_1_2_1",
+          groupAlignment: "context",
+        });
+        rangeAddresses(selectedAnchor, selectedFocus).forEach((address) => {
+          if (address !== owner) {
+            setCell(next, address, {
+              mergeOwner: owner,
+              groupId,
+              groupLabel: "Indicator context",
+              groupAnchor: owner,
+              groupFocus: coordToAddress(end.row, end.col),
+              groupBindingCode: "NIF_1_2_1",
+              groupAlignment: "context",
+            });
+          }
+        });
+      } else if (bindingObject === "INDICATOR_VALUE") {
+        rangeAddresses(selectedAnchor, selectedFocus).forEach((address) => {
+          setCell(next, address, {
+            value: "",
+            role: "INPUT",
+            boundCode: "INDICATOR_VALUE",
+            editable: true,
+            required,
+            datatype,
+            validationRule,
+            align: horizontalAlign,
+            valign: verticalAlign,
+            groupBindingCode: "INDICATOR_VALUE",
+            groupAlignment: "context",
+          });
+        });
+      } else if (effectiveAlignment === "row") {
+        bindRowDimension(next, bindingObject);
+      } else {
+        bindColumnDimension(next, bindingObject);
+      }
+
+      return next;
+    });
+
+    const alignment = option.defaultAlignment === "context" ? "context" : effectiveAlignment;
+    recordBinding(bindingObject, range, alignment);
+    setDesignerStage("binding");
+    setActivityMessage(`${option.label} bound into ${range}. Continue selecting ranges to build the exact template you want.`);
+    addOperation("Bind values", `${option.label} written into canvas range ${range}.`);
+  };
+
+  const handleBind = () => bindSelectedObject();
+
+  const handleGeographyScopeChange = (value: GeographyScope) => {
+    setGeographyScope(value);
+    if (isHierarchyGeographyScope(value)) {
+      setAxisAlignment("row");
+    }
+    if (!rowAxes.includes("GEOGRAPHY") && !columnAxes.includes("GEOGRAPHY")) {
+      return;
+    }
+
+    pushUndo();
+    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
+    const nextCells = buildStructuredGrid(rowAxes, columnAxes, includeMeasure, value);
+    setCells(nextCells);
+    setBoundObjects(objectsFromAxes(rowAxes, columnAxes, includeMeasure, value));
+    setDesignerStage("binding");
+    setActivityMessage("Geography scope changed and the canvas was regenerated with the selected national/state/district layout.");
+    addOperation("Geography scope", "Rebuilt geography rows/columns for the selected scope.");
+  };
+
+  const handleAxisAlignmentChange = (value: AxisAlignment) => {
+    setAxisAlignment(value);
+    if (optionsOpen && headerType === "Dimension") {
+      bindSelectedObject(value);
+    }
+  };
+
+  const handleMerge = () => {
+    pushUndo();
+    mergeRangeInState(selectedAnchor, selectedFocus);
+    addOperation("Merge", `${selectedRange} merged visually.`);
+  };
+
+  const handleUnmerge = () => {
+    pushUndo();
+    setCells((current) => {
+      const next = { ...current };
+      const addresses = rangeAddresses(selectedAnchor, selectedFocus);
+      addresses.forEach((address) => {
+        const owner = next[address]?.mergeOwner ?? address;
+        const ownerCell = next[owner];
+        if (ownerCell?.merge) {
+          const ownerCoord = addressToCoord(owner);
+          for (let row = ownerCoord.row; row < ownerCoord.row + ownerCell.merge.rowSpan; row += 1) {
+            for (let col = ownerCoord.col; col < ownerCoord.col + ownerCell.merge.colSpan; col += 1) {
+              const mergeAddress = coordToAddress(row, col);
+              next[mergeAddress] = { ...(next[mergeAddress] ?? {}), merge: undefined, mergeOwner: undefined };
+            }
+          }
+        }
+        next[address] = { ...(next[address] ?? {}), merge: undefined, mergeOwner: undefined };
+      });
+      return next;
+    });
+    addOperation("Unmerge", `${selectedRange} unmerged visually.`);
+  };
+
+  const handleFreeze = () => {
+    pushUndo();
+    applyToSelectedRange({ frozen: true });
+    addOperation("Freeze", `${selectedRange} marked as frozen visual area.`);
+  };
+
+  const handleMarkEditable = () => {
+    pushUndo();
+    applyToSelectedRange({
+      role: "INPUT",
+      editable: true,
+      required,
+      datatype,
+      validationRule,
+      align: horizontalAlign,
+      valign: verticalAlign,
+    });
+    addOperation("Editable cells", `${selectedRange} marked editable with ${datatype} datatype.`);
+  };
+
+  const handleUnbindGroup = () => {
+    if (bindingObject === "NIF_1_2_1") {
+      setActivityMessage("Indicator context row is required for this template and cannot be unbound.");
+      return;
+    }
+
+    pushUndo();
+
+    if (bindingObject === "INDICATOR_VALUE") {
+      const nextCells = buildStructuredGrid(rowAxes, columnAxes, false);
+      setCells(nextCells);
+      setBoundObjects(objectsFromAxes(rowAxes, columnAxes, false));
+      addOperation("Unbind group", "Removed editable measure cells from the current grid.");
+      setActivityMessage("Measure cells unbound. Axes remain in place.");
+      return;
+    }
+
+    const nextRowAxes = rowAxes.filter((code) => code !== bindingObject);
+    const nextColumnAxes = columnAxes.filter((code) => code !== bindingObject);
+    const hasMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
+    const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, hasMeasure);
+    setRowAxes(nextRowAxes);
+    setColumnAxes(nextColumnAxes);
+    setCells(nextCells);
+    setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, hasMeasure));
+    setSelectedAnchor("B2");
+    setSelectedFocus("B2");
+    setEditingCell(null);
+    setCellText("");
+    addOperation("Unbind group", `${optionFor(bindingObject).label} removed from row/column axes.`);
+    setActivityMessage(`${optionFor(bindingObject).label} unbound from the template grid.`);
+  };
+
+  const handleResizeColumn = (column: string, width: number) => {
+    setColumnWidths((current) => ({
+      ...current,
+      [column]: Math.min(260, Math.max(72, width)),
+    }));
+  };
+
+  const handleResizeRow = (row: number, height: number) => {
+    setRowHeights((current) => ({
+      ...current,
+      [row]: Math.min(96, Math.max(30, height)),
+    }));
+  };
+
+  const handleHorizontalAlignChange = (value: HorizontalAlign) => {
+    pushUndo();
+    setHorizontalAlign(value);
+    applyToSelectedRange({ align: value });
+    addOperation("Horizontal align", `${selectedRange} aligned ${value}.`);
+  };
+
+  const handleVerticalAlignChange = (value: VerticalAlign) => {
+    pushUndo();
+    setVerticalAlign(value);
+    applyToSelectedRange({ valign: value });
+    addOperation("Vertical align", `${selectedRange} aligned ${value}.`);
+  };
+
+  const handleHeaderContextMenu = (type: "column" | "row", target: string | number, event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    setGridContextMenu({ type, target, x: event.clientX, y: event.clientY });
+  };
+
+  const handleInsertColumnAfter = (column: string) => {
+    pushUndo();
+    const insertAfter = addressToCoord(`${column}1`).col;
+    setCells((current) => {
+      const next: Record<string, CanvasCell> = {};
+      Object.entries(current).forEach(([address, cell]) => {
+        const coord = addressToCoord(address);
+        const nextAddress = coord.col > insertAfter ? coordToAddress(coord.row, coord.col + 1) : address;
+        next[nextAddress] = cell;
+      });
+      return next;
+    });
+    setVisibleColumnCount((current) => Math.min(canvasColumns.length, current + 1));
+    setGridContextMenu(null);
+    addOperation("Insert column", `Inserted a column after ${column}.`);
+  };
+
+  const handleInsertRowBelow = (row: number) => {
+    pushUndo();
+    setCells((current) => {
+      const next: Record<string, CanvasCell> = {};
+      Object.entries(current).forEach(([address, cell]) => {
+        const coord = addressToCoord(address);
+        const nextAddress = coord.row > row ? coordToAddress(coord.row + 1, coord.col) : address;
+        next[nextAddress] = cell;
+      });
+      return next;
+    });
+    setVisibleRowCount((current) => Math.min(canvasRows.length, current + 1));
+    setGridContextMenu(null);
+    addOperation("Insert row", `Inserted a row below ${row}.`);
+  };
+
+  const handleAutoBuild = () => {
+    pushUndo();
+    const next: Record<string, CanvasCell> = buildHeaderCells(selectedTemplate);
+    const set = (address: string, update: CanvasCell) => setCell(next, address, update);
+    const locationGroup = { groupId: "autobuild-location", groupLabel: "Geography rows", groupAnchor: "A2", groupFocus: "A8", groupBindingCode: "GEOGRAPHY" as BindingObjectCode, groupAlignment: "row" as const };
+    const timeGroup = { groupId: "autobuild-time", groupLabel: "Time period columns", groupAnchor: "B2", groupFocus: "M2", groupBindingCode: "TIME_PERIOD" as BindingObjectCode, groupAlignment: "column" as const };
+    const areaGroup = { groupId: "autobuild-area", groupLabel: "Area type columns", groupAnchor: "B3", groupFocus: "M3", groupBindingCode: "AREA_TYPE" as BindingObjectCode, groupAlignment: "column" as const };
+    const genderGroup = { groupId: "autobuild-gender", groupLabel: "Gender columns", groupAnchor: "B4", groupFocus: "M4", groupBindingCode: "GENDER" as BindingObjectCode, groupAlignment: "column" as const };
+    const measureGroup = { groupId: "autobuild-measure", groupLabel: "Indicator value cells", groupAnchor: "B5", groupFocus: "M8", groupBindingCode: "INDICATOR_VALUE" as BindingObjectCode, groupAlignment: "context" as const };
+
+    set("A2", {
+      value: "Location",
+      role: "HEADER",
+      boundCode: "GEOGRAPHY",
+      merge: { rowSpan: 3, colSpan: 1 },
+      align: "center",
+      ...locationGroup,
+    });
+    set("A3", { mergeOwner: "A2", merge: undefined, ...locationGroup });
+    set("A4", { mergeOwner: "A2", merge: undefined, ...locationGroup });
+
+    set("B2", { value: "2011-12", role: "HEADER", boundCode: "TIME_2011_12", merge: { rowSpan: 1, colSpan: 6 }, align: "center", ...timeGroup });
+    for (let col = 3; col <= 7; col += 1) set(coordToAddress(2, col), { mergeOwner: "B2", merge: undefined, ...timeGroup });
+    set("H2", { value: "2012-13", role: "HEADER", boundCode: "TIME_2012_13", merge: { rowSpan: 1, colSpan: 6 }, align: "center", ...timeGroup });
+    for (let col = 9; col <= 13; col += 1) set(coordToAddress(2, col), { mergeOwner: "H2", merge: undefined, ...timeGroup });
+
+    const areaLabels = ["Total", "Rural", "Urban", "Total", "Rural", "Urban"];
+    [2, 4, 6, 8, 10, 12].forEach((col, index) => {
+      const owner = coordToAddress(3, col);
+      set(owner, { value: areaLabels[index], role: "HEADER", boundCode: areaLabels[index].toUpperCase(), merge: { rowSpan: 1, colSpan: 2 }, align: "center", ...areaGroup });
+      set(coordToAddress(3, col + 1), { mergeOwner: owner, merge: undefined, ...areaGroup });
+    });
+
+    const genderLabels = ["Female", "Male"];
+    for (let col = 2; col <= 13; col += 1) {
+      set(coordToAddress(4, col), {
+        value: genderLabels[(col - 2) % 2],
+        role: "HEADER",
+        boundCode: genderLabels[(col - 2) % 2].toUpperCase(),
+        align: "center",
+        ...genderGroup,
+      });
+    }
+
+    getMembersForObject("GEOGRAPHY").forEach((member, index) => {
+      const row = index + 5;
+      set(coordToAddress(row, 1), { value: member.name, role: "DIMENSION_MEMBER", boundCode: member.member_code, align: "left", ...locationGroup });
+      for (let col = 2; col <= 13; col += 1) {
+        set(coordToAddress(row, col), {
+          value: "",
+          role: "INPUT",
+          boundCode: "INDICATOR_VALUE",
+          editable: true,
+          required: true,
+          datatype: "NUMERIC",
+          validationRule: "NUMERIC_NON_NEGATIVE",
+          align: "center",
+          ...measureGroup,
+        });
+      }
+    });
+
+    setCells(next);
+    setRowAxes(["GEOGRAPHY"]);
+    setColumnAxes(["TIME_PERIOD", "AREA_TYPE", "GENDER"]);
+    setVisibleColumnCount(initialVisibleColumnCount);
+    setVisibleRowCount(initialVisibleRowCount);
+    setBoundObjects([
+      { code: "NIF_1_2_1", label: optionFor("NIF_1_2_1").label, type: "Indicator", alignment: "context", range: "A1:M1", memberCount: 1 },
+      { code: "GEOGRAPHY", label: optionFor("GEOGRAPHY").label, type: "Dimension", alignment: "row", range: "A2:A8", memberCount: generatedRows },
+      { code: "TIME_PERIOD", label: optionFor("TIME_PERIOD").label, type: "Dimension", alignment: "column", range: "B2:M2", memberCount: 2 },
+      { code: "AREA_TYPE", label: optionFor("AREA_TYPE").label, type: "Dimension", alignment: "column", range: "B3:M3", memberCount: 3 },
+      { code: "GENDER", label: optionFor("GENDER").label, type: "Dimension", alignment: "column", range: "B4:M4", memberCount: 2 },
+      { code: "INDICATOR_VALUE", label: optionFor("INDICATOR_VALUE").label, type: "Measure", alignment: "context", range: "B5:M8", memberCount: 1 },
+    ]);
+    setSelectedAnchor("B5");
+    setSelectedFocus("M8");
+    setEditingCell(null);
+    setCellText("");
+    setOptionsOpen(false);
+    setDesignerStage("generated");
+    setActivityMessage("Auto-built the reference template. You can still select ranges, merge/unmerge, and rebind values manually.");
+    addOperation("Auto-build", "Generated Geography x Time x Area Type x Gender template using sample dimensions.");
+  };
+
+  const handleResetCanvas = () => {
+    pushUndo();
+    setCells(buildHeaderCells(selectedTemplate));
+    setBoundObjects([]);
+    setRowAxes([]);
+    setColumnAxes([]);
+    setVisibleColumnCount(initialVisibleColumnCount);
+    setVisibleRowCount(initialVisibleRowCount);
+    setSelectedAnchor("B2");
+    setSelectedFocus("B2");
+    setEditingCell("B2");
+    setCellText("");
+    setDesignerStage("basics");
+    setActivityMessage("Canvas reset. Indicator context row is frozen; continue binding rows, columns, and measure cells.");
+    addOperation("Canvas reset", "Removed local bindings and kept frozen indicator context row.");
+  };
+
+  const handleCreateDraft = () => {
+    const demoTemplate: TemplateDefinitionSample = {
+      template_code: "TPL_NIF_1_2_1_LIVE_DEMO_DRAFT",
+      template_type: "DATA_ENTRY",
+      owning_unit_code: "SDG",
+      status: "DRAFT",
+      is_active: false,
+      current_version_code: "TPL_NIF_1_2_1_AREA_GENDER_TIME_DRAFT_V1",
+      name: "Live demo NIF 1.2.1 template draft",
+      description: "UI-only draft created from the modal to demonstrate the governed template design flow.",
+      mapped_indicator_code: "NIF_1_2_1",
+      mapped_indicator_number: "1.2.1",
+      mapped_indicator_name: "Population below poverty line",
+      mapped_global_indicator_code: "GIND_1_2_1",
+      source_unit_code: "SSD_DEMO_SOURCE",
+      version_count: 1,
+      axis_count: 0,
+      cell_count: 0,
+      validation_rule_count: 3,
+      updated_at: "UI demo session",
+    };
+
+    setTemplates((current) => {
+      if (current.some((template) => template.template_code === demoTemplate.template_code)) return current;
+      return [demoTemplate, ...current];
+    });
+    setSelectedTemplateCode(demoTemplate.template_code);
+    setCells(buildHeaderCells(demoTemplate));
+    setBoundObjects([]);
+    setRowAxes([]);
+    setColumnAxes([]);
+    setVisibleColumnCount(initialVisibleColumnCount);
+    setVisibleRowCount(initialVisibleRowCount);
+    setSelectedAnchor("B2");
+    setSelectedFocus("B2");
+    setEditingCell("B2");
+    setCellText("");
+    setActiveTab("designer");
+    setActivityMessage("Draft created. The canvas is blank until you bind indicator, dimensions, and measure.");
+    addOperation("Draft created", "Template basics selected: unit SDG, indicator NIF_1_2_1.");
+    setModal(null);
+  };
+
+  const handleDeleteDraft = () => {
+    if (selectedTemplate.status !== "DRAFT") {
+      setActivityMessage("Only draft templates can be deleted in this UI demo.");
+      setModal(null);
+      return;
+    }
+
+    const fallback = templates.find((template) => template.template_code !== selectedTemplate.template_code) ?? templateDefinitions[0];
+    setTemplates((current) => current.filter((template) => template.template_code !== selectedTemplate.template_code));
+    setSelectedTemplateCode(fallback.template_code);
+    setActivityMessage("Draft removed locally. No API or database mutation was executed.");
+    addOperation("Draft deleted", `${selectedTemplate.template_code} removed from local UI state.`);
+    setModal(null);
+  };
+
+  const handleSaveDesigner = () => {
+    setDesignerStage("saved");
+    setTemplates((current) =>
+      current.map((template) =>
+        template.template_code === selectedTemplate.template_code
+          ? {
+              ...template,
+              axis_count: Math.max(template.axis_count, boundObjects.filter((item) => item.type === "Dimension").length),
+              cell_count: Math.max(template.cell_count, generatedRows * generatedColumns),
+              updated_at: "Saved in UI demo",
+            }
+          : template,
+      ),
+    );
+    setActivityMessage("Template draft saved locally. Contract preview shows axes, measures, cells, render elements, and validation refs.");
+    addOperation("Save draft", "Local UI state saved. No API call executed.");
+  };
+
+  const handlePublishTemplate = () => {
+    setDesignerStage("published");
+    setTemplates((current) =>
+      current.map((template) =>
+        template.template_code === selectedTemplate.template_code
+          ? {
+              ...template,
+              status: "ACTIVE",
+              is_active: true,
+              axis_count: Math.max(template.axis_count, boundObjects.filter((item) => item.type === "Dimension").length),
+              cell_count: Math.max(template.cell_count, generatedRows * generatedColumns),
+              updated_at: "Published in UI demo",
+            }
+          : template,
+      ),
+    );
+    setActivityMessage("Template marked ACTIVE locally. It is now ready to be assigned from Collection Request UI.");
+    addOperation("Publish active", "Template status changed to ACTIVE in local UI state.");
+  };
+
+  const workflowSteps = [
+    { code: "basics", label: "1 Basics", active: ["basics", "typing", "options", "binding", "generated", "saved", "published"].includes(designerStage) },
+    { code: "type", label: "2 Type/search", active: ["typing", "options", "binding", "generated", "saved", "published"].includes(designerStage) },
+    { code: "options", label: "3 Options", active: ["options", "binding", "generated", "saved", "published"].includes(designerStage) },
+    { code: "bind", label: "4 Bind values", active: ["binding", "generated", "saved", "published"].includes(designerStage) },
+    { code: "save", label: "5 Save/validate", active: ["saved", "published"].includes(designerStage) },
+    { code: "publish", label: "6 Publish", active: designerStage === "published" },
+  ];
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        handleUndo();
+      }
+      if (key === "y") {
+        event.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  return (
+    <AppShell persona="Unit Template Admin" activeDashboard="/dashboard/unit-admin">
+      <section className="mx-auto flex max-w-[1280px] flex-col gap-4" aria-labelledby="templates-title">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 id="templates-title" className="text-2xl font-bold">Template List + Designer</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Create a draft, edit the canvas, bind dimensions/measures, preview data entry, then publish.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview data entry</Button>
+            <Button variant="outline" onClick={() => setActiveTab("contract")}><FileSpreadsheet aria-hidden="true" className="size-4" /> Contract</Button>
+            <Button onClick={() => setModal("create-template")}><Plus aria-hidden="true" className="size-4" /> New template draft</Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+          {statCards.map((card) => (
+            <button key={card.label} type="button" className="min-h-[104px] rounded-md bg-card p-3 text-left shadow-sm ring-1 ring-border/60 hover:bg-muted/30">
+              <p className="text-xs font-semibold text-muted-foreground">{card.label}</p>
+              <p className="mt-2 text-2xl font-bold">{card.value}</p>
+              <p className="mt-1 text-xs font-semibold">{card.helper}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border">
+          <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Template workspace tabs">
+            {[
+              ["list", "Template list"],
+              ["designer", "Designer in action"],
+              ["contract", "Contract"],
+            ].map(([code, label]) => (
+              <button
+                key={code}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === code}
+                onClick={() => setActiveTab(code as TemplateTab)}
+                className={[
+                  "border-b-2 px-3 py-2 text-xs font-semibold",
+                  activeTab === code ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Badge variant={statusVariant(selectedTemplate.status)}>{selectedTemplate.status}</Badge>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-950">
+          <span className="font-semibold">{activityMessage}</span>
+          <div className="flex flex-wrap gap-1">
+            {workflowSteps.map((step) => (
+              <Badge key={step.code} variant={step.active ? "default" : "outline"}>{step.label}</Badge>
+            ))}
+          </div>
+        </div>
+
+        {activeTab === "list" ? (
+          <Card>
+            <CardContent className="grid gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex min-w-80 items-center gap-2 rounded-md bg-muted/60 px-2">
+                  <Search aria-hidden="true" className="size-4 text-muted-foreground" />
+                  <span className="sr-only">Search templates</span>
+                  <Input className="border-0 bg-transparent" placeholder="Search template, indicator, source" value={query} onChange={(event) => setQuery(event.target.value)} />
+                </label>
+                <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs font-semibold" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TemplateStatus | "ALL")}>
+                  <option value="ALL">status: all</option>
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="RETIRED">RETIRED</option>
+                </select>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Template</TableHead>
+                    <TableHead>Mapped indicator</TableHead>
+                    <TableHead>Version</TableHead>
+                    <TableHead>Cells</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredTemplates.map((template) => (
+                    <TableRow key={template.template_code}>
+                      <TableCell className="max-w-80 whitespace-normal">
+                        <span className="block font-mono text-[11px]">{template.template_code}</span>
+                        <span className="text-xs font-semibold">{template.name}</span>
+                      </TableCell>
+                      <TableCell className="max-w-72 whitespace-normal">
+                        <span className="block font-mono text-[11px]">{template.mapped_indicator_code} / {template.mapped_global_indicator_code}</span>
+                        <span className="text-xs">{template.mapped_indicator_name}</span>
+                      </TableCell>
+                      <TableCell className="font-mono text-[11px]">{template.current_version_code}</TableCell>
+                      <TableCell>{template.cell_count}</TableCell>
+                      <TableCell><Badge variant={statusVariant(template.status)}>{template.status}</Badge></TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button size="icon-xs" variant="outline" aria-label="View template" onClick={() => { setSelectedTemplateCode(template.template_code); setModal("template-detail"); }}><Eye aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Open designer" onClick={() => { setSelectedTemplateCode(template.template_code); setActiveTab("designer"); }}><Edit3 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="destructive" aria-label="Delete draft" onClick={() => { setSelectedTemplateCode(template.template_code); setModal("delete-template"); }}><Trash2 aria-hidden="true" className="size-3" /></Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {activeTab === "designer" ? (
+          <div className={isDesignerFullPage ? "fixed inset-0 z-50 overflow-auto bg-background p-4" : ""}>
+            {isDesignerFullPage ? (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-border bg-background pb-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">Full page designer</p>
+                  <h2 className="text-xl font-bold">{selectedTemplate.name}</h2>
+                </div>
+                <Button type="button" variant="outline" onClick={() => setIsDesignerFullPage(false)}>
+                  <Minimize2 aria-hidden="true" className="size-4" /> Exit full page
+                </Button>
+              </div>
+            ) : null}
+          <div className={optionsOpen ? "grid grid-cols-[minmax(0,1fr)_340px] gap-4 max-xl:grid-cols-1" : "grid grid-cols-1 gap-4"}>
+            <div className="grid gap-4">
+              <Card>
+                <CardContent className="grid gap-3">
+                  <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+                    <Field label="Working unit" value={selectedTemplate.owning_unit_code} readOnly />
+                    <Field label="Template code" value={selectedTemplate.template_code} readOnly />
+                    <Field label="Indicator" value={`${selectedTemplate.mapped_indicator_code} / ${selectedTemplate.mapped_global_indicator_code}`} readOnly />
+                    <Field label="Measure" value="INDICATOR_VALUE / PERCENT / NUMERIC" readOnly />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs">
+                    <span className="font-semibold">
+                      Click to edit a cell. Type to see suggestions. Click suggestion or double-click a cell to open options. Shift-click another cell to select a range.
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setOptionsOpen(true)}>Open options</Button>
+                      <Button size="sm" variant="outline" onClick={handleResetCanvas}><RotateCcw aria-hidden="true" className="size-4" /> Reset to header</Button>
+                      <Button size="sm" onClick={handleAutoBuild}><Wand2 aria-hidden="true" className="size-4" /> Auto-build reference</Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Excel-like template canvas</CardTitle>
+                      <p className="mt-1 text-xs text-muted-foreground">Selected range: {selectedRange}. Bind actions write directly into this canvas.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="icon-sm" variant="outline" onClick={handleUndo} disabled={!undoStack.length} aria-label="Undo">
+                        <Undo2 aria-hidden="true" className="size-4" />
+                      </Button>
+                      <Button size="icon-sm" variant="outline" onClick={handleRedo} disabled={!redoStack.length} aria-label="Redo">
+                        <Redo2 aria-hidden="true" className="size-4" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setIsDesignerFullPage((current) => !current)}>
+                        {isDesignerFullPage ? <Minimize2 aria-hidden="true" className="size-4" /> : <Maximize2 aria-hidden="true" className="size-4" />}
+                        {isDesignerFullPage ? "Exit full page" : "Full page"}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setModal("json-structure")}>
+                        <Code2 aria-hidden="true" className="size-4" /> JSON
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={handleSaveDesigner}><Save aria-hidden="true" className="size-4" /> Save draft</Button>
+                      <Button size="sm" variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview</Button>
+                      <Button size="sm" onClick={handlePublishTemplate}><CheckCircle2 aria-hidden="true" className="size-4" /> Publish active</Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <CanvasTable
+                    cells={cells}
+                    selectedAnchor={selectedAnchor}
+                    selectedFocus={selectedFocus}
+                    editingCell={editingCell}
+                    cellText={cellText}
+                    optionsOpen={optionsOpen}
+                    suggestions={suggestions}
+                    columnWidths={columnWidths}
+                    rowHeights={rowHeights}
+                    columns={visibleColumns}
+                    rows={visibleRows}
+                    onCellClick={handleSelectCell}
+                    onSelectAddress={handleSelectAddress}
+                    onCellDoubleClick={handleDoubleClick}
+                    onCellTextChange={handleCellTextChange}
+                    onStartEdit={handleStartEdit}
+                    onStopEdit={handleStopEdit}
+                    onNavigateCell={handleNavigateCell}
+                    onSuggestionClick={handleSuggestionClick}
+                    onResizeColumn={handleResizeColumn}
+                    onResizeRow={handleResizeRow}
+                    onHeaderContextMenu={handleHeaderContextMenu}
+                  />
+                  <div className="grid grid-cols-3 gap-3 text-xs max-lg:grid-cols-1">
+                    <div className="rounded-md bg-muted/40 p-3">
+                      <p className="font-bold">Manual path</p>
+                      <p className="mt-1 text-muted-foreground">Type/select object, choose options, bind values. Repeat for your own layout.</p>
+                    </div>
+                    <div className="rounded-md bg-muted/40 p-3">
+                      <p className="font-bold">Generated cells</p>
+                      <p className="mt-1 text-muted-foreground">{generatedRows} geography rows x {generatedColumns} generated columns = {generatedRows * generatedColumns} editable measure cells.</p>
+                    </div>
+                    <div className="rounded-md bg-muted/40 p-3">
+                      <p className="font-bold">Saved contract</p>
+                      <p className="mt-1 text-muted-foreground">The UI saves axes, axis members, measures, cells, cell-axis bindings, render elements, and validation refs.</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {optionsOpen ? (
+              <BindingPanel
+                selectedCell={selectedFocus}
+                selectedRange={selectedRange}
+                cellText={cellText}
+                headerType={headerType}
+                bindingObject={bindingObject}
+                axisAlignment={axisAlignment}
+                geographyScope={geographyScope}
+                showHeader={showHeader}
+                headerLabel={headerLabel}
+                datatype={datatype}
+                required={required}
+                decimalPlaces={decimalPlaces}
+                validationRule={validationRule}
+                horizontalAlign={horizontalAlign}
+                verticalAlign={verticalAlign}
+                suggestions={suggestions}
+                boundObjects={boundObjects}
+                operations={operations}
+                onCellTextChange={handleCellTextChange}
+                onHeaderTypeChange={setHeaderType}
+                onBindingObjectChange={handleBindingObjectChange}
+                onAxisAlignmentChange={handleAxisAlignmentChange}
+                onGeographyScopeChange={handleGeographyScopeChange}
+                onShowHeaderChange={setShowHeader}
+                onHeaderLabelChange={handleHeaderLabelChange}
+                onDatatypeChange={setDatatype}
+                onRequiredChange={setRequired}
+                onDecimalPlacesChange={setDecimalPlaces}
+                onValidationRuleChange={setValidationRule}
+                onHorizontalAlignChange={handleHorizontalAlignChange}
+                onVerticalAlignChange={handleVerticalAlignChange}
+                onViewValues={() => setModal("view-values")}
+                onBind={handleBind}
+                onMerge={handleMerge}
+                onUnmerge={handleUnmerge}
+                onFreeze={handleFreeze}
+                onMarkEditable={handleMarkEditable}
+                onUnbindGroup={handleUnbindGroup}
+                onClose={() => setOptionsOpen(false)}
+              />
+            ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "contract" ? (
+          <Card>
+            <CardContent className="grid gap-4">
+              <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
+                <div className="rounded-md bg-muted/40 p-3">
+                  <p className="text-sm font-bold">Version</p>
+                  <p className="mt-1 font-mono text-[11px]">{selectedVersion.version_code}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedVersion.title}</p>
+                </div>
+                <div className="rounded-md bg-muted/40 p-3">
+                  <p className="text-sm font-bold">Mapped indicator</p>
+                  <p className="mt-1 font-mono text-[11px]">{selectedTemplate.mapped_indicator_code} / {selectedTemplate.mapped_global_indicator_code}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedTemplate.mapped_indicator_name}</p>
+                </div>
+                <div className="rounded-md bg-muted/40 p-3">
+                  <p className="text-sm font-bold">Live generated contract</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{boundObjects.length} bound objects / {generatedRows * generatedColumns} generated cells.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 max-xl:grid-cols-1">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Axis/Object</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Range</TableHead>
+                      <TableHead>Members</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(boundObjects.length ? boundObjects : axesForVersion.map((axis) => ({
+                      code: axis.axis_code as BindingObjectCode,
+                      label: axis.axis_code,
+                      type: "Dimension" as HeaderType,
+                      alignment: axis.axis_role === "ROW" ? "row" as const : "column" as const,
+                      range: axis.axis_role,
+                      memberCount: axis.axis_depth,
+                    }))).map((axis) => (
+                      <TableRow key={axis.code}>
+                        <TableCell className="font-mono text-[11px]">{axis.label}</TableCell>
+                        <TableCell>{axis.alignment}</TableCell>
+                        <TableCell>{axis.range}</TableCell>
+                        <TableCell>{axis.memberCount}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Measure/Cell</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Unit</TableHead>
+                      <TableHead>Required</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {measuresForVersion.map((measure) => (
+                      <TableRow key={measure.measure_code}>
+                        <TableCell className="font-mono text-[11px]">{measure.measure_code}</TableCell>
+                        <TableCell>{measure.value_type}</TableCell>
+                        <TableCell>{measure.unit_code}</TableCell>
+                        <TableCell>{measure.is_required ? "YES" : "NO"}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow>
+                      <TableCell className="font-mono text-[11px]">GENERATED_INPUT_CELLS</TableCell>
+                      <TableCell>NUMERIC</TableCell>
+                      <TableCell>PERCENT</TableCell>
+                      <TableCell>{generatedRows * generatedColumns}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Contract table</TableHead>
+                    <TableHead>What this designer creates</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[
+                    ["templates.template_axes", "GEOGRAPHY row axis; TIME_PERIOD, AREA_TYPE, GENDER column axes; indicator context axis."],
+                    ["templates.template_axis_members", "Selected geography states, time periods, area type members, and gender members."],
+                    ["templates.template_measures", "INDICATOR_VALUE numeric percent measure."],
+                    ["templates.template_cells", `${generatedRows * generatedColumns} editable required cells for NIF_1_2_1_V1.`],
+                    ["templates.template_cell_axis_members", "Each generated cell is linked to geography, time, area type, and gender members."],
+                    ["templates.template_render_elements", "Merged title, time headers, area headers, gender headers, row labels, and input cells."],
+                    ["templates.template_validation_rule_refs", "Required, non-negative numeric, and two-decimal validation references."],
+                  ].map(([table, purpose]) => (
+                    <TableRow key={table}>
+                      <TableCell className="font-mono text-[11px]">{table}</TableCell>
+                      <TableCell>{purpose}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        ) : null}
+      </section>
+
+      {gridContextMenu ? (
+        <div
+          className="fixed z-50 w-48 rounded-md border border-border bg-card p-1 text-xs shadow-xl"
+          style={{ left: gridContextMenu.x, top: gridContextMenu.y }}
+          role="menu"
+        >
+          {gridContextMenu.type === "column" ? (
+            <button
+              type="button"
+              className="w-full rounded px-3 py-2 text-left font-semibold hover:bg-muted"
+              onClick={() => handleInsertColumnAfter(String(gridContextMenu.target))}
+            >
+              Insert column after {String(gridContextMenu.target)}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="w-full rounded px-3 py-2 text-left font-semibold hover:bg-muted"
+              onClick={() => handleInsertRowBelow(Number(gridContextMenu.target))}
+            >
+              Insert row below {String(gridContextMenu.target)}
+            </button>
+          )}
+          <button
+            type="button"
+            className="w-full rounded px-3 py-2 text-left text-muted-foreground hover:bg-muted"
+            onClick={() => setGridContextMenu(null)}
+          >
+            Close
+          </button>
+        </div>
+      ) : null}
+
+      <TemplateModalView
+        modal={modal}
+        selectedTemplate={selectedTemplate}
+        bindingObject={bindingObject}
+        geographyScope={geographyScope}
+        generatedColumnCount={generatedColumns}
+        generatedRowCount={generatedRows}
+        cells={cells}
+        templateJson={templateJson}
+        onCreateDraft={handleCreateDraft}
+        onDeleteDraft={handleDeleteDraft}
+        onBind={handleBind}
+        onClose={() => setModal(null)}
+      />
+    </AppShell>
+  );
+}

@@ -1,0 +1,38 @@
+# PAGE FLOWS
+
+| Flow ID | Flow | Status |
+|---|---|---|
+| MASTERS-FLOW-001 | Framework edition and hierarchy inspection | IMPLEMENTED_SAMPLE_DATA |
+| MASTERS-FLOW-002 | Indicator Management by selected indicator | IMPLEMENTED_SAMPLE_DATA |
+| MASTERS-FLOW-003 | Reference Masters by category | IMPLEMENTED_SAMPLE_DATA |
+| MASTERS-FLOW-004 | Organization/officer/source assignment inspection | IMPLEMENTED_SAMPLE_DATA |
+| MASTERS-FLOW-005 | Framework hierarchy creation affordances and mapping coverage drilldown | IMPLEMENTED_SAMPLE_DATA |
+
+## Implemented Framework Setup Flow
+
+1. Authenticated user opens `/masters/frameworks`.
+2. App Shell shows the current working-unit selector; page shows active framework edition summary and dynamic hierarchy structure.
+3. User can inspect framework edition records, hierarchy levels, hierarchy nodes, parent-child relationships, selected-node readiness, and indicator mappings for the selected setup unit.
+4. Hierarchy labels such as Goal/Target come from `metadata.framework_hierarchy_levels`; they are not fixed UI concepts.
+5. User can start Create level or New parent/root node from the hierarchy workspace.
+6. User selects a node and starts Add child from the selected-node panel; the modal shows parent context and the configured child level.
+7. Hierarchy search preserves parent context for child matches and shows node depth.
+8. Indicator coverage drilldown starts at top-level nodes, drills into children, and opens indicator detail from mapped indicators.
+
+## Implemented Indicator Management Flow
+
+1. Authenticated user opens `/masters/indicators`.
+2. Page shows national indicators in a full-width table.
+3. User selects an indicator and reviews related tabs: overview, versions, metadata, global mapping, and source assignments.
+4. National indicator create/edit uses a dynamic framework-node dropdown filtered by `allows_indicator_mapping=true`.
+5. Source assignments are related rows, so one indicator can have primary, secondary, and review sources.
+6. Active version and pending changes against the active version are visible before source/mapping edits.
+7. Source organization/officer/periodicity are edited in source assignment forms, not in the base indicator form.
+
+## Implemented Reference Masters Flow
+
+1. Authenticated user opens `/masters/reference`.
+2. Page shows tabs for locales, organizations, officers, periodicities, units, and measures.
+3. Each tab has table-specific stats, search, table, row action buttons, and modal create/edit/delete states.
+4. Officer forms map the officer to a ministry/department/division via organization selection.
+5. Measure forms reference Units through `unit_code`.
