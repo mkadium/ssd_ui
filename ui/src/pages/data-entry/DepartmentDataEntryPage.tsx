@@ -384,7 +384,7 @@ function DataEntryGrid({
                         value={value}
                         inputMode="decimal"
                         onChange={(event) => onUpdateCell(address, event.target.value)}
-                        onFocus={() => onSelectCell(address)}
+                        onFocus={(event) => event.currentTarget.select()}
                         onKeyDown={(event) => {
                           if (event.key === "ArrowUp") {
                             event.preventDefault();
@@ -423,6 +423,21 @@ function DataEntryGrid({
                           if (event.key === "Enter") {
                             event.preventDefault();
                             onStartEdit(address);
+                          }
+                          if (/^[0-9]$/.test(event.key)) {
+                            event.preventDefault();
+                            onStartEdit(address);
+                            onUpdateCell(address, event.key);
+                          }
+                          if (event.key === ".") {
+                            event.preventDefault();
+                            onStartEdit(address);
+                            onUpdateCell(address, "0.");
+                          }
+                          if (event.key === "Backspace" || event.key === "Delete") {
+                            event.preventDefault();
+                            onStartEdit(address);
+                            onUpdateCell(address, "");
                           }
                           if (event.key === "ArrowUp") {
                             event.preventDefault();

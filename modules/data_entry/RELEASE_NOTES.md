@@ -14,5 +14,7 @@
 - Added save draft, validate, preview submit, and submit visual actions.
 - Added sanitized preview submit modal.
 - Updated `/data-entry` to use a standalone external-link layout with no left navigation.
+- Fixed numeric canvas cell editing so the focused input remains active instead of reverting to selection mode.
+- Added spreadsheet-style keyboard editing for selected numeric cells using digit, decimal, backspace, delete, Enter, and arrow keys.
 - Added `ssd_ui/ui/src/data/dataEntry.sample.ts` with request/template/ingestion-shaped sample data.
 - Registered route behind authenticated route guard.
