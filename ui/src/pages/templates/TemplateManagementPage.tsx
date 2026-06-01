@@ -53,6 +53,9 @@ type BindingObjectCode = "NIF_1_2_1" | "GEOGRAPHY" | "TIME_PERIOD" | "AREA_TYPE"
 type CellRole = "EMPTY" | "INDICATOR" | "HEADER" | "DIMENSION_MEMBER" | "INPUT" | "MEASURE";
 type HorizontalAlign = "left" | "center" | "right";
 type VerticalAlign = "top" | "middle" | "bottom";
+type RollupEntryMode = "MANUAL" | "DERIVED" | "MANUAL_WITH_VALIDATION";
+type AggregationMethod = "SUM" | "AVG" | "WEIGHTED_AVG" | "MIN" | "MAX" | "NO_ROLLUP";
+type MeasureCode = "INDICATOR_VALUE" | "PERSON_COUNT" | "POVERTY_RATE";
 type GeographyScope =
   | "NATIONAL_ONLY"
   | "STATE_ONLY"
@@ -140,8 +143,40 @@ const initialVisibleRowCount = 16;
 const rowHeaderWidth = 36;
 const defaultColumnWidths = Object.fromEntries(canvasColumns.map((column) => [column, 112])) as Record<string, number>;
 const defaultRowHeights = Object.fromEntries(canvasRows.map((row) => [row, row === 1 ? 42 : 38])) as Record<number, number>;
-const columnAxisOrder: BindingObjectCode[] = ["TIME_PERIOD", "AREA_TYPE", "GENDER"];
 
+const measureBindingOptions: Array<{
+  code: MeasureCode;
+  label: string;
+  valueType: "NUMERIC" | "INTEGER" | "TEXT" | "DATE";
+  unitCode: string;
+  decimalPlaces: number;
+  validationRule: string;
+}> = [
+  {
+    code: "INDICATOR_VALUE",
+    label: "Indicator value",
+    valueType: "NUMERIC",
+    unitCode: "PERCENT",
+    decimalPlaces: 2,
+    validationRule: "NUMERIC_NON_NEGATIVE",
+  },
+  {
+    code: "PERSON_COUNT",
+    label: "Person count",
+    valueType: "INTEGER",
+    unitCode: "NUMBER",
+    decimalPlaces: 0,
+    validationRule: "NUMERIC_NON_NEGATIVE",
+  },
+  {
+    code: "POVERTY_RATE",
+    label: "Poverty rate",
+    valueType: "NUMERIC",
+    unitCode: "PERCENT",
+    decimalPlaces: 2,
+    validationRule: "NUMERIC_NON_NEGATIVE",
+  },
+];
 const bindingOptions: Array<{
   code: BindingObjectCode;
   type: HeaderType;
@@ -749,7 +784,7 @@ function CanvasTable({
       <table className="border-collapse text-xs" style={{ width: tableWidth, minWidth: tableWidth }}>
         <thead>
           <tr className="bg-muted/70">
-            <th className="h-8 border border-border" style={{ width: rowHeaderWidth, minWidth: 35 }} />
+            <th className="sticky left-0 z-30 h-8 border border-border bg-muted/80" style={{ width: rowHeaderWidth, minWidth: 35 }} />
             {columns.map((column) => (
               <th
                 key={column}
@@ -776,7 +811,7 @@ function CanvasTable({
           {rows.map((row) => (
             <tr key={row}>
               <th
-                className="relative border border-border bg-muted/70 text-center font-bold"
+                className="sticky left-0 z-20 border border-border bg-muted/80 text-center font-bold shadow-[2px_0_0_rgba(148,163,184,0.35)]"
                 style={{ width: rowHeaderWidth, minWidth: 35, height: rowHeights[row] }}
                 onContextMenu={(event) => !readOnly && onHeaderContextMenu("row", row, event)}
               >
@@ -968,6 +1003,9 @@ function BindingPanel({
   required,
   decimalPlaces,
   validationRule,
+  selectedMeasureCode,
+  rollupEntryMode,
+  aggregationMethod,
   horizontalAlign,
   verticalAlign,
   suggestions,
@@ -984,6 +1022,9 @@ function BindingPanel({
   onRequiredChange,
   onDecimalPlacesChange,
   onValidationRuleChange,
+  onSelectedMeasureCodeChange,
+  onRollupEntryModeChange,
+  onAggregationMethodChange,
   onHorizontalAlignChange,
   onVerticalAlignChange,
   onViewValues,
@@ -1008,6 +1049,9 @@ function BindingPanel({
   required: boolean;
   decimalPlaces: number;
   validationRule: string;
+  selectedMeasureCode: MeasureCode;
+  rollupEntryMode: RollupEntryMode;
+  aggregationMethod: AggregationMethod;
   horizontalAlign: HorizontalAlign;
   verticalAlign: VerticalAlign;
   suggestions: typeof bindingOptions;
@@ -1024,6 +1068,9 @@ function BindingPanel({
   onRequiredChange: (value: boolean) => void;
   onDecimalPlacesChange: (value: number) => void;
   onValidationRuleChange: (value: string) => void;
+  onSelectedMeasureCodeChange: (value: MeasureCode) => void;
+  onRollupEntryModeChange: (value: RollupEntryMode) => void;
+  onAggregationMethodChange: (value: AggregationMethod) => void;
   onHorizontalAlignChange: (value: HorizontalAlign) => void;
   onVerticalAlignChange: (value: VerticalAlign) => void;
   onViewValues: () => void;
@@ -1065,7 +1112,6 @@ function BindingPanel({
                   onClick={() => {
                     onHeaderTypeChange(suggestion.type);
                     onBindingObjectChange(suggestion.code);
-                    if (suggestion.defaultAlignment !== "context") onAxisAlignmentChange(suggestion.defaultAlignment);
                   }}
                 >
                   <Badge variant="outline">{suggestion.type}</Badge>
@@ -1096,6 +1142,23 @@ function BindingPanel({
               .filter((option) => option.type === headerType)
               .map((option) => ({ value: option.code, label: `${option.label} (${option.memberCount})` }))}
           />
+          {headerType === "Measure" ? (
+            <div className="grid gap-2 rounded-md bg-muted/40 p-3">
+              <p className="text-xs font-bold">Measure defaults</p>
+              <SelectField
+                label="Measure"
+                value={selectedMeasureCode}
+                onChange={(value) => onSelectedMeasureCodeChange(value as MeasureCode)}
+                options={measureBindingOptions.map((measure) => ({
+                  value: measure.code,
+                  label: `${measure.code} / ${measure.unitCode}`,
+                }))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Each generated data-entry cell stores axis tuple + measure code. This lets one template support count, rate, percent, or other measure columns without changing dimension headers.
+              </p>
+            </div>
+          ) : null}
           {bindingObject === "GEOGRAPHY" ? (
             <SelectField
               label="Geography scope"
@@ -1111,6 +1174,40 @@ function BindingPanel({
                 { value: "HIERARCHY_NATIONAL_STATE_DISTRICT", label: "Hierarchy columns: national + state + district" },
               ]}
             />
+          ) : null}
+          {bindingObject === "AREA_TYPE" ? (
+            <div className="grid gap-2 rounded-md bg-amber-50 p-3 text-amber-950">
+              <p className="text-xs font-bold">Hierarchy / rollup behavior</p>
+              <p className="text-[11px]">
+                Parent member Total can be entered manually, derived from Rural + Urban, or manually entered with validation.
+              </p>
+              <SelectField
+                label="Entry mode"
+                value={rollupEntryMode}
+                onChange={(value) => onRollupEntryModeChange(value as RollupEntryMode)}
+                options={[
+                  { value: "MANUAL", label: "Manual parent value" },
+                  { value: "DERIVED", label: "Derived from children" },
+                  { value: "MANUAL_WITH_VALIDATION", label: "Manual with child-sum validation" },
+                ]}
+              />
+              <SelectField
+                label="Aggregation method"
+                value={aggregationMethod}
+                onChange={(value) => onAggregationMethodChange(value as AggregationMethod)}
+                options={[
+                  { value: "SUM", label: "SUM" },
+                  { value: "AVG", label: "AVG" },
+                  { value: "WEIGHTED_AVG", label: "WEIGHTED_AVG" },
+                  { value: "MIN", label: "MIN" },
+                  { value: "MAX", label: "MAX" },
+                  { value: "NO_ROLLUP", label: "NO_ROLLUP" },
+                ]}
+              />
+              <div className="rounded-md bg-card/80 p-2 text-[11px]">
+                <span className="font-bold">Rule:</span> TOTAL {"->"} RURAL + URBAN for the selected measure.
+              </div>
+            </div>
           ) : null}
           <label className="grid gap-1 text-xs font-semibold">
             Header label
@@ -1255,6 +1352,9 @@ export function TemplateManagementPage() {
   const [required, setRequired] = useState(true);
   const [decimalPlaces, setDecimalPlaces] = useState(2);
   const [validationRule, setValidationRule] = useState("NUMERIC_NON_NEGATIVE");
+  const [selectedMeasureCode, setSelectedMeasureCode] = useState<MeasureCode>("INDICATOR_VALUE");
+  const [rollupEntryMode, setRollupEntryMode] = useState<RollupEntryMode>("MANUAL_WITH_VALIDATION");
+  const [aggregationMethod, setAggregationMethod] = useState<AggregationMethod>("SUM");
   const [horizontalAlign, setHorizontalAlign] = useState<HorizontalAlign>("center");
   const [verticalAlign, setVerticalAlign] = useState<VerticalAlign>("top");
   const [cells, setCells] = useState<Record<string, CanvasCell>>(buildHeaderCells());
@@ -1279,6 +1379,7 @@ export function TemplateManagementPage() {
   const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
   const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
   const rulesForVersion = templateValidationRules.filter((rule) => rule.version_code === selectedVersion.version_code);
+  const selectedMeasure = measureBindingOptions.find((measure) => measure.code === selectedMeasureCode) ?? measureBindingOptions[0];
   const generatedRows = getMembersForObject("GEOGRAPHY", geographyScope).length;
   const generatedColumns = getMembersForObject("TIME_PERIOD").length * getMembersForObject("AREA_TYPE").length * getMembersForObject("GENDER").length;
   const selectedRange = rangeLabel(selectedAnchor, selectedFocus);
@@ -1313,9 +1414,9 @@ export function TemplateManagementPage() {
       .slice(0, 80)
       .map(([address, cell]) => ({
         address,
-        measure_code: "INDICATOR_VALUE",
+        measure_code: selectedMeasure.code,
         value_type: cell.datatype ?? datatype,
-        unit_code: "PERCENT",
+        unit_code: selectedMeasure.unitCode,
         required: cell.required ?? required,
         validation_rule: cell.validationRule ?? validationRule,
         align: cell.align ?? horizontalAlign,
@@ -1350,14 +1451,80 @@ export function TemplateManagementPage() {
           axis_role: "COLUMN",
           members: axisMembers(code),
         })),
+        binding_groups: [
+          ...rowAxes.map((code, index) => ({
+            binding_group_code: `BIND_${code}_ROWS`,
+            binding_group_type: "AXIS",
+            axis_code: code,
+            axis_role: "ROW",
+            header_label: code === "GEOGRAPHY" ? "Location" : optionFor(code).label,
+            show_header: showHeader,
+            axis_alignment: "ROW",
+            freeze_group: code === "GEOGRAPHY",
+            is_editable: false,
+            is_required: true,
+            display_order: (index + 1) * 10,
+            nesting_order: index + 1,
+          })),
+          ...columnAxes.map((code, index) => ({
+            binding_group_code: `BIND_${code}_COLUMNS`,
+            binding_group_type: "AXIS",
+            axis_code: code,
+            axis_role: "COLUMN",
+            header_label: optionFor(code).label,
+            show_header: showHeader,
+            axis_alignment: "COLUMN",
+            freeze_group: code === "TIME_PERIOD",
+            is_editable: code === "TIME_PERIOD",
+            is_required: true,
+            display_order: (index + 1) * 10,
+            nesting_order: index + 1,
+            render_options: code === "AREA_TYPE"
+              ? {
+                  rollup_rule_code: "ROLLUP_AREA_TYPE_TOTAL",
+                  entry_mode: rollupEntryMode,
+                  aggregation_method: aggregationMethod,
+                  parent_member_code: "TOTAL",
+                  child_member_codes: ["RURAL", "URBAN"],
+                }
+              : undefined,
+          })),
+          {
+            binding_group_code: `BIND_${selectedMeasure.code}`,
+            binding_group_type: "MEASURE",
+            measure_code: selectedMeasure.code,
+            header_label: selectedMeasure.label,
+            show_header: false,
+            axis_alignment: "CONTEXT",
+            freeze_group: false,
+            is_editable: true,
+            is_required: required,
+            display_order: 90,
+            nesting_order: 1,
+          },
+        ],
         measure: {
-          measure_code: "INDICATOR_VALUE",
-          value_type: datatype,
-          unit_code: "PERCENT",
+          measure_code: selectedMeasure.code,
+          label: selectedMeasure.label,
+          value_type: selectedMeasure.valueType,
+          unit_code: selectedMeasure.unitCode,
           required,
-          decimal_places: decimalPlaces,
-          validation_rule: validationRule,
+          decimal_places: selectedMeasure.decimalPlaces,
+          validation_rule: selectedMeasure.validationRule,
         },
+        rollup_rules: columnAxes.includes("AREA_TYPE")
+          ? [
+              {
+                dimension_code: "AREA_TYPE",
+                parent_member_code: "TOTAL",
+                child_member_codes: ["RURAL", "URBAN"],
+                entry_mode: rollupEntryMode,
+                aggregation_method: aggregationMethod,
+                measure_code: selectedMeasure.code,
+                validation_rule_code: "TOTAL_EQUALS_CHILD_SUM",
+              },
+            ]
+          : [],
         editable_cells: editableCells,
         data_entry_binding_shape: {
           rows_from: rowAxes,
@@ -1365,7 +1532,7 @@ export function TemplateManagementPage() {
           value_object: {
             cell_code: "generated from row/column axis members",
             value_numeric: "entered by department user",
-            unit_code: "PERCENT",
+            unit_code: selectedMeasure.unitCode,
             dimensions: ["geography", "time_period", "area_type", "gender"].filter((item) =>
               [...rowAxes, ...columnAxes].join(" ").toLowerCase().includes(item.split("_")[0]),
             ),
@@ -1375,7 +1542,7 @@ export function TemplateManagementPage() {
       null,
       2,
     );
-  }, [cells, columnAxes, datatype, decimalPlaces, geographyScope, horizontalAlign, required, rowAxes, selectedTemplate, validationRule, verticalAlign]);
+  }, [aggregationMethod, cells, columnAxes, datatype, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, validationRule, verticalAlign]);
 
   const addOperation = (label: string, detail: string) => {
     setOperations((current) => [...current, { id: `${Date.now()}-${label}`, label, detail }]);
@@ -1432,6 +1599,41 @@ export function TemplateManagementPage() {
     next[address] = { ...(next[address] ?? {}), ...update };
   };
 
+  const getCurrentAxisHeaderLabel = (code: BindingObjectCode) => {
+    const fallback = code === "GEOGRAPHY" ? "Location" : optionFor(code).label;
+    if (headerType === "Dimension" && bindingObject === code) {
+      return headerLabel || fallback;
+    }
+
+    const existingHeader = Object.values(cells).find(
+      (cell) =>
+        cell.role === "HEADER" &&
+        cell.groupBindingCode === code &&
+        cell.groupAlignment === "row" &&
+        !cell.mergeOwner &&
+        Boolean(cell.value),
+    );
+
+    return existingHeader?.value || fallback;
+  };
+
+  const addAxisAtSelection = (
+    currentAxes: BindingObjectCode[],
+    code: BindingObjectCode,
+    alignment: AxisAlignment,
+  ) => {
+    const axesWithoutCurrent = currentAxes.filter((axisCode) => axisCode !== code);
+    const { start } = normalizeRange(selectedAnchor, selectedFocus);
+    const preferredIndex = alignment === "column" ? start.row - 2 : start.col - 1;
+    const insertIndex = Math.min(Math.max(preferredIndex, 0), axesWithoutCurrent.length);
+
+    return [
+      ...axesWithoutCurrent.slice(0, insertIndex),
+      code,
+      ...axesWithoutCurrent.slice(insertIndex),
+    ];
+  };
+
   const buildStructuredGrid = (
     nextRowAxes: BindingObjectCode[],
     nextColumnAxes: BindingObjectCode[],
@@ -1447,11 +1649,11 @@ export function TemplateManagementPage() {
       members: getMembersForObject(code, activeGeographyScope),
     }));
     const regularRowCombinations = cartesianProduct(regularRowAxisMembers.map((axis) => axis.members));
-    const geographyHeaderLabel = headerLabel || "Location";
+    const geographyHeaderLabel = getCurrentAxisHeaderLabel("GEOGRAPHY");
     const geographyHierarchyLabels = usesGeographyHierarchy ? getGeographyHierarchyColumns(activeGeographyScope, geographyHeaderLabel) : [];
     const rowAxisColumns: Array<{ code: BindingObjectCode; label: string }> = [
       ...geographyHierarchyLabels.map((label) => ({ code: "GEOGRAPHY" as BindingObjectCode, label })),
-      ...regularRowAxes.map((code) => ({ code, label: code === "GEOGRAPHY" ? geographyHeaderLabel : optionFor(code).label })),
+      ...regularRowAxes.map((code) => ({ code, label: code === "GEOGRAPHY" ? geographyHeaderLabel : getCurrentAxisHeaderLabel(code) })),
     ];
     const geographyRows = usesGeographyHierarchy ? getGeographyHierarchyRows(activeGeographyScope) : [];
     const hierarchyValues = (row: GeographyHierarchyRow): StructuredRowCell[] => {
@@ -1489,7 +1691,7 @@ export function TemplateManagementPage() {
             };
           }),
         );
-    const rowAxisColumnCount = Math.max(rowAxisColumns.length, 1);
+    const rowAxisColumnCount = rowAxisColumns.length;
     const columnsStart = rowAxisColumnCount + 1;
     const headerStartRow = 2;
     const axisMembers = nextColumnAxes.map((code) => ({
@@ -1615,11 +1817,11 @@ export function TemplateManagementPage() {
           set(coordToAddress(dataStartRow + rowIndex, col), {
             value: "",
             role: "INPUT",
-            boundCode: "INDICATOR_VALUE",
+            boundCode: selectedMeasure.code,
             editable: true,
             required,
-            datatype,
-            validationRule,
+            datatype: selectedMeasure.valueType,
+            validationRule: selectedMeasure.validationRule,
             align: horizontalAlign,
             valign: verticalAlign,
             groupId: "measure-input-cells",
@@ -1915,6 +2117,39 @@ export function TemplateManagementPage() {
     return next;
   };
 
+  const rebuildDimensionAxis = (
+    code: BindingObjectCode,
+    alignment: AxisAlignment,
+    includeUndo = true,
+  ) => {
+    const effectiveAlignment =
+      code === "GEOGRAPHY" && isHierarchyGeographyScope(geographyScope)
+        ? "row"
+        : alignment;
+    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
+    let nextRowAxes = rowAxes.filter((axisCode) => axisCode !== code);
+    let nextColumnAxes = columnAxes.filter((axisCode) => axisCode !== code);
+
+    if (effectiveAlignment === "row") {
+      nextRowAxes = addAxisAtSelection(nextRowAxes, code, "row");
+    } else {
+      nextColumnAxes = addAxisAtSelection(nextColumnAxes, code, "column");
+    }
+
+    if (includeUndo) {
+      pushUndo();
+    }
+
+    const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, includeMeasure);
+    setRowAxes(nextRowAxes);
+    setColumnAxes(nextColumnAxes);
+    setCells(nextCells);
+    setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, includeMeasure));
+    setDesignerStage("binding");
+    setActivityMessage(`${optionFor(code).label} aligned as ${effectiveAlignment}. Canvas regenerated without duplicate axes.`);
+    addOperation("Align axis", `${optionFor(code).label} moved to ${effectiveAlignment} alignment.`);
+  };
+
   const bindRowDimension = (next: Record<string, CanvasCell>, code: BindingObjectCode) => {
     const { start } = normalizeRange(selectedAnchor, selectedFocus);
     const members = getMembersForObject(code, geographyScope);
@@ -2179,33 +2414,9 @@ export function TemplateManagementPage() {
     pushUndo();
 
     if (headerType === "Dimension") {
-      const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
-      let nextRowAxes = rowAxes;
-      let nextColumnAxes = columnAxes;
-
-      if (effectiveAlignment === "row") {
-        nextColumnAxes = nextColumnAxes.filter((code) => code !== bindingObject);
-        nextRowAxes = [...nextRowAxes.filter((code) => code !== bindingObject), bindingObject];
-      } else if (effectiveAlignment === "column") {
-        nextRowAxes = nextRowAxes.filter((code) => code !== bindingObject);
-        const requiredCodes =
-          bindingObject === "GENDER"
-            ? ["TIME_PERIOD", "AREA_TYPE", "GENDER"]
-            : bindingObject === "AREA_TYPE"
-              ? ["TIME_PERIOD", "AREA_TYPE"]
-              : [bindingObject];
-        nextColumnAxes = columnAxisOrder.filter((code) => [...new Set([...nextColumnAxes, ...requiredCodes])].includes(code));
-        if (bindingObject === "GEOGRAPHY") nextColumnAxes = ["GEOGRAPHY"];
-      }
-
-      const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, includeMeasure);
-      setRowAxes(nextRowAxes);
-      setColumnAxes(nextColumnAxes);
-      setCells(nextCells);
-      setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, includeMeasure));
-      setDesignerStage("binding");
-      setActivityMessage(`${option.label} rebound as ${effectiveAlignment} axis. Existing headers were regenerated to match the template structure.`);
-      addOperation("Bind axis", `${option.label} regenerated as ${effectiveAlignment} axis.`);
+      rebuildDimensionAxis(bindingObject, effectiveAlignment, false);
+      setActivityMessage(`${option.label} bound as ${effectiveAlignment} axis. Existing headers were regenerated to match the template structure.`);
+      addOperation("Bind axis", `${option.label} generated as ${effectiveAlignment} axis.`);
       return;
     }
 
@@ -2311,8 +2522,39 @@ export function TemplateManagementPage() {
 
   const handleAxisAlignmentChange = (value: AxisAlignment) => {
     setAxisAlignment(value);
+    if (optionsOpen && headerType === "Dimension" && (rowAxes.includes(bindingObject) || columnAxes.includes(bindingObject))) {
+      rebuildDimensionAxis(bindingObject, value);
+      return;
+    }
     if (optionsOpen && headerType === "Dimension") {
-      bindSelectedObject(value);
+      setActivityMessage(`${optionFor(bindingObject).label} alignment set to ${value}. Click Bind values to place it on the canvas.`);
+    }
+  };
+
+  const handleSelectedMeasureCodeChange = (value: MeasureCode) => {
+    const measure = measureBindingOptions.find((item) => item.code === value) ?? measureBindingOptions[0];
+    setSelectedMeasureCode(value);
+    setDatatype(measure.valueType);
+    setDecimalPlaces(measure.decimalPlaces);
+    setValidationRule(measure.validationRule);
+
+    if (boundObjects.some((item) => item.code === "INDICATOR_VALUE") && (rowAxes.length || columnAxes.length)) {
+      pushUndo();
+      const nextCells = buildStructuredGrid(rowAxes, columnAxes, true);
+      Object.keys(nextCells).forEach((address) => {
+        if (nextCells[address]?.role === "INPUT") {
+          nextCells[address] = {
+            ...nextCells[address],
+            boundCode: measure.code,
+            datatype: measure.valueType,
+            validationRule: measure.validationRule,
+          };
+        }
+      });
+      setCells(nextCells);
+      setBoundObjects(objectsFromAxes(rowAxes, columnAxes, true));
+      addOperation("Measure defaults", `${measure.code} applied to generated editable cells.`);
+      setActivityMessage(`${measure.label} selected. Existing editable cells were regenerated with ${measure.unitCode} defaults.`);
     }
   };
 
@@ -2927,6 +3169,9 @@ export function TemplateManagementPage() {
                 required={required}
                 decimalPlaces={decimalPlaces}
                 validationRule={validationRule}
+                selectedMeasureCode={selectedMeasureCode}
+                rollupEntryMode={rollupEntryMode}
+                aggregationMethod={aggregationMethod}
                 horizontalAlign={horizontalAlign}
                 verticalAlign={verticalAlign}
                 suggestions={suggestions}
@@ -2943,6 +3188,9 @@ export function TemplateManagementPage() {
                 onRequiredChange={setRequired}
                 onDecimalPlacesChange={setDecimalPlaces}
                 onValidationRuleChange={setValidationRule}
+                onSelectedMeasureCodeChange={handleSelectedMeasureCodeChange}
+                onRollupEntryModeChange={setRollupEntryMode}
+                onAggregationMethodChange={setAggregationMethod}
                 onHorizontalAlignChange={handleHorizontalAlignChange}
                 onVerticalAlignChange={handleVerticalAlignChange}
                 onViewValues={() => setModal("view-values")}
