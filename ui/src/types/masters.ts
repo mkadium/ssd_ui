@@ -84,6 +84,45 @@ export type IndicatorListItem = {
   description?: string | null;
 };
 
+export type IndicatorDetail = IndicatorListItem & {
+  versions?: Array<{
+    version_code: string;
+    is_current?: boolean | string | null;
+  }>;
+  source_assignments?: SourceAssignmentListItem[];
+  methodology_note?: string | null;
+};
+
+export type IndicatorVersionDetail = {
+  national_indicator_code: string;
+  version_code: string;
+  data_type?: string | null;
+  decimal_places?: number | string | null;
+  unit_of_measure_code?: string | null;
+  measures?: Array<{
+    measure_code: string;
+    value_type?: string | null;
+    unit_code?: string | null;
+    is_required?: boolean | string | null;
+    name?: string | null;
+  }>;
+};
+
+export type PeriodicityListItem = {
+  periodicity_code: string;
+  months_interval?: number | string | null;
+  name: string;
+};
+
+export type OfficerListItem = {
+  officer_code: string;
+  display_name: string;
+  email?: string | null;
+  mobile_number?: string | null;
+  designation?: string | null;
+  organization_code: string;
+};
+
 export type SourceAssignmentListItem = {
   national_indicator_code: string;
   source_organization_code: string;

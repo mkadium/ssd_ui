@@ -104,12 +104,22 @@ export function AppShell({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [openPopover, setOpenPopover] = useState<"reminders" | "notifications" | "profile" | null>(null);
 
-  const unitOptions = unitScopeQuery.data ?? unitScopeOptions;
+  const loadedUnitOptions = unitScopeQuery.data ?? unitScopeOptions;
+  const unitOptions =
+    unitCodeFromUrl && !loadedUnitOptions.some((unit) => unit.unit_code === unitCodeFromUrl)
+      ? [
+          {
+            unit_code: unitCodeFromUrl,
+            unit_name: unitCodeFromUrl,
+            unit_type: "UNIT",
+            jurisdiction: "Selected unit",
+            status: "ACTIVE" as const,
+          },
+          ...loadedUnitOptions,
+        ]
+      : loadedUnitOptions;
   const fallbackUnitCode = unitOptions[0]?.unit_code ?? "";
-  const selectedUnitCode =
-    unitCodeFromUrl && unitOptions.some((unit) => unit.unit_code === unitCodeFromUrl)
-      ? unitCodeFromUrl
-      : fallbackUnitCode;
+  const selectedUnitCode = unitCodeFromUrl ?? fallbackUnitCode;
   const userName = typeof user?.display_name === "string" ? user.display_name : "Admin";
   const unreadNotificationCount = notifications.filter((item) => item.status === "UNREAD").length;
   const activeReminderCount = reminders.filter((item) => item.status !== "DONE").length;
@@ -119,7 +129,7 @@ export function AppShell({
       return;
     }
 
-    if (selectedUnitCode && unitCodeFromUrl !== selectedUnitCode) {
+    if (!unitCodeFromUrl && selectedUnitCode) {
       const params = new URLSearchParams(location.search);
       params.set("unit_code", selectedUnitCode);
       navigate(`${location.pathname}?${params.toString()}`, { replace: true });
@@ -130,6 +140,18 @@ export function AppShell({
     const params = new URLSearchParams(location.search);
     params.set("unit_code", unitCode);
     navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+  };
+
+  const withUnitSearch = (path: string) => {
+    const params = new URLSearchParams(location.search);
+
+    if (selectedUnitCode) {
+      params.set("unit_code", selectedUnitCode);
+    }
+
+    const queryString = params.toString();
+
+    return queryString ? `${path}?${queryString}` : path;
   };
 
   const handleLogout = () => {
@@ -212,7 +234,7 @@ export function AppShell({
                   return (
                     <NavLink
                       key={item.labelKey}
-                      to={item.path}
+                      to={withUnitSearch(item.path)}
                       end={item.path === "/"}
                       title={sidebarCollapsed ? label : undefined}
                       className={({ isActive }) =>
@@ -247,7 +269,7 @@ export function AppShell({
               <select
                 className="w-full bg-transparent text-sm font-semibold outline-none"
                 value={activeDashboard}
-                onChange={(event) => navigate(`${event.target.value}${location.search}`)}
+                onChange={(event) => navigate(withUnitSearch(event.target.value))}
               >
                 <option value="/dashboard/super-admin">{t("top.dashboardSuper")}</option>
                 <option value="/dashboard/unit-admin">{t("top.dashboardUnit")}</option>
@@ -301,7 +323,7 @@ export function AppShell({
                 <div className="absolute right-0 top-11 z-40 w-80 rounded-md border border-border bg-card p-3 shadow-lg">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="text-sm font-bold">{t("top.reminders")}</p>
-                    <Button type="button" variant="outline" size="xs" onClick={() => { setOpenPopover(null); navigate("/reminders"); }}>
+                    <Button type="button" variant="outline" size="xs" onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/reminders")); }}>
                       {t("top.viewAll")}
                     </Button>
                   </div>
@@ -310,7 +332,7 @@ export function AppShell({
                       key={item.reminder_code}
                       type="button"
                       className="w-full border-b border-border py-2 text-left text-xs last:border-b-0 hover:text-primary"
-                      onClick={() => { setOpenPopover(null); navigate("/reminders"); }}
+                      onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/reminders")); }}
                     >
                       <span className="block font-semibold">{item.title}</span>
                       <span className="text-muted-foreground">{item.status} / {item.due_at}</span>
@@ -334,7 +356,7 @@ export function AppShell({
                 <div className="absolute right-0 top-11 z-40 max-h-80 w-80 overflow-y-auto rounded-md border border-border bg-card p-3 shadow-lg">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="text-sm font-bold">{t("top.notifications")}</p>
-                    <Button type="button" variant="outline" size="xs" onClick={() => { setOpenPopover(null); navigate("/notifications"); }}>
+                    <Button type="button" variant="outline" size="xs" onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/notifications")); }}>
                       {t("top.viewAll")}
                     </Button>
                   </div>
@@ -343,7 +365,7 @@ export function AppShell({
                       key={item.notification_code}
                       type="button"
                       className="w-full border-b border-border py-2 text-left text-xs last:border-b-0 hover:text-primary"
-                      onClick={() => { setOpenPopover(null); navigate("/notifications"); }}
+                      onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/notifications")); }}
                     >
                       <span className="block font-semibold">{item.title}</span>
                       <span className="text-muted-foreground">{item.module} / {item.status}</span>
@@ -374,7 +396,7 @@ export function AppShell({
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-muted"
-                    onClick={() => { setOpenPopover(null); navigate("/profile"); }}
+                    onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/profile")); }}
                   >
                     <Building2 aria-hidden="true" className="size-4" />
                     {t("top.profile")}
@@ -382,7 +404,7 @@ export function AppShell({
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-muted"
-                    onClick={() => { setOpenPopover(null); navigate("/preferences"); }}
+                    onClick={() => { setOpenPopover(null); navigate(withUnitSearch("/preferences")); }}
                   >
                     <Menu aria-hidden="true" className="size-4" />
                     {t("top.preferences")}

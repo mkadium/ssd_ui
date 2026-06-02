@@ -9,13 +9,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -33,6 +37,17 @@ import {
   periodicityOptions,
   type MasterRow,
 } from "@/data/mastersManagement.sample";
+import { useLanguage } from "@/providers/language-context";
+import { mastersService } from "@/services/mastersService";
+import type {
+  IndicatorDetail,
+  IndicatorListItem,
+  IndicatorVersionDetail,
+  OfficerListItem,
+  OrganizationListItem,
+  PeriodicityListItem,
+  SourceAssignmentListItem,
+} from "@/types/masters";
 
 type IndicatorTab = "overview" | "versions" | "metadata" | "global-mapping" | "sources";
 type DialogEntity = "indicator" | "version" | "metadata" | "global-mapping" | "source";
@@ -79,6 +94,139 @@ const statusVariant = (value?: string) => {
   return "ghost";
 };
 
+function safeApiMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "Sign in again to load indicator data.";
+    if (error.status === 403) return "You do not have permission to view indicator data.";
+    if (error.status === 0) return "Unable to reach the API.";
+  }
+
+  return "Indicator data is temporarily unavailable.";
+}
+
+function valueToString(value: unknown) {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "boolean") return value ? "YES" : "NO";
+  return String(value);
+}
+
+function indicatorToRow(indicator: IndicatorListItem): MasterRow {
+  return {
+    id: indicator.national_indicator_code,
+    national_indicator_code: indicator.national_indicator_code,
+    indicator_number: indicator.indicator_number,
+    name: indicator.name,
+    description: indicator.description ?? undefined,
+    owning_unit_code: indicator.owning_unit_code ?? undefined,
+    framework_code: indicator.framework_code ?? undefined,
+    edition_code: indicator.edition_code ?? undefined,
+    current_version_code: indicator.current_version_code ?? undefined,
+    mapped_node_code: "NOT_AVAILABLE",
+    mapped_node_path: "Framework mapping not available",
+    status: indicator.status ?? "ACTIVE",
+    color_value: indicator.color_value ?? undefined,
+  };
+}
+
+function sourceToRow(source: SourceAssignmentListItem): MasterRow {
+  return {
+    id: `${source.national_indicator_code}-${source.source_organization_code}-${source.assignment_role ?? "SOURCE"}`,
+    national_indicator_code: source.national_indicator_code,
+    source_organization_code: source.source_organization_code,
+    source_organization_name: source.source_organization_name ?? undefined,
+    officer_code: source.officer_code ?? undefined,
+    officer_display_name: source.officer_display_name ?? undefined,
+    periodicity_code: source.periodicity_code ?? undefined,
+    assignment_role: source.assignment_role ?? undefined,
+    valid_from: source.valid_from ?? undefined,
+    valid_to: source.valid_to ?? undefined,
+    is_active: valueToString(source.is_active ?? true),
+  };
+}
+
+function versionToRows(
+  selectedIndicatorCode: string | undefined,
+  detail?: IndicatorDetail,
+  version?: IndicatorVersionDetail,
+): MasterRow[] {
+  const detailVersions = detail?.versions ?? [];
+  const versionRows = detailVersions.map((item) => ({
+    id: item.version_code,
+    national_indicator_code: selectedIndicatorCode,
+    version_code: item.version_code,
+    data_type: item.version_code === version?.version_code ? version.data_type ?? undefined : undefined,
+    unit_of_measure_code: item.version_code === version?.version_code ? version.unit_of_measure_code ?? undefined : undefined,
+    decimal_places: item.version_code === version?.version_code ? valueToString(version.decimal_places) : undefined,
+    is_current: valueToString(item.is_current),
+    status: "ACTIVE",
+  }));
+
+  if (version && !versionRows.some((item) => item.version_code === version.version_code)) {
+    versionRows.push({
+      id: version.version_code,
+      national_indicator_code: version.national_indicator_code,
+      version_code: version.version_code,
+      data_type: version.data_type ?? undefined,
+      unit_of_measure_code: version.unit_of_measure_code ?? undefined,
+      decimal_places: valueToString(version.decimal_places),
+      is_current: "YES",
+      status: "ACTIVE",
+    });
+  }
+
+  return versionRows;
+}
+
+function metadataRowsFromVersion(version?: IndicatorVersionDetail): MasterRow[] {
+  if (!version) return [];
+
+  return (version.measures ?? []).map((measure) => ({
+    id: `${version.version_code}-${measure.measure_code}`,
+    version_code: version.version_code,
+    measure_code: measure.measure_code,
+    value_type: measure.value_type ?? undefined,
+    unit_code: measure.unit_code ?? version.unit_of_measure_code ?? undefined,
+    is_required: valueToString(measure.is_required),
+    name: measure.name ?? undefined,
+    is_active: "YES",
+  }));
+}
+
+function organizationRows(items: OrganizationListItem[]): MasterRow[] {
+  return items.map((item) => ({
+    id: item.organization_code,
+    organization_code: item.organization_code,
+    organization_type: item.organization_type,
+    parent_organization_code: item.parent_organization_code ?? undefined,
+    short_code: item.short_code ?? undefined,
+    name: item.name,
+    is_active: "YES",
+  }));
+}
+
+function officerRows(items: OfficerListItem[]): MasterRow[] {
+  return items.map((item) => ({
+    id: item.officer_code,
+    officer_code: item.officer_code,
+    display_name: item.display_name,
+    email: item.email ?? undefined,
+    mobile_number: item.mobile_number ?? undefined,
+    designation: item.designation ?? undefined,
+    organization_code: item.organization_code,
+    is_active: "YES",
+  }));
+}
+
+function periodicityRows(items: PeriodicityListItem[]): MasterRow[] {
+  return items.map((item) => ({
+    id: item.periodicity_code,
+    periodicity_code: item.periodicity_code,
+    months_interval: valueToString(item.months_interval),
+    name: item.name,
+    is_active: "YES",
+  }));
+}
+
 function RelatedTable({
   rows,
   columns,
@@ -111,10 +259,10 @@ function RelatedTable({
                 <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => onAction("view", row)}>
                   <Eye aria-hidden="true" className="size-3" />
                 </Button>
-                <Button size="icon-xs" variant="outline" aria-label="Edit" onClick={() => onAction("edit", row)}>
+                <Button size="icon-xs" variant="outline" aria-label="Edit" disabled title="Masters mutation API not available yet">
                   <Edit3 aria-hidden="true" className="size-3" />
                 </Button>
-                <Button size="icon-xs" variant="destructive" aria-label="Delete" onClick={() => onAction("delete", row)}>
+                <Button size="icon-xs" variant="destructive" aria-label="Delete" disabled title="Masters mutation API not available yet">
                   <Trash2 aria-hidden="true" className="size-3" />
                 </Button>
               </div>
@@ -260,20 +408,131 @@ function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
 }
 
 export function IndicatorManagementPage() {
+  const { language } = useLanguage();
+  const [searchParams] = useSearchParams();
+  const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [query, setQuery] = useState("");
   const [selectedIndicatorCode, setSelectedIndicatorCode] = useState(nationalIndicators[0]?.national_indicator_code ?? "");
   const [activeTab, setActiveTab] = useState<IndicatorTab>("overview");
   const [dialog, setDialog] = useState<DialogState>(null);
 
-  const selectedIndicator = nationalIndicators.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicators[0];
-  const indicatorVersions = versions.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
-  const indicatorMetadata = metadataDetails.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
+  const indicatorsQuery = useQuery({
+    queryKey: ["masters", "indicators", language],
+    queryFn: () => mastersService.listIndicators({ locale: language }),
+  });
+
+  const sourceAssignmentsQuery = useQuery({
+    queryKey: ["masters", "source-assignments", language],
+    queryFn: () => mastersService.listSourceAssignments({ locale: language }),
+  });
+
+  const organizationsQuery = useQuery({
+    queryKey: ["masters", "organizations", language],
+    queryFn: () => mastersService.listOrganizations({ locale: language }),
+  });
+
+  const officersQuery = useQuery({
+    queryKey: ["masters", "officers", language],
+    queryFn: () => mastersService.listOfficers({ locale: language }),
+  });
+
+  const periodicitiesQuery = useQuery({
+    queryKey: ["masters", "periodicities", language],
+    queryFn: () => mastersService.listPeriodicities({ locale: language }),
+  });
+
+  const sourceAssignmentData = sourceAssignmentsQuery.data?.data;
+  const indicatorData = indicatorsQuery.data?.data;
+  const selectedUnitSources = useMemo(
+    () => (sourceAssignmentData ?? []).filter((source) =>
+      !selectedUnitCode || source.source_organization_code === selectedUnitCode,
+    ),
+    [selectedUnitCode, sourceAssignmentData],
+  );
+  const sourceIndicatorCodes = useMemo(
+    () => new Set(selectedUnitSources.map((source) => source.national_indicator_code)),
+    [selectedUnitSources],
+  );
+  const liveNationalIndicators = useMemo(
+    () => (indicatorData ?? []).filter((indicator) => {
+      if (!selectedUnitCode) return true;
+      return indicator.owning_unit_code === selectedUnitCode || sourceIndicatorCodes.has(indicator.national_indicator_code);
+    }).map(indicatorToRow),
+    [indicatorData, selectedUnitCode, sourceIndicatorCodes],
+  );
+  const nationalIndicatorRows = indicatorData !== undefined
+    ? liveNationalIndicators
+    : nationalIndicators;
+  const sourceAssignmentRows = sourceAssignmentData !== undefined
+    ? selectedUnitSources.map(sourceToRow)
+    : sourceAssignments;
+  const organizationRowsData = organizationsQuery.data?.data !== undefined
+    ? organizationRows(organizationsQuery.data?.data ?? [])
+    : organizationOptions;
+  const officerRowsData = officersQuery.data?.data !== undefined
+    ? officerRows(officersQuery.data?.data ?? [])
+    : officerOptions;
+  const periodicityRowsData = periodicitiesQuery.data?.data !== undefined
+    ? periodicityRows(periodicitiesQuery.data?.data ?? [])
+    : periodicityOptions;
+
+  const selectedIndicator = nationalIndicatorRows.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicatorRows[0];
+  const selectedIndicatorDetailQuery = useQuery({
+    queryKey: ["masters", "indicator-detail", selectedIndicator?.national_indicator_code, language],
+    queryFn: () =>
+      mastersService.getIndicator({
+        indicatorCode: selectedIndicator?.national_indicator_code ?? "",
+        locale: language,
+      }),
+    enabled: Boolean(selectedIndicator?.national_indicator_code),
+  });
+  const currentVersionCode =
+    selectedIndicator?.current_version_code ??
+    selectedIndicatorDetailQuery.data?.data.versions?.find((version) => version.is_current === true || version.is_current === "YES")?.version_code ??
+    selectedIndicatorDetailQuery.data?.data.versions?.[0]?.version_code;
+  const selectedVersionQuery = useQuery({
+    queryKey: ["masters", "indicator-version", currentVersionCode, language],
+    queryFn: () =>
+      mastersService.getIndicatorVersion({
+        versionCode: currentVersionCode ?? "",
+        locale: language,
+      }),
+    enabled: Boolean(currentVersionCode),
+  });
+  const liveIndicatorVersions = versionToRows(
+    selectedIndicator?.national_indicator_code,
+    selectedIndicatorDetailQuery.data?.data,
+    selectedVersionQuery.data?.data,
+  );
+  const indicatorVersions = liveIndicatorVersions.length > 0
+    ? liveIndicatorVersions
+    : versions.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
+  const indicatorMetadata = metadataRowsFromVersion(selectedVersionQuery.data?.data);
+  const indicatorMetadataRows = indicatorMetadata.length > 0
+    ? indicatorMetadata
+    : metadataDetails.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
   const indicatorGlobalMappings = globalMappings.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
-  const indicatorSources = sourceAssignments.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
+  const indicatorSources = sourceAssignmentRows.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
+  const isLiveDataLoading =
+    indicatorsQuery.isFetching ||
+    sourceAssignmentsQuery.isFetching ||
+    organizationsQuery.isFetching ||
+    officersQuery.isFetching ||
+    periodicitiesQuery.isFetching ||
+    selectedIndicatorDetailQuery.isFetching ||
+    selectedVersionQuery.isFetching;
+  const liveDataError =
+    indicatorsQuery.error ||
+    sourceAssignmentsQuery.error ||
+    organizationsQuery.error ||
+    officersQuery.error ||
+    periodicitiesQuery.error ||
+    selectedIndicatorDetailQuery.error ||
+    selectedVersionQuery.error;
 
   const filteredIndicators = useMemo(
-    () => nationalIndicators.filter((item) => Object.values(item).join(" ").toLowerCase().includes(query.toLowerCase())),
-    [query],
+    () => nationalIndicatorRows.filter((item) => Object.values(item).join(" ").toLowerCase().includes(query.toLowerCase())),
+    [nationalIndicatorRows, query],
   );
 
   const openDialog = (
@@ -302,18 +561,38 @@ export function IndicatorManagementPage() {
             <p className="mt-1 text-sm text-muted-foreground">Manage national indicators, versions, metadata, global mappings, and multiple source assignments.</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline"><Download aria-hidden="true" className="size-4" /> Format</Button>
-            <Button variant="outline"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
-            <Button onClick={() => openDialog("create", "Create national indicator")}><Plus aria-hidden="true" className="size-4" /> New indicator</Button>
+            <Button variant="outline" disabled title="Masters mutation API not available yet"><Download aria-hidden="true" className="size-4" /> Format</Button>
+            <Button variant="outline" disabled title="Masters mutation API not available yet"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
+            <Button disabled title="Masters mutation API not available yet"><Plus aria-hidden="true" className="size-4" /> New indicator</Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        {isLiveDataLoading ? (
+          <Loader variant="section" label="Loading Masters indicator data" />
+        ) : null}
+
+        {liveDataError ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+            {safeApiMessage(liveDataError)} Showing available fallback data where possible.
+          </div>
+        ) : null}
+
+        <div className="rounded-md border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">Active unit:</span>{" "}
+          <span className="font-mono">{selectedUnitCode || "ALL"}</span>
+          <span className="mx-2">/</span>
+          Unit filter is applied to indicator owning unit and source organization from available GET APIs.
+        </div>
+
+        <div className="grid grid-cols-7 gap-3 max-xl:grid-cols-4 max-lg:grid-cols-2">
           {[
-            ["National indicators", nationalIndicators.length, "metadata.national_indicators"],
-            ["Global mappings", globalMappings.length, "metadata.national_global_indicator_mappings"],
-            ["Versions", versions.length, "metadata.indicator_versions"],
-            ["Source assignments", sourceAssignments.length, "org.indicator_source_assignments"],
+            ["National indicators", nationalIndicatorRows.length, "Filtered list"],
+            ["Global mappings", indicatorGlobalMappings.length, "Not available"],
+            ["Versions", indicatorVersions.length, "Selected indicator"],
+            ["Source assignments", sourceAssignmentRows.length, "Active unit scope"],
+            ["Organizations", organizationRowsData.length, "Source registry"],
+            ["Officers", officerRowsData.length, "Officer registry"],
+            ["Periodicities", periodicityRowsData.length, "Cadence options"],
           ].map(([label, value, helper]) => (
             <div key={label} className="rounded-md bg-card p-3 shadow-sm ring-1 ring-border/60">
               <p className="text-xs font-semibold text-muted-foreground">{label}</p>
@@ -363,8 +642,8 @@ export function IndicatorManagementPage() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => openDialog("view", "Indicator detail", indicator)}><Eye aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Edit" onClick={() => openDialog("edit", "Edit national indicator", indicator)}><Edit3 aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Map" onClick={() => openDialog("map", "Map indicator", indicator, "global-mapping")}><Link2 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Edit" disabled title="Masters mutation API not available yet"><Edit3 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Map" disabled title="Mapping mutation API not available yet"><Link2 aria-hidden="true" className="size-3" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -382,7 +661,7 @@ export function IndicatorManagementPage() {
                 <h2 className="text-base font-bold">{selectedIndicator?.indicator_number} {selectedIndicator?.name}</h2>
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">{selectedIndicator?.national_indicator_code}</p>
               </div>
-              <Button variant="outline" onClick={() => openDialog("edit", "Edit selected indicator", selectedIndicator)}>Edit selected</Button>
+              <Button variant="outline" disabled title="Masters mutation API not available yet">Edit selected</Button>
             </div>
 
             <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Indicator detail tabs">
@@ -462,12 +741,12 @@ export function IndicatorManagementPage() {
 
             {activeTab === "metadata" ? (
               <RelatedTable
-                rows={indicatorMetadata}
+                rows={indicatorMetadataRows}
                 columns={[
                   { key: "version_code", label: "Version" },
-                  { key: "data_reference_period", label: "Reference period" },
-                  { key: "latest_data_availability", label: "Availability" },
-                  { key: "source_reference_code", label: "Source ref" },
+                  { key: "measure_code", label: "Measure" },
+                  { key: "value_type", label: "Value type" },
+                  { key: "unit_code", label: "Unit" },
                   { key: "is_active", label: "Active" },
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Metadata detail", row, "metadata")}
@@ -491,7 +770,7 @@ export function IndicatorManagementPage() {
             {activeTab === "sources" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
-                  <Button onClick={() => openDialog("create", "Add source assignment", selectedIndicator, "source")}>
+                  <Button disabled title="Masters mutation API not available yet">
                     <Plus aria-hidden="true" className="size-4" />
                     Add source
                   </Button>

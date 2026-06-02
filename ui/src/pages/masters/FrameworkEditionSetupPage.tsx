@@ -163,7 +163,7 @@ function toIndicatorMappings(
         national_indicator_code: indicator.national_indicator_code,
         indicator_number: indicator.indicator_number,
         indicator_name: indicator.name,
-        mapped_node_code: "API_PENDING",
+        mapped_node_code: "NOT_AVAILABLE",
         mapped_node_path: "Framework node mapping is not exposed by current API",
         global_indicator_code: indicator.current_version_code ?? "NONE",
         source_organization_code: primarySource?.source_organization_code ?? "NONE",

@@ -2,10 +2,14 @@ import { apiRequest } from "@/api/client";
 import type {
   FrameworkEditionListItem,
   FrameworkHierarchyDetail,
+  IndicatorDetail,
   IndicatorListItem,
+  IndicatorVersionDetail,
   MetadataDetailResponse,
   MetadataListResponse,
+  OfficerListItem,
   OrganizationListItem,
+  PeriodicityListItem,
   SourceAssignmentListItem,
 } from "@/types/masters";
 
@@ -56,6 +60,46 @@ export const mastersService = {
     );
   },
 
+  getIndicator: async ({
+    indicatorCode,
+    locale,
+  }: {
+    indicatorCode: string;
+    locale: string;
+  }): Promise<MetadataDetailResponse<IndicatorDetail>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<IndicatorDetail>>(
+      `/masters/indicators/${encodeURIComponent(indicatorCode)}?${params.toString()}`,
+    );
+  },
+
+  getIndicatorVersion: async ({
+    versionCode,
+    locale,
+  }: {
+    versionCode: string;
+    locale: string;
+  }): Promise<MetadataDetailResponse<IndicatorVersionDetail>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<IndicatorVersionDetail>>(
+      `/masters/indicator-versions/${encodeURIComponent(versionCode)}?${params.toString()}`,
+    );
+  },
+
+  listPeriodicities: async ({
+    locale,
+  }: {
+    locale: string;
+  }): Promise<MetadataListResponse<PeriodicityListItem>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataListResponse<PeriodicityListItem>>(
+      `/masters/periodicities?${params.toString()}`,
+    );
+  },
+
   listSourceAssignments: async ({
     locale,
     indicatorCode,
@@ -99,6 +143,32 @@ export const mastersService = {
 
     return apiRequest<MetadataListResponse<OrganizationListItem>>(
       `/masters/organizations?${params.toString()}`,
+    );
+  },
+
+  listOfficers: async ({
+    locale,
+    organizationCode,
+    limit = 500,
+    offset = 0,
+  }: {
+    locale: string;
+    organizationCode?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<MetadataListResponse<OfficerListItem>> => {
+    const params = new URLSearchParams({
+      locale,
+      limit: String(limit),
+      offset: String(offset),
+    });
+
+    if (organizationCode) {
+      params.set("organization_code", organizationCode);
+    }
+
+    return apiRequest<MetadataListResponse<OfficerListItem>>(
+      `/masters/officers?${params.toString()}`,
     );
   },
 };

@@ -1,6 +1,6 @@
 
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader } from "@/components/ui/loader";
@@ -89,15 +89,17 @@ function RouteFallback() {
 }
 
 function App() {
+  const location = useLocation();
   const { isAuthenticated, roles, pages } = useAuth();
   const defaultDashboardPath = getDefaultDashboardPath({ roles, pages });
+  const defaultDashboardWithSearch = `${defaultDashboardPath}${location.search}`;
 
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route
           path="/"
-          element={<Navigate to={isAuthenticated ? defaultDashboardPath : "/login"} replace />}
+          element={<Navigate to={isAuthenticated ? defaultDashboardWithSearch : "/login"} replace />}
         />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/invitation-setup" element={<TemporaryContributorSetupPage />} />
@@ -293,7 +295,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to={isAuthenticated ? defaultDashboardPath : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated ? defaultDashboardWithSearch : "/login"} replace />} />
       </Routes>
     </Suspense>
   );
