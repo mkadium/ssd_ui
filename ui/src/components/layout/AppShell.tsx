@@ -362,10 +362,11 @@ export function AppShell({
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-red-700 hover:bg-red-50"
+                    disabled={logoutMutation.isPending}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <LogOut aria-hidden="true" className="size-4" />
-                    {t("top.logout")}
+                    {logoutMutation.isPending ? "Logging out" : t("top.logout")}
                   </button>
                 </div>
               )}

@@ -8,6 +8,8 @@ type AuthStore = {
   accessToken: string | null;
   refreshToken: string | null;
   user: LoginResponse["user_profile"] | null;
+  roles: LoginResponse["roles"];
+  pages: LoginResponse["pages"];
   setAuth: (data: LoginResponse) => void;
   setAccessToken: (token: string) => void;
   clearAuth: () => void;
@@ -19,6 +21,8 @@ export const useAuthStore = create<AuthStore>()(
       accessToken: null,
       refreshToken: null,
       user: null,
+      roles: [],
+      pages: [],
       setAuth: (data) =>
         set(() => {
           setApiAccessToken(data.access_token);
@@ -27,6 +31,8 @@ export const useAuthStore = create<AuthStore>()(
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             user: data.user_profile,
+            roles: data.roles,
+            pages: data.pages,
           };
         }),
       setAccessToken: (token) =>
@@ -39,7 +45,7 @@ export const useAuthStore = create<AuthStore>()(
         set(() => {
           setApiAccessToken(null);
 
-          return { accessToken: null, refreshToken: null, user: null };
+          return { accessToken: null, refreshToken: null, user: null, roles: [], pages: [] };
         }),
     }),
     {
@@ -47,6 +53,8 @@ export const useAuthStore = create<AuthStore>()(
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
+        roles: state.roles,
+        pages: state.pages,
       }),
       onRehydrateStorage: () => (state) => {
         setApiAccessToken(state?.accessToken ?? null);

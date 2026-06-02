@@ -16,12 +16,14 @@ import {
 import { Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
+import { ApiError } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
 import { useAuth } from "@/hooks/useAuth";
 import { useLogin } from "@/hooks/useLogin";
+import { getDefaultDashboardPath } from "@/lib/authRedirect";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -73,9 +75,37 @@ const loginResolver: Resolver<LoginFormValues> = async (values) => {
   };
 };
 
+function getLoginErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return "Unable to reach the API. Check server availability and CORS.";
+    }
+
+    if (error.status === 401) {
+      return "Invalid login credentials.";
+    }
+
+    if (error.status === 403) {
+      return "You do not have permission to access this portal.";
+    }
+
+    if (error.status === 422) {
+      return "Check the login fields and try again.";
+    }
+
+    if (error.status >= 500) {
+      return "Login is temporarily unavailable. Try again later.";
+    }
+
+    return "Login failed. Check credentials and try again.";
+  }
+
+  return "Login failed. Check credentials, API URL, and server availability.";
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, roles, pages } = useAuth();
   const loginMutation = useLogin();
   const [showPassword, setShowPassword] = useState(false);
   const {
@@ -92,8 +122,8 @@ export function LoginPage() {
   });
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard/super-admin" replace />;
-  };
+    return <Navigate to={getDefaultDashboardPath({ roles, pages })} replace />;
+  }
 
   const onSubmit: SubmitHandler<LoginFormValues> = (values) => {
     loginMutation.mutate(
@@ -103,7 +133,8 @@ export function LoginPage() {
         unit_id: values.unit_id || null,
       },
       {
-        onSuccess: () => navigate("/dashboard/super-admin", { replace: true }),
+        onSuccess: (data) =>
+          navigate(getDefaultDashboardPath(data), { replace: true }),
       },
     );
   };
@@ -229,7 +260,7 @@ export function LoginPage() {
 
             {loginMutation.isError && (
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-                Login failed. Check credentials, API URL, and server availability.
+                {getLoginErrorMessage(loginMutation.error)}
               </p>
             )}
 

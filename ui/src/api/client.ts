@@ -19,6 +19,17 @@ export class ApiError extends Error {
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
 
+function buildApiUrl(path: string) {
+  if (!apiBaseUrl) {
+    return path;
+  }
+
+  const normalizedBaseUrl = apiBaseUrl.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  return `${normalizedBaseUrl}${normalizedPath}`;
+}
+
 export async function apiRequest<T>(
   path: string,
   { auth = true, headers, json, ...init }: ApiRequestOptions = {},
@@ -35,11 +46,20 @@ export async function apiRequest<T>(
     requestHeaders.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    headers: requestHeaders,
-    body: json === undefined ? undefined : JSON.stringify(json),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(buildApiUrl(path), {
+      ...init,
+      headers: requestHeaders,
+      body: json === undefined ? undefined : JSON.stringify(json),
+    });
+  } catch (error) {
+    throw new ApiError(
+      0,
+      error instanceof Error ? error.message : "Unable to reach the API.",
+    );
+  }
 
   if (!response.ok) {
     let detail: unknown;

@@ -10,6 +10,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const accessToken = useAuthStore((state) => state.accessToken);
   const refreshToken = useAuthStore((state) => state.refreshToken);
   const user = useAuthStore((state) => state.user);
+  const roles = useAuthStore((state) => state.roles);
+  const pages = useAuthStore((state) => state.pages);
   const setAuth = useAuthStore((state) => state.setAuth);
   const setAccessToken = useAuthStore((state) => state.setAccessToken);
   const clearAuth = useAuthStore((state) => state.clearAuth);
@@ -19,12 +21,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accessToken,
       refreshToken,
       user,
+      roles,
+      pages,
       isAuthenticated: Boolean(accessToken),
       setAuth,
       setAccessToken,
       clearAuth,
     }),
-    [accessToken, clearAuth, refreshToken, setAccessToken, setAuth, user],
+    [accessToken, clearAuth, pages, refreshToken, roles, setAccessToken, setAuth, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

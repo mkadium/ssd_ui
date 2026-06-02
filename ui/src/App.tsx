@@ -5,6 +5,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Loader } from "@/components/ui/loader";
 import { useAuth } from "@/hooks/useAuth";
+import { getDefaultDashboardPath } from "@/lib/authRedirect";
 
 const LoginPage = lazy(() => import("@/pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
 const SuperAdminDashboardPage = lazy(() =>
@@ -88,14 +89,15 @@ function RouteFallback() {
 }
 
 function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, roles, pages } = useAuth();
+  const defaultDashboardPath = getDefaultDashboardPath({ roles, pages });
 
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route
           path="/"
-          element={<Navigate to={isAuthenticated ? "/dashboard/super-admin" : "/login"} replace />}
+          element={<Navigate to={isAuthenticated ? defaultDashboardPath : "/login"} replace />}
         />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/invitation-setup" element={<TemporaryContributorSetupPage />} />
@@ -291,7 +293,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard/super-admin" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated ? defaultDashboardPath : "/login"} replace />} />
       </Routes>
     </Suspense>
   );
