@@ -21,8 +21,8 @@ import {
   UserCircle,
   Users,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +32,7 @@ import {
 import { unitScopeOptions } from "@/data/unitScope.sample";
 import { useAuth } from "@/hooks/useAuth";
 import { useLogout } from "@/hooks/useLogout";
+import { useUnitScopeOptions } from "@/hooks/useUnitScopeOptions";
 import { useLanguage, type SupportedLanguage } from "@/providers/language-context";
 
 type AppShellProps = {
@@ -94,16 +95,42 @@ export function AppShell({
   showUnitSelector = true,
 }: AppShellProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const logoutMutation = useLogout();
   const { language, setLanguage, t } = useLanguage();
+  const unitScopeQuery = useUnitScopeOptions({ enabled: showUnitSelector, locale: language });
+  const unitCodeFromUrl = new URLSearchParams(location.search).get("unit_code");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedUnitCode, setSelectedUnitCode] = useState(unitScopeOptions[0]?.unit_code ?? "");
   const [openPopover, setOpenPopover] = useState<"reminders" | "notifications" | "profile" | null>(null);
 
+  const unitOptions = unitScopeQuery.data ?? unitScopeOptions;
+  const fallbackUnitCode = unitOptions[0]?.unit_code ?? "";
+  const selectedUnitCode =
+    unitCodeFromUrl && unitOptions.some((unit) => unit.unit_code === unitCodeFromUrl)
+      ? unitCodeFromUrl
+      : fallbackUnitCode;
   const userName = typeof user?.display_name === "string" ? user.display_name : "Admin";
   const unreadNotificationCount = notifications.filter((item) => item.status === "UNREAD").length;
   const activeReminderCount = reminders.filter((item) => item.status !== "DONE").length;
+
+  useEffect(() => {
+    if (!showUnitSelector || unitOptions.length === 0) {
+      return;
+    }
+
+    if (selectedUnitCode && unitCodeFromUrl !== selectedUnitCode) {
+      const params = new URLSearchParams(location.search);
+      params.set("unit_code", selectedUnitCode);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate, selectedUnitCode, showUnitSelector, unitCodeFromUrl, unitOptions]);
+
+  const handleUnitChange = (unitCode: string) => {
+    const params = new URLSearchParams(location.search);
+    params.set("unit_code", unitCode);
+    navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+  };
 
   const handleLogout = () => {
     logoutMutation.mutate(undefined, {
@@ -220,7 +247,7 @@ export function AppShell({
               <select
                 className="w-full bg-transparent text-sm font-semibold outline-none"
                 value={activeDashboard}
-                onChange={(event) => navigate(event.target.value)}
+                onChange={(event) => navigate(`${event.target.value}${location.search}`)}
               >
                 <option value="/dashboard/super-admin">{t("top.dashboardSuper")}</option>
                 <option value="/dashboard/unit-admin">{t("top.dashboardUnit")}</option>
@@ -235,9 +262,10 @@ export function AppShell({
                 <select
                   className="w-full bg-transparent text-sm font-semibold outline-none"
                   value={selectedUnitCode}
-                  onChange={(event) => setSelectedUnitCode(event.target.value)}
+                  onChange={(event) => handleUnitChange(event.target.value)}
+                  aria-busy={unitScopeQuery.isPending}
                 >
-                  {unitScopeOptions.map((unit) => (
+                  {unitOptions.map((unit) => (
                     <option key={unit.unit_code} value={unit.unit_code}>
                       {t("top.unit")}: {unit.unit_code}
                     </option>
