@@ -29,6 +29,7 @@ import {
   dimensionDefinitions,
   dimensionMemberSets,
   dimensionMembers,
+  dimensionRollupRules,
   dimensionUsage,
   geographies,
   geographyLevels,
@@ -37,7 +38,7 @@ import {
   type DimensionMember,
 } from "@/data/dimensionsManagement.sample";
 
-type DimensionTab = "members" | "member-sets" | "geography" | "time";
+type DimensionTab = "members" | "rollups" | "member-sets" | "geography" | "time";
 type DimensionModal =
   | "view-member"
   | "create-root"
@@ -269,6 +270,7 @@ export function DimensionsManagementPage() {
   const selectedMember = membersForDimension.find((member) => member.member_code === selectedMemberCode) ?? membersForDimension[0];
   const usageRows = dimensionUsage.filter((usage) => usage.dimension_code === selectedDimension.dimension_code);
   const memberSetsForDimension = dimensionMemberSets.filter((set) => set.dimension_code === selectedDimension.dimension_code);
+  const rollupRulesForDimension = dimensionRollupRules.filter((rule) => rule.dimension_code === selectedDimension.dimension_code);
 
   const memberChildren = (memberCode: string, members = membersForDimension) => members.filter((member) => member.parent_member_code === memberCode);
   const treeQuery = treeSearch.trim().toLowerCase();
@@ -295,6 +297,7 @@ export function DimensionsManagementPage() {
 
   const tabs: { code: DimensionTab; label: string }[] = [
     { code: "members", label: "Members" },
+    { code: "rollups", label: "Rollups" },
     { code: "member-sets", label: "Member sets" },
     { code: "geography", label: "Geography" },
     { code: "time", label: "Time periods" },
@@ -356,6 +359,15 @@ export function DimensionsManagementPage() {
       footnote: highRiskCount ? "Review before structural edits" : "No high-risk sample dependency",
       targetTab: "members",
     },
+    {
+      label: "Rollups",
+      value: rollupRulesForDimension.length,
+      badge: rollupRulesForDimension.some((rule) => rule.status === "ACTIVE") ? "Active" : "None",
+      helper: rollupRulesForDimension.length ? rollupRulesForDimension[0].entry_mode : "No rollup rule",
+      detail: rollupRulesForDimension.length ? `${rollupRulesForDimension[0].parent_label} -> ${rollupRulesForDimension[0].children.map((child) => child.label).join(" + ")}` : "Flat/manual members only",
+      footnote: rollupRulesForDimension.length ? `${rollupRulesForDimension[0].aggregation_method} / ${rollupRulesForDimension[0].validation_rule_code}` : "Optional enterprise template behavior",
+      targetTab: "rollups",
+    },
   ];
 
   const renderTreeMember = (member: DimensionMember, depth = 0) => {
@@ -416,7 +428,7 @@ export function DimensionsManagementPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        <div className="grid grid-cols-5 gap-3 max-xl:grid-cols-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
           {statCards.map((card) => (
             <button
               key={card.label}
@@ -627,6 +639,56 @@ export function DimensionsManagementPage() {
                   ))}
                 </TableBody>
               </Table>
+            ) : null}
+
+            {activeTab === "rollups" ? (
+              <div className="grid gap-3">
+                <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+                  Rollup rules define parent-member behavior for template/data-entry validation. They are not a full formula engine.
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Rule</TableHead>
+                      <TableHead>Parent</TableHead>
+                      <TableHead>Children</TableHead>
+                      <TableHead>Entry mode</TableHead>
+                      <TableHead>Aggregation</TableHead>
+                      <TableHead>Measure</TableHead>
+                      <TableHead>Validation</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rollupRulesForDimension.map((rule) => (
+                      <TableRow key={rule.id}>
+                        <TableCell className="font-mono text-[11px]">{rule.rule_code}</TableCell>
+                        <TableCell>
+                          <span className="block font-semibold">{rule.parent_label}</span>
+                          <span className="font-mono text-[11px] text-muted-foreground">{rule.parent_member_code}</span>
+                        </TableCell>
+                        <TableCell className="max-w-64 whitespace-normal">
+                          {rule.children.map((child) => (
+                            <Badge key={child.member_code} variant="outline" className="mr-1">{child.child_order}. {child.label}</Badge>
+                          ))}
+                        </TableCell>
+                        <TableCell><Badge variant="outline">{rule.entry_mode}</Badge></TableCell>
+                        <TableCell>{rule.aggregation_method}</TableCell>
+                        <TableCell className="font-mono text-[11px]">{rule.measure_code}</TableCell>
+                        <TableCell className="font-mono text-[11px]">{rule.validation_rule_code}</TableCell>
+                        <TableCell><Badge variant={statusVariant(rule.status)}>{rule.status}</Badge></TableCell>
+                      </TableRow>
+                    ))}
+                    {!rollupRulesForDimension.length ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                          No rollup rules configured for this dimension.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
             ) : null}
 
             {activeTab === "member-sets" ? (

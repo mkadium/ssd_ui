@@ -21,6 +21,7 @@
 - One indicator may map to multiple source assignments. UI must show source assignments as related rows, not a single source-only field.
 - Indicator Management must keep source organization/officer/periodicity out of the base indicator form; those fields belong to source assignment rows.
 - Indicator Management must show current active version and changes being prepared against that version.
+- Indicator Management must show measures as related rows under the selected indicator/version, including `measure_code`, `value_type`, `unit_code`, `decimal_places`, `validation_rule_code`, `aggregation_type`, and `is_required`.
 - Reference Masters must include Units and use Units from Measures through `unit_code`.
 - Officer create/edit must map officers to ministry/department/division through `organization_code`.
 - Indicator/source/reference actions may show create/edit/delete UI states for UX review, but API integration must wait for governed Masters mutation APIs.

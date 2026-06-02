@@ -5,6 +5,8 @@
 - Hierarchy browsers must use API stable codes and parent-child relationships.
 - `/dimensions` is implemented as a unit-scoped sample-data management surface.
 - Screen must expose dimension definition selection, hierarchy tree, selected-member details, member table, member sets, geography, and time-period tabs.
+- Screen must expose DB v0.2 rollup rules where available: parent member, children, entry mode, aggregation method, measure code, validation rule, and status.
+- Rollup UI must explain that rollups configure parent-member validation/aggregation behavior only; a formula engine is future governed scope.
 - Dimension definition selection includes search/filter and stat cards must summarize definition, hierarchy, member-set, and dependency context.
 - Screen must expose a create-dimension modal state because dimensions are not limited to seeded examples.
 - New root member creation may edit/select `dimension_code`; child creation must inherit the selected parent dimension.

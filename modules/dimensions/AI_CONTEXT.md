@@ -18,7 +18,8 @@ DIMENSIONS_MANAGEMENT_SAMPLE_DATA
 - Dimension Management is unit-scoped through the shared App Shell unit selector.
 - The screen uses local sample data shaped from the Dimensions API/DB contract; no live Dimensions API calls yet.
 - UI create/edit/delete/bulk upload controls are visual states only until governed Dimensions mutation APIs exist.
-- Current screen includes enriched dimension summary cards, a second-row searchable dimension selector beside the member hierarchy tree, a full-width selected-member panel, create-dimension modal state, root/child creation modal states, member table, member sets, geography records, time periods, dependency/usage panel, search, pagination affordance, and bulk upload/download format affordance.
+- Current screen includes enriched dimension summary cards, a second-row searchable dimension selector beside the member hierarchy tree, a full-width selected-member panel, create-dimension modal state, root/child creation modal states, member table, rollup rules, member sets, geography records, time periods, dependency/usage panel, search, pagination affordance, and bulk upload/download format affordance.
+- DB v0.2 rollup sample UI is represented through `dimensionRollupRules` with `entry_mode`, `aggregation_method`, `measure_code`, `validation_rule_code`, and rollup children. This is UI-only until the Dimensions API exposes the documented rollup endpoint.
 - New root member creation allows editable `dimension_code` for new dimension drafts; child/edit flows keep dimension context locked to protect hierarchy consistency.
 
 ## Scope

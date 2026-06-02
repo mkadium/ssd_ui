@@ -4,7 +4,7 @@
 |---|---|
 | Module | Masters UI |
 | Status | MASTERS_CATEGORIZED_WORKSPACES_SAMPLE_DATA |
-| Last Updated | 2026-05-31 |
+| Last Updated | 2026-06-01 |
 
 ## v0.1.0
 - Created UI module context from ready Masters API contract.
@@ -29,5 +29,6 @@
 - Removed source organization/officer/cadence fields from the base indicator form; source mapping is now represented as multiple source-assignment rows.
 - Added active-version and pending-change context to Indicator Management.
 - Added Units as a Reference Master and linked Measures to Units through `unit_code`.
+- Added Indicator Management Measures tab with DB v0.2-oriented measure defaults: decimal places, validation rule code, aggregation type, unit, value type, and required flag.
 - Updated Reference Masters stats to be table-specific instead of generic for every master.
 - Replaced remaining modal "Save draft" labels in Masters flows with "Save/Submit".

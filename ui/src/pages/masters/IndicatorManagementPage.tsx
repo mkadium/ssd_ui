@@ -34,8 +34,8 @@ import {
   type MasterRow,
 } from "@/data/mastersManagement.sample";
 
-type IndicatorTab = "overview" | "versions" | "metadata" | "global-mapping" | "sources";
-type DialogEntity = "indicator" | "version" | "metadata" | "global-mapping" | "source";
+type IndicatorTab = "overview" | "versions" | "measures" | "metadata" | "global-mapping" | "sources";
+type DialogEntity = "indicator" | "version" | "measure" | "metadata" | "global-mapping" | "source";
 type DialogState = {
   mode: "view" | "create" | "edit" | "delete" | "map";
   title: string;
@@ -46,6 +46,7 @@ type DialogState = {
 const nationalIndicators = getMasterTab("national-indicators")?.rows ?? [];
 const globalMappings = getMasterTab("global-mappings")?.rows ?? [];
 const versions = getMasterTab("indicator-versions")?.rows ?? [];
+const measures = getMasterTab("measures")?.rows ?? [];
 const metadataDetails = getMasterTab("metadata-details")?.rows ?? [];
 const sourceAssignments = getMasterTab("source-assignments")?.rows ?? [];
 
@@ -160,7 +161,7 @@ function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
   const isFormMode = ["create", "edit", "map"].includes(dialog.mode);
   const isIndicatorForm = isFormMode && (entity === "indicator" || entity === "global-mapping");
   const isSourceForm = isFormMode && entity === "source";
-  const isGenericRelatedForm = isFormMode && ["version", "metadata"].includes(entity);
+  const isGenericRelatedForm = isFormMode && ["version", "measure", "metadata"].includes(entity);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="indicator-dialog-title">
@@ -267,6 +268,7 @@ export function IndicatorManagementPage() {
 
   const selectedIndicator = nationalIndicators.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicators[0];
   const indicatorVersions = versions.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
+  const indicatorMeasures = measures.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
   const indicatorMetadata = metadataDetails.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
   const indicatorGlobalMappings = globalMappings.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
   const indicatorSources = sourceAssignments.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
@@ -286,6 +288,7 @@ export function IndicatorManagementPage() {
   const tabConfig: { code: IndicatorTab; label: string }[] = [
     { code: "overview", label: "Overview" },
     { code: "versions", label: "Versions" },
+    { code: "measures", label: "Measures" },
     { code: "metadata", label: "Metadata" },
     { code: "global-mapping", label: "Global mapping" },
     { code: "sources", label: "Sources" },
@@ -313,7 +316,7 @@ export function IndicatorManagementPage() {
             ["National indicators", nationalIndicators.length, "metadata.national_indicators"],
             ["Global mappings", globalMappings.length, "metadata.national_global_indicator_mappings"],
             ["Versions", versions.length, "metadata.indicator_versions"],
-            ["Source assignments", sourceAssignments.length, "org.indicator_source_assignments"],
+            ["Measures", measures.length, "metadata.indicator_measures"],
           ].map(([label, value, helper]) => (
             <div key={label} className="rounded-md bg-card p-3 shadow-sm ring-1 ring-border/60">
               <p className="text-xs font-semibold text-muted-foreground">{label}</p>
@@ -425,6 +428,7 @@ export function IndicatorManagementPage() {
                     <p className="mt-1 text-[11px] text-muted-foreground">
                       {currentVersion?.data_type ?? "-"} / {currentVersion?.unit_of_measure_code ?? "-"} / {currentVersion?.decimal_places ?? "-"} decimals
                     </p>
+                    <p className="mt-2 text-[11px] text-muted-foreground">{indicatorMeasures.length} measure(s) configured for this indicator.</p>
                   </div>
                   <div className="rounded-md bg-muted/50 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -458,6 +462,31 @@ export function IndicatorManagementPage() {
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Indicator version", row, "version")}
               />
+            ) : null}
+
+            {activeTab === "measures" ? (
+              <div className="grid gap-3">
+                <div className="flex justify-end">
+                  <Button onClick={() => openDialog("create", "Add indicator measure", currentVersion, "measure")}>
+                    <Plus aria-hidden="true" className="size-4" />
+                    Add measure
+                  </Button>
+                </div>
+                <RelatedTable
+                  rows={indicatorMeasures}
+                  columns={[
+                    { key: "version_code", label: "Version" },
+                    { key: "measure_code", label: "Measure" },
+                    { key: "value_type", label: "Type" },
+                    { key: "unit_code", label: "Unit" },
+                    { key: "decimal_places", label: "Decimals" },
+                    { key: "validation_rule_code", label: "Validation" },
+                    { key: "aggregation_type", label: "Aggregation" },
+                    { key: "is_required", label: "Required" },
+                  ]}
+                  onAction={(mode, row) => openDialog(mode, "Indicator measure", row, "measure")}
+                />
+              </div>
             ) : null}
 
             {activeTab === "metadata" ? (

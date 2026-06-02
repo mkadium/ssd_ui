@@ -15,7 +15,21 @@
 - Preserved existing column axes during rebuilds so adding Area Type under Geography expands each Geography member instead of replacing Geography.
 - Fixed Row align / Column align so already-bound dimensions move immediately between row and column axes without duplicate rebuilds; new unbound dimensions still use Bind values to place them.
 - Added first-pass DB v0.2 designer controls for measure defaults and Area Type rollup behavior.
+- Fixed blank-cell selection so the options panel no longer shows stale group settings from the previous selection.
+- Added measure-as-column UI behavior for indicators with multiple measures.
+- Converted Freeze and Editable cells into toggle actions with visible canvas markers and browser tooltips.
+- Added stacked Combine measure display where dimension labels can render above measure/unit labels while JSON remains relational.
+- Fixed visible vertical alignment rendering for template canvas cells.
 - Extended JSON preview with sample binding groups and rollup rules for enterprise template designer handoff.
+- Refined Measure binding so measure mode no longer carries stale geography options: one selected measure is bound at a time, already-bound measures are hidden until unbound, and measure controls force column-header behavior.
+- Fixed strict measure headers being replaced when a later Dimension bind regenerated the canvas axes.
+- Fixed later Time/Area/Gender dimension headers rendering beside a strict measure header and hiding the first generated member; dimension headers now start below the preserved measure group.
+- Added local column-dimension binding under strict measure headers, so Time/Area/Gender can be bound separately under each measure and the selected measure header expands across the generated columns.
+- Fixed parallel strict measure groups disappearing when adding another dimension back under an earlier measure; sibling measure groups now shift right before the selected measure expands.
+- Fixed unbind behavior for strict measure layouts: removing a measure now removes its local dimensions too, and removing a local dimension affects only that selected measure group.
+- Fixed merged header editing so typed text appears in the visible merged cell instead of being written to a hidden merge child cell.
+- Fixed row-axis alignment for local measure header stacks so `Location` merges across generated header rows and geography members move below the local headers.
+- Enabled Combine measure for strict measure groups by stacking measure/unit text under the deepest local dimension headers.
 
 ## v0.1.0
 - Created UI module context from ready Templates API contract.

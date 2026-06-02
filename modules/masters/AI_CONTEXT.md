@@ -31,6 +31,7 @@ MASTERS_CATEGORIZED_WORKSPACES_SAMPLE_DATA
 - Indicator mapping targets must use framework nodes whose level has `allows_indicator_mapping=true`.
 - One national indicator may have multiple source assignments via `org.indicator_source_assignments`; UI must show/add them as related rows, not as a single source field only.
 - Indicator Management shows active version context and pending change rows against that active version.
+- Indicator Management now includes a Measures tab for multiple indicator measures and DB v0.2-oriented defaults: unit, value type, decimal places, validation rule code, aggregation type, and required flag.
 - Source organization/officer/cadence selection belongs to source assignment rows, not the base indicator form.
 - Officers are mapped to organizations in Reference Masters; indicator forms should not duplicate officer organization mapping.
 - Units are represented as a Reference Master and are referenced by indicator measures.

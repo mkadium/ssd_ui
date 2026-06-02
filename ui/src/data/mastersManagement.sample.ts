@@ -222,11 +222,15 @@ export const masterTabs: MasterTab[] = [
       { key: "measure_code", label: "Measure" },
       { key: "value_type", label: "Type" },
       { key: "unit_code", label: "Unit" },
+      { key: "decimal_places", label: "Decimals" },
+      { key: "validation_rule_code", label: "Validation" },
       { key: "is_required", label: "Required" },
     ],
     rows: [
-      { id: "MEASURE_NIF_1_2_1_VALUE", version_code: "NIF_1_2_1_V1", measure_code: "INDICATOR_VALUE", value_type: "NUMERIC", unit_code: "PERCENT", aggregation_type: "SUM", is_required: "YES" },
-      { id: "MEASURE_NIF_2_1_1_VALUE", version_code: "NIF_2_1_1_V1", measure_code: "INDICATOR_VALUE", value_type: "NUMERIC", unit_code: "PERCENT", aggregation_type: "SUM", is_required: "YES" },
+      { id: "MEASURE_NIF_1_2_1_VALUE", version_code: "NIF_1_2_1_V1", measure_code: "INDICATOR_VALUE", value_type: "NUMERIC", unit_code: "PERCENT", decimal_places: "2", validation_rule_code: "NUMERIC_NON_NEGATIVE", aggregation_type: "SUM", is_required: "YES" },
+      { id: "MEASURE_NIF_1_2_1_PERSON_COUNT", version_code: "NIF_1_2_1_V1", measure_code: "PERSON_COUNT", value_type: "NUMERIC", unit_code: "COUNT", decimal_places: "0", validation_rule_code: "INTEGER_NON_NEGATIVE", aggregation_type: "SUM", is_required: "NO" },
+      { id: "MEASURE_NIF_1_2_1_RATE", version_code: "NIF_1_2_1_V1", measure_code: "POVERTY_RATE", value_type: "NUMERIC", unit_code: "PERCENT", decimal_places: "2", validation_rule_code: "PERCENT_0_100", aggregation_type: "AVG", is_required: "NO" },
+      { id: "MEASURE_NIF_2_1_1_VALUE", version_code: "NIF_2_1_1_V1", measure_code: "INDICATOR_VALUE", value_type: "NUMERIC", unit_code: "PERCENT", decimal_places: "2", validation_rule_code: "NUMERIC_NON_NEGATIVE", aggregation_type: "SUM", is_required: "YES" },
     ],
   },
   {
