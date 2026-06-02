@@ -28,7 +28,7 @@ export function TemporaryContributorSetupPage() {
   ];
 
   return (
-    <main className="min-h-screen bg-background p-4 text-foreground lg:p-5" id="temporary-contributor-content">
+    <main className="h-dvh overflow-y-auto bg-background p-4 text-foreground lg:p-5" id="temporary-contributor-content">
       <section className="mx-auto flex max-w-[1180px] flex-col gap-4" aria-labelledby="temporary-contributor-title">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-card p-4 shadow-sm ring-1 ring-border/60">
           <div>

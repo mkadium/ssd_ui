@@ -113,7 +113,7 @@ export function AppShell({
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-dvh overflow-hidden bg-background text-foreground">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
@@ -123,11 +123,11 @@ export function AppShell({
 
       <div
         className={[
-          "grid min-h-screen transition-[grid-template-columns]",
+          "grid h-full overflow-hidden transition-[grid-template-columns]",
           sidebarCollapsed ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[256px_minmax(0,1fr)]",
         ].join(" ")}
       >
-        <aside className="flex h-screen flex-col bg-sidebar text-sidebar-foreground">
+        <aside className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
           <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
             <div className="grid size-11 place-items-center rounded-md bg-white text-[10px] font-semibold leading-tight text-[#0c2f55]">
               Logo
@@ -192,8 +192,8 @@ export function AppShell({
           </nav>
         </aside>
 
-        <div className="flex h-screen min-w-0 flex-col">
-          <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4">
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
             <div className="min-w-[180px]">
               <p className="text-lg font-bold">{t("app.title")}</p>
             </div>

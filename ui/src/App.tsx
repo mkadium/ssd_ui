@@ -84,7 +84,7 @@ const NotificationsPage = lazy(() =>
 
 function RouteFallback() {
   return (
-    <div className="grid min-h-screen place-items-center bg-background text-sm font-semibold text-muted-foreground">
+    <div className="grid h-dvh place-items-center bg-background text-sm font-semibold text-muted-foreground">
       Loading workspace...
     </div>
   );

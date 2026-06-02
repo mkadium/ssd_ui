@@ -1161,14 +1161,14 @@ export function DepartmentDataEntryPage() {
   };
 
   return (
-    <div className="h-screen overflow-y-auto bg-background text-foreground">
+    <div className="bg-background text-foreground">
       <a
         href="#data-entry-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
       >
         Skip to data entry content
       </a>
-      <main id="data-entry-content" className="min-h-screen p-4 lg:p-5">
+      <main id="data-entry-content">
       {selectedAssignment ? (
         <DataEntryWorkspace
           assignment={selectedAssignment}
