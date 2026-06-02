@@ -1,36 +1,18 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
-import { setApiAccessToken } from "@/api/session";
 import {
   AuthContext,
   type AuthContextValue,
-  type AuthUser,
 } from "@/providers/auth-context";
-import type { LoginResponse } from "@/types/auth";
+import { useAuthStore } from "@/stores/useAuthStore";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [accessToken, setAccessTokenState] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-
-  const setAuth = useCallback((data: LoginResponse) => {
-    setAccessTokenState(data.access_token);
-    setRefreshToken(data.refresh_token);
-    setUser(data.user_profile);
-    setApiAccessToken(data.access_token);
-  }, []);
-
-  const setAccessToken = useCallback((token: string) => {
-    setAccessTokenState(token);
-    setApiAccessToken(token);
-  }, []);
-
-  const clearAuth = useCallback(() => {
-    setAccessTokenState(null);
-    setRefreshToken(null);
-    setUser(null);
-    setApiAccessToken(null);
-  }, []);
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const refreshToken = useAuthStore((state) => state.refreshToken);
+  const user = useAuthStore((state) => state.user);
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAccessToken = useAuthStore((state) => state.setAccessToken);
+  const clearAuth = useAuthStore((state) => state.clearAuth);
 
   const value = useMemo<AuthContextValue>(
     () => ({

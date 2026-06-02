@@ -32,6 +32,7 @@ import {
 } from "@/data/userExperience.sample";
 import { unitScopeOptions } from "@/data/unitScope.sample";
 import { useAuth } from "@/hooks/useAuth";
+import { useLogout } from "@/hooks/useLogout";
 import { useLanguage, type SupportedLanguage } from "@/providers/language-context";
 
 type AppShellProps = {
@@ -94,7 +95,8 @@ export function AppShell({
   showUnitSelector = true,
 }: AppShellProps) {
   const navigate = useNavigate();
-  const { clearAuth, user } = useAuth();
+  const { user } = useAuth();
+  const logoutMutation = useLogout();
   const { language, setLanguage, t } = useLanguage();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedUnitCode, setSelectedUnitCode] = useState(unitScopeOptions[0]?.unit_code ?? "");
@@ -105,8 +107,9 @@ export function AppShell({
   const activeReminderCount = reminders.filter((item) => item.status !== "DONE").length;
 
   const handleLogout = () => {
-    clearAuth();
-    navigate("/login", { replace: true });
+    logoutMutation.mutate(undefined, {
+      onSettled: () => navigate("/login", { replace: true }),
+    });
   };
 
   return (

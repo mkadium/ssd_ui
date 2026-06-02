@@ -4,78 +4,105 @@ import {
   EyeOff,
   Languages,
   LockKeyhole,
-  ShieldCheck,
   UserRound,
 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import {
+  useForm,
+  type FieldErrors,
+  type Resolver,
+  type SubmitHandler,
+} from "react-hook-form";
+import { Navigate, useNavigate } from "react-router-dom";
+import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { demoSuperAdminLogin, demoUnitAdminLogin } from "@/data/auth.sample";
 import { useAuth } from "@/hooks/useAuth";
 import { useLogin } from "@/hooks/useLogin";
-import type { LoginResponse } from "@/types/auth";
 
-type LoginLocationState = {
-  from?: string;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const loginSchema = z.object({
+  login_identifier: z
+    .string()
+    .trim()
+    .min(1, "Login identifier is required.")
+    .max(255, "Login identifier must be 255 characters or less."),
+  password: z.string().min(1, "Password is required."),
+  unit_id: z
+    .string()
+    .trim()
+    .optional()
+    .refine((value) => !value || uuidPattern.test(value), "Unit ID must be a valid UUID."),
+});
+
+type LoginFormValues = z.infer<typeof loginSchema>;
+
+const loginResolver: Resolver<LoginFormValues> = async (values) => {
+  const result = loginSchema.safeParse(values);
+
+  if (result.success) {
+    return {
+      values: result.data,
+      errors: {},
+    };
+  }
+
+  const errors = result.error.issues.reduce<FieldErrors<LoginFormValues>>(
+    (fieldErrors, issue) => {
+      const fieldName = issue.path[0] as keyof LoginFormValues | undefined;
+
+      if (fieldName) {
+        fieldErrors[fieldName] = {
+          type: issue.code,
+          message: issue.message,
+        };
+      }
+
+      return fieldErrors;
+    },
+    {},
+  );
+
+  return {
+    values: {},
+    errors,
+  };
 };
-
-const landingRoles = [
-  {
-    code: "SUPER_ADMIN",
-    label: "Super Admin",
-    description: "Govern framework, masters, requests, review queue, and cross-unit dashboards.",
-    route: "/dashboard/super-admin",
-    sample: demoSuperAdminLogin,
-  },
-  {
-    code: "UNIT_ADMIN",
-    label: "Unit Admin",
-    description: "Track assigned indicators, submissions, validation issues, and review readiness.",
-    route: "/dashboard/unit-admin",
-    sample: demoUnitAdminLogin,
-  },
-];
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { isAuthenticated, setAuth } = useAuth();
+  const { isAuthenticated } = useAuth();
   const loginMutation = useLogin();
-  const [loginIdentifier, setLoginIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  const [unitId, setUnitId] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [selectedRole, setSelectedRole] = useState("SUPER_ADMIN");
-
-  const redirectTo = (location.state as LoginLocationState | null)?.from ?? "/dashboard/super-admin";
-  const selectedLandingRole = useMemo(
-    () => landingRoles.find((role) => role.code === selectedRole) ?? landingRoles[0],
-    [selectedRole],
-  );
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginFormValues>({
+    resolver: loginResolver,
+    defaultValues: {
+      login_identifier: "",
+      password: "",
+      unit_id: "",
+    },
+  });
 
   if (isAuthenticated) {
-    return <Navigate to={redirectTo} replace />;
-  }
-
-  const completeLogin = (data: LoginResponse, route = redirectTo) => {
-    setAuth(data);
-    navigate(route, { replace: true });
+    return <Navigate to="/dashboard/super-admin" replace />;
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const onSubmit: SubmitHandler<LoginFormValues> = (values) => {
     loginMutation.mutate(
       {
-        login_identifier: loginIdentifier.trim(),
-        password,
-        unit_id: unitId.trim() || null,
+        login_identifier: values.login_identifier,
+        password: values.password,
+        unit_id: values.unit_id || null,
       },
       {
-        onSuccess: () => navigate(redirectTo, { replace: true }),
+        onSuccess: () => navigate("/dashboard/super-admin", { replace: true }),
       },
     );
   };
@@ -105,7 +132,7 @@ export function LoginPage() {
                 Sign in to continue.
               </h1>
               <p className="mt-4 text-sm leading-6 text-blue-100">
-                Use your SSD account or choose a demo role for UI review.
+                Use your SSD account to open the secure workspace.
               </p>
             </div>
           </div>
@@ -131,7 +158,7 @@ export function LoginPage() {
             </label>
           </div>
 
-          <form onSubmit={handleSubmit} className="shrink-0 rounded-md border border-border bg-background p-4 max-sm:p-3 max-[380px]:p-2.5 [@media(max-height:680px)]:p-3">
+          <form onSubmit={handleSubmit(onSubmit)} className="shrink-0 rounded-md border border-border bg-background p-4 max-sm:p-3 max-[380px]:p-2.5 [@media(max-height:680px)]:p-3">
             <div className="grid gap-3 max-[380px]:gap-2 [@media(max-height:680px)]:gap-2">
               <label className="grid gap-1 text-sm font-semibold">
                 Login identifier
@@ -139,13 +166,18 @@ export function LoginPage() {
                   <UserRound aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     className="h-11 pl-10 [@media(max-height:680px)]:h-10"
-                    value={loginIdentifier}
-                    onChange={(event) => setLoginIdentifier(event.target.value)}
+                    {...register("login_identifier")}
                     placeholder="Username, email, or mobile number"
                     autoComplete="username"
-                    required
+                    aria-invalid={Boolean(errors.login_identifier)}
+                    aria-describedby={errors.login_identifier ? "login-identifier-error" : undefined}
                   />
                 </span>
+                {errors.login_identifier ? (
+                  <span id="login-identifier-error" className="text-xs font-medium text-red-700">
+                    {errors.login_identifier.message}
+                  </span>
+                ) : null}
               </label>
 
               <label className="grid gap-1 text-sm font-semibold">
@@ -155,11 +187,11 @@ export function LoginPage() {
                   <Input
                     className="h-11 pl-10 pr-10 [@media(max-height:680px)]:h-10"
                     type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    {...register("password")}
                     placeholder="Enter password"
                     autoComplete="current-password"
-                    required
+                    aria-invalid={Boolean(errors.password)}
+                    aria-describedby={errors.password ? "password-error" : undefined}
                   />
                   <button
                     type="button"
@@ -170,16 +202,27 @@ export function LoginPage() {
                     {showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
                   </button>
                 </span>
+                {errors.password ? (
+                  <span id="password-error" className="text-xs font-medium text-red-700">
+                    {errors.password.message}
+                  </span>
+                ) : null}
               </label>
 
               <label className="grid gap-1 text-sm font-semibold">
                 Unit ID <span className="text-xs font-normal text-muted-foreground">(optional)</span>
                 <Input
                   className="h-11 [@media(max-height:680px)]:h-10"
-                  value={unitId}
-                  onChange={(event) => setUnitId(event.target.value)}
+                  {...register("unit_id")}
                   placeholder="Only if a specific unit context is required"
+                  aria-invalid={Boolean(errors.unit_id)}
+                  aria-describedby={errors.unit_id ? "unit-id-error" : undefined}
                 />
+                {errors.unit_id ? (
+                  <span id="unit-id-error" className="text-xs font-medium text-red-700">
+                    {errors.unit_id.message}
+                  </span>
+                ) : null}
               </label>
             </div>
 
@@ -193,52 +236,12 @@ export function LoginPage() {
               <p className="text-xs text-muted-foreground max-[380px]:hidden">
                 Passwords and tokens are not displayed.
               </p>
-              <Button type="submit" className="h-11 shrink-0 px-5 [@media(max-height:680px)]:h-10" disabled={loginMutation.isPending}>
+              <Button type="submit" className="h-11 shrink-0 px-5 [@media(max-height:680px)]:h-10" disabled={loginMutation.isPending || isSubmitting}>
                 {loginMutation.isPending ? "Signing in..." : "Sign in"}
                 <ArrowRight aria-hidden="true" className="size-4" />
               </Button>
             </div>
           </form>
-
-          <div className="min-h-0 flex-1 rounded-md border border-border bg-card p-4 max-sm:p-3 max-[380px]:p-2.5 [@media(max-height:680px)]:p-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-base font-bold">Demo role</h3>
-              <Badge variant="outline">UI review only</Badge>
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-3 max-sm:grid-cols-1 max-[380px]:mt-2 max-[380px]:gap-2 [@media(max-height:680px)]:mt-2 [@media(max-height:680px)]:gap-2">
-              {landingRoles.map((role) => (
-                <button
-                  key={role.code}
-                  type="button"
-                  onClick={() => setSelectedRole(role.code)}
-                  className={[
-                    "rounded-md border p-3 text-left transition hover:border-primary hover:bg-accent max-[380px]:p-2 [@media(max-height:680px)]:p-2",
-                    selectedRole === role.code ? "border-primary bg-accent" : "border-border bg-background",
-                  ].join(" ")}
-                >
-                  <span className="flex items-center justify-between gap-3">
-                    <span>
-                      <span className="block text-sm font-bold">{role.label}</span>
-                      <span className="mt-1 block text-xs leading-5 text-muted-foreground max-[480px]:hidden [@media(max-height:680px)]:hidden">
-                        {role.description}
-                      </span>
-                    </span>
-                    <ShieldCheck aria-hidden="true" className="size-5 text-primary" />
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <Button
-              type="button"
-              className="mt-3 h-11 w-full max-[380px]:mt-2 [@media(max-height:680px)]:mt-2 [@media(max-height:680px)]:h-10"
-              onClick={() => completeLogin(selectedLandingRole.sample, selectedLandingRole.route)}
-            >
-              Continue with {selectedLandingRole.label}
-              <ArrowRight aria-hidden="true" className="size-4" />
-            </Button>
-          </div>
         </div>
       </section>
     </main>
