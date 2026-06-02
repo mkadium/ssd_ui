@@ -19,6 +19,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import { useAuth } from "@/hooks/useAuth";
 import { useLogin } from "@/hooks/useLogin";
 
@@ -237,8 +238,14 @@ export function LoginPage() {
                 Passwords and tokens are not displayed.
               </p>
               <Button type="submit" className="h-11 shrink-0 px-5 [@media(max-height:680px)]:h-10" disabled={loginMutation.isPending || isSubmitting}>
-                {loginMutation.isPending ? "Signing in..." : "Sign in"}
-                <ArrowRight aria-hidden="true" className="size-4" />
+                {loginMutation.isPending ? (
+                  <Loader variant="inline" label="Signing in" />
+                ) : (
+                  <>
+                    Sign in
+                    <ArrowRight aria-hidden="true" className="size-4" />
+                  </>
+                )}
               </Button>
             </div>
           </form>

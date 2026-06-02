@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { Loader } from "@/components/ui/loader";
 import { useAuth } from "@/hooks/useAuth";
 
 const LoginPage = lazy(() => import("@/pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
@@ -83,11 +84,7 @@ const NotificationsPage = lazy(() =>
 );
 
 function RouteFallback() {
-  return (
-    <div className="grid h-dvh place-items-center bg-background text-sm font-semibold text-muted-foreground">
-      Loading workspace...
-    </div>
-  );
+  return <Loader variant="page" label="Loading workspace" />;
 }
 
 function App() {
