@@ -15,7 +15,6 @@ import {
   LogOut,
   Menu,
   PanelLeftClose,
-  PanelLeftOpen,
   Shield,
   Settings,
   ShieldCheck,
@@ -124,38 +123,55 @@ export function AppShell({
       <div
         className={[
           "grid h-full overflow-hidden transition-[grid-template-columns]",
-          sidebarCollapsed ? "grid-cols-[72px_minmax(0,1fr)]" : "grid-cols-[256px_minmax(0,1fr)]",
+          sidebarCollapsed ? "grid-cols-[84px_minmax(0,1fr)]" : "grid-cols-[256px_minmax(0,1fr)]",
         ].join(" ")}
       >
-        <aside className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-          <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-            <div className="grid size-11 place-items-center rounded-md bg-white text-[10px] font-semibold leading-tight text-[#0c2f55]">
+        <aside className="flex h-full min-h-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
+          <div className={["relative flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-4", sidebarCollapsed ? "justify-center px-3" : ""].join(" ")}>
+            <button
+              type="button"
+              onClick={() => {
+                if (sidebarCollapsed) {
+                  setSidebarCollapsed(false);
+                }
+              }}
+              className={[
+                "grid size-11 shrink-0 place-items-center rounded-md bg-white text-[10px] font-semibold leading-tight text-[#0c2f55] shadow-sm",
+                sidebarCollapsed ? "cursor-pointer hover:ring-2 hover:ring-sidebar-ring" : "cursor-default",
+              ].join(" ")}
+              aria-label={sidebarCollapsed ? "Expand navigation" : "SSD-SDG logo"}
+              aria-disabled={!sidebarCollapsed}
+            >
               Logo
               <span>path:</span>
-            </div>
+            </button>
             <div className={sidebarCollapsed ? "hidden" : "block"}>
               <p className="text-xl font-bold tracking-tight">SSD-SDG</p>
               <p className="text-xs text-blue-100">{persona}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              className="ml-auto grid size-8 place-items-center rounded-md border border-sidebar-border text-blue-50 hover:bg-sidebar-accent"
-              aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-            >
-              {sidebarCollapsed ? (
-                <PanelLeftOpen aria-hidden="true" className="size-4" />
-              ) : (
+            {!sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                className="ml-auto grid size-9 shrink-0 place-items-center rounded-md border border-sidebar-border text-blue-50 transition-colors hover:bg-sidebar-accent"
+                aria-label="Collapse navigation"
+              >
                 <PanelLeftClose aria-hidden="true" className="size-4" />
-              )}
-            </button>
+              </button>
+            ) : null}
           </div>
 
-          <nav aria-label="Primary navigation" className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+          <nav
+            aria-label="Primary navigation"
+            className={[
+              "scrollbar-none flex-1 overflow-y-auto py-4",
+              sidebarCollapsed ? "space-y-3 px-2" : "space-y-4 px-3",
+            ].join(" ")}
+          >
             {navigationGroups.map((group) => (
               <div key={group.labelKey} className="space-y-1">
                 {sidebarCollapsed ? (
-                  <div className="mx-auto my-2 h-px w-8 bg-sidebar-border" aria-hidden="true" />
+                  <div className="mx-auto my-3 h-px w-9 bg-sidebar-border/80" aria-hidden="true" />
                 ) : (
                   <p className="px-3 pb-1 pt-2 text-[0.65rem] font-bold uppercase tracking-wide text-blue-200">
                     {t(group.labelKey)}
@@ -174,15 +190,15 @@ export function AppShell({
                       title={sidebarCollapsed ? label : undefined}
                       className={({ isActive }) =>
                         [
-                          "flex h-9 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
-                          sidebarCollapsed ? "justify-center px-0" : "",
+                          "flex items-center gap-3 rounded-md text-sm font-medium transition-colors",
+                          sidebarCollapsed ? "mx-auto size-11 justify-center px-0" : "h-9 px-3",
                           isActive
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm ring-1 ring-white/10"
                             : "text-blue-50 hover:bg-sidebar-accent/70",
                         ].join(" ")
                       }
                     >
-                      <Icon aria-hidden="true" className="size-4" />
+                      <Icon aria-hidden="true" className={sidebarCollapsed ? "size-5" : "size-4"} />
                       <span className={sidebarCollapsed ? "sr-only" : "truncate"}>{label}</span>
                     </NavLink>
                   );
