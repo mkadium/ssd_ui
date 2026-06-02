@@ -5,6 +5,7 @@ import type {
   IndicatorDetail,
   IndicatorListItem,
   IndicatorVersionDetail,
+  LocaleListItem,
   MetadataDetailResponse,
   MetadataListResponse,
   OfficerListItem,
@@ -15,6 +16,18 @@ import type {
 
 
 export const mastersService = {
+  listLocales: async ({
+    locale,
+  }: {
+    locale: string;
+  }): Promise<MetadataListResponse<LocaleListItem>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataListResponse<LocaleListItem>>(
+      `/masters/locales?${params.toString()}`,
+    );
+  },
+
   listFrameworks: async ({
     locale,
   }: {

@@ -10,13 +10,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -25,17 +29,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  dimensionDefinitions,
-  dimensionMemberSets,
-  dimensionMembers,
-  dimensionUsage,
-  geographies,
-  geographyLevels,
-  timeFrequencies,
-  timePeriods,
-  type DimensionMember,
-} from "@/data/dimensionsManagement.sample";
+import { useLanguage } from "@/providers/language-context";
+import { dimensionsService } from "@/services/dimensionsService";
+import type {
+  DimensionDefinitionItem,
+  DimensionMemberItem,
+} from "@/types/dimensions";
+
+type DimensionMember = DimensionMemberItem;
 
 type DimensionTab = "members" | "member-sets" | "geography" | "time";
 type DimensionModal =
@@ -54,6 +55,67 @@ const statusVariant = (status?: string) => {
   if (["RETIRED", "HIGH"].includes(status ?? "")) return "destructive";
   return "ghost";
 };
+
+function safeApiMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "Sign in again to load dimensions.";
+    if (error.status === 403) return "You do not have permission to view dimensions.";
+    if (error.status === 0) return "Unable to reach the API.";
+  }
+
+  return "Dimensions are temporarily unavailable.";
+}
+
+function toNumber(value: unknown, fallback = 0) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
+function normalizeStatus(value: unknown, fallback = "ACTIVE") {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function dimensionToSearchText(dimension: DimensionDefinitionItem) {
+  return [
+    dimension.dimension_code,
+    dimension.dimension_type,
+    dimension.value_type,
+    dimension.name,
+    dimension.description,
+    normalizeStatus(dimension.status),
+    dimension.member_count,
+    dimension.set_count,
+    dimension.template_usage_count,
+  ].join(" ");
+}
+
+function memberToSearchText(member: DimensionMemberItem) {
+  return [
+    member.dimension_code,
+    member.member_code,
+    member.parent_member_code,
+    member.external_code,
+    member.name,
+    member.short_name,
+    member.sort_order,
+    member.status,
+    member.valid_from,
+    member.valid_to,
+  ].join(" ");
+}
+
+function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
+  const uniqueItems = new Map<string, T>();
+
+  for (const item of items) {
+    const key = getKey(item);
+    if (key && !uniqueItems.has(key)) {
+      uniqueItems.set(key, item);
+    }
+  }
+
+  return Array.from(uniqueItems.values());
+}
 
 function Field({ label, value, readOnly = false }: { label: string; value?: string | number; readOnly?: boolean }) {
   return (
@@ -211,11 +273,11 @@ function DimensionModalView({
                   value={modal === "create-root" ? "ROOT" : modal === "add-child" ? selectedMember?.member_code : selectedMember?.parent_member_code ?? "ROOT"}
                   readOnly={modal !== "edit-member"}
                 />
-                <Field label="external_code" value={modal === "add-child" ? "" : selectedMember?.external_code} />
-                <Field label="sort_order" value={modal === "add-child" ? "" : selectedMember?.sort_order} />
+                <Field label="external_code" value={modal === "add-child" ? "" : selectedMember?.external_code ?? undefined} />
+                <Field label="sort_order" value={modal === "add-child" ? "" : selectedMember?.sort_order ?? undefined} />
                 <label className="grid gap-1 text-xs font-semibold">
                   status
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={selectedMember?.status ?? "ACTIVE"}>
+                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={normalizeStatus(selectedMember?.status)}>
                     <option>ACTIVE</option>
                     <option>DRAFT</option>
                     <option>RETIRED</option>
@@ -223,7 +285,7 @@ function DimensionModalView({
                 </label>
               </div>
               <Field label="name en-IN" value={modal === "add-child" ? "" : selectedMember?.name} />
-              <Field label="short_name en-IN" value={modal === "add-child" ? "" : selectedMember?.short_name} />
+              <Field label="short_name en-IN" value={modal === "add-child" ? "" : selectedMember?.short_name ?? undefined} />
               {modal === "create-root" ? (
                 <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
                   Current dimension is {selectedDimensionName}. You can change `dimension_code` when creating the first root for a new dimension draft.
@@ -250,7 +312,10 @@ function DimensionModalView({
 }
 
 export function DimensionsManagementPage() {
-  const [selectedDimensionCode, setSelectedDimensionCode] = useState(dimensionDefinitions[0].dimension_code);
+  const { language: locale } = useLanguage();
+  const [searchParams] = useSearchParams();
+  const activeUnitCode = searchParams.get("unit_code") ?? "SDG";
+  const [selectedDimensionCode, setSelectedDimensionCode] = useState("GEOGRAPHY");
   const [selectedMemberCode, setSelectedMemberCode] = useState("IND");
   const [dimensionSearch, setDimensionSearch] = useState("");
   const [treeSearch, setTreeSearch] = useState("");
@@ -259,21 +324,144 @@ export function DimensionsManagementPage() {
   const [expandedMembers, setExpandedMembers] = useState<Record<string, boolean>>({});
   const [modal, setModal] = useState<DimensionModal>(null);
 
-  const selectedDimension = dimensionDefinitions.find((dimension) => dimension.dimension_code === selectedDimensionCode) ?? dimensionDefinitions[0];
-  const filteredDimensions = dimensionDefinitions.filter((dimension) =>
-    `${dimension.dimension_code} ${dimension.dimension_type} ${dimension.name} ${dimension.description} ${dimension.status} ${dimension.member_count} ${dimension.set_count} ${dimension.template_usage_count}`
-      .toLowerCase()
-      .includes(dimensionSearch.toLowerCase()),
-  );
-  const membersForDimension = dimensionMembers.filter((member) => member.dimension_code === selectedDimension.dimension_code);
+  const healthQuery = useQuery({
+    queryKey: ["dimensions", "health"],
+    queryFn: () => dimensionsService.getHealth(),
+  });
+
+  const dimensionsQuery = useQuery({
+    queryKey: ["dimensions", "definitions", locale],
+    queryFn: () => dimensionsService.listDimensions({ locale }),
+  });
+
+  const dimensionDefinitions = dimensionsQuery.data?.data ?? [];
+  const selectedDimension =
+    dimensionDefinitions.find((dimension) => dimension.dimension_code === selectedDimensionCode) ??
+    dimensionDefinitions[0] ??
+    {
+      dimension_code: selectedDimensionCode,
+      dimension_type: "GENERAL",
+      value_type: "TEXT",
+      is_hierarchical: false,
+      name: selectedDimensionCode,
+      description: "Dimension data will appear after the API returns records.",
+      status: "ACTIVE",
+    };
+  const effectiveDimensionCode = selectedDimension?.dimension_code ?? selectedDimensionCode;
+
+  const dimensionDetailQuery = useQuery({
+    queryKey: ["dimensions", "definition-detail", effectiveDimensionCode, locale],
+    queryFn: () => dimensionsService.getDimension({ dimensionCode: effectiveDimensionCode, locale }),
+    enabled: Boolean(effectiveDimensionCode),
+  });
+
+  const membersQuery = useQuery({
+    queryKey: ["dimensions", "members", effectiveDimensionCode, locale],
+    queryFn: () => dimensionsService.listMembers({ dimensionCode: effectiveDimensionCode, locale }),
+    enabled: Boolean(effectiveDimensionCode),
+  });
+
+  const memberSetsQuery = useQuery({
+    queryKey: ["dimensions", "member-sets", effectiveDimensionCode, locale],
+    queryFn: () => dimensionsService.listMemberSets({ dimensionCode: effectiveDimensionCode, locale }),
+    enabled: Boolean(effectiveDimensionCode),
+  });
+
+  const geographiesQuery = useQuery({
+    queryKey: ["dimensions", "geographies", locale],
+    queryFn: () => dimensionsService.listGeographies({ locale }),
+  });
+
+  const timePeriodsQuery = useQuery({
+    queryKey: ["dimensions", "time-periods", locale],
+    queryFn: () => dimensionsService.listTimePeriods({ locale }),
+  });
+
+  const selectedDimensionDetail = dimensionDetailQuery.data?.data ?? selectedDimension;
+  const membersForDimension = membersQuery.data?.data ?? [];
   const selectedMember = membersForDimension.find((member) => member.member_code === selectedMemberCode) ?? membersForDimension[0];
-  const usageRows = dimensionUsage.filter((usage) => usage.dimension_code === selectedDimension.dimension_code);
-  const memberSetsForDimension = dimensionMemberSets.filter((set) => set.dimension_code === selectedDimension.dimension_code);
+  const memberSetsForDimension = memberSetsQuery.data?.data ?? [];
+  const selectedMemberSet = memberSetsForDimension[0];
+
+  const memberSetMembersQuery = useQuery({
+    queryKey: ["dimensions", "member-set-members", selectedMemberSet?.set_code, locale],
+    queryFn: () => dimensionsService.listMemberSetMembers({ setCode: selectedMemberSet?.set_code ?? "", locale }),
+    enabled: Boolean(selectedMemberSet?.set_code),
+  });
+
+  const geographies = geographiesQuery.data?.data ?? [];
+  const timePeriods = timePeriodsQuery.data?.data ?? [];
+  const selectedGeographyCode = geographies[0]?.geography_code;
+  const selectedTimePeriodCode = timePeriods[0]?.time_period_code;
+
+  const selectedGeographyQuery = useQuery({
+    queryKey: ["dimensions", "geography-detail", selectedGeographyCode, locale],
+    queryFn: () => dimensionsService.getGeography({ geographyCode: selectedGeographyCode ?? "", locale }),
+    enabled: Boolean(selectedGeographyCode),
+  });
+
+  const selectedTimePeriodQuery = useQuery({
+    queryKey: ["dimensions", "time-period-detail", selectedTimePeriodCode, locale],
+    queryFn: () => dimensionsService.getTimePeriod({ timePeriodCode: selectedTimePeriodCode ?? "", locale }),
+    enabled: Boolean(selectedTimePeriodCode),
+  });
+
+  const filteredDimensions = dimensionDefinitions.filter((dimension) =>
+    dimensionToSearchText(dimension).toLowerCase().includes(dimensionSearch.toLowerCase()),
+  );
+  const usageRows: Array<{ id: string; usage_area: string; dependency: string; record_count: number; risk: "LOW" | "MEDIUM" | "HIGH" }> = [];
+
+  const geographyLevels = useMemo(
+    () => uniqueBy(geographies, (geo) => geo.level_code).map((geo, index) => ({
+      level_code: geo.level_code,
+      level_number: index + 1,
+      name: geo.level_code,
+    })),
+    [geographies],
+  );
+
+  const timeFrequencies = useMemo(
+    () => uniqueBy(timePeriods, (period) => period.frequency_code).map((period) => ({
+      frequency_code: period.frequency_code,
+      name: period.frequency_code,
+      months_interval: period.frequency_code === "ANNUAL" ? 12 : period.frequency_code === "QUARTERLY" ? 3 : period.frequency_code === "MONTHLY" ? 1 : "-",
+    })),
+    [timePeriods],
+  );
+
+  const liveDataError =
+    dimensionsQuery.error ??
+    membersQuery.error ??
+    memberSetsQuery.error ??
+    geographiesQuery.error ??
+    timePeriodsQuery.error ??
+    healthQuery.error ??
+    dimensionDetailQuery.error ??
+    memberSetMembersQuery.error ??
+    selectedGeographyQuery.error ??
+    selectedTimePeriodQuery.error;
+  const isInitialLoading =
+    dimensionsQuery.isPending ||
+    (Boolean(effectiveDimensionCode) && membersQuery.isPending) ||
+    memberSetsQuery.isPending ||
+    geographiesQuery.isPending ||
+    timePeriodsQuery.isPending;
+  const isRefreshing =
+    dimensionsQuery.isFetching ||
+    membersQuery.isFetching ||
+    memberSetsQuery.isFetching ||
+    geographiesQuery.isFetching ||
+    timePeriodsQuery.isFetching ||
+    healthQuery.isFetching ||
+    dimensionDetailQuery.isFetching ||
+    memberSetMembersQuery.isFetching ||
+    selectedGeographyQuery.isFetching ||
+    selectedTimePeriodQuery.isFetching;
 
   const memberChildren = (memberCode: string, members = membersForDimension) => members.filter((member) => member.parent_member_code === memberCode);
   const treeQuery = treeSearch.trim().toLowerCase();
   const memberMatchesSearch = (member: DimensionMember) =>
-    `${member.member_code} ${member.external_code} ${member.name} ${member.short_name}`.toLowerCase().includes(treeQuery);
+    memberToSearchText(member).toLowerCase().includes(treeQuery);
   const hasMatchingDescendant = (member: DimensionMember): boolean =>
     memberChildren(member.member_code).some((child) => memberMatchesSearch(child) || hasMatchingDescendant(child));
   const hasMatchingAncestor = (member: DimensionMember): boolean => {
@@ -290,7 +478,7 @@ export function DimensionsManagementPage() {
   };
 
   const filteredMembers = membersForDimension.filter((member) =>
-    Object.values(member).join(" ").toLowerCase().includes(tableSearch.toLowerCase()),
+    memberToSearchText(member).toLowerCase().includes(tableSearch.toLowerCase()),
   );
 
   const tabs: { code: DimensionTab; label: string }[] = [
@@ -302,7 +490,7 @@ export function DimensionsManagementPage() {
 
   const rootMemberCount = membersForDimension.filter((member) => !member.parent_member_code).length;
   const childMemberCount = membersForDimension.length - rootMemberCount;
-  const activeMemberCount = membersForDimension.filter((member) => member.status === "ACTIVE").length;
+  const activeMemberCount = membersForDimension.filter((member) => normalizeStatus(member.status) === "ACTIVE").length;
   const inactiveMemberCount = membersForDimension.length - activeMemberCount;
   const maxMemberDepth = membersForDimension.reduce((maxDepth, member) => Math.max(maxDepth, getMemberDepth(member)), 0);
   const templateSetCount = memberSetsForDimension.filter((set) => set.set_type === "TEMPLATE_SCOPE").length;
@@ -310,6 +498,14 @@ export function DimensionsManagementPage() {
   const reportSetCount = memberSetsForDimension.filter((set) => set.set_type === "REPORT_SCOPE").length;
   const dependencyRecordCount = usageRows.reduce((sum, usage) => sum + usage.record_count, 0);
   const highRiskCount = usageRows.filter((usage) => usage.risk === "HIGH").length;
+  const selectedDimensionStatus = normalizeStatus(selectedDimensionDetail?.status);
+  const selectedDimensionDescription =
+    selectedDimensionDetail?.description ??
+    selectedDimension.description ??
+    "Live API response does not include a description for this dimension.";
+  const selectedDimensionMemberCount = toNumber(selectedDimension.member_count, membersForDimension.length);
+  const selectedDimensionSetCount = toNumber(selectedDimension.set_count, memberSetsForDimension.length);
+  const selectedDimensionTemplateUsageCount = toNumber(selectedDimension.template_usage_count);
 
   const statCards: {
     label: string;
@@ -322,7 +518,7 @@ export function DimensionsManagementPage() {
   }[] = [
     {
       label: "Members",
-      value: membersForDimension.length,
+      value: membersQuery.data?.count ?? selectedDimensionMemberCount,
       badge: `${activeMemberCount} active`,
       helper: `${rootMemberCount} root / ${childMemberCount} child`,
       detail: inactiveMemberCount ? `${inactiveMemberCount} inactive or draft` : "All listed members active",
@@ -331,7 +527,7 @@ export function DimensionsManagementPage() {
     },
     {
       label: "Definition",
-      value: selectedDimension.status,
+      value: selectedDimensionStatus,
       badge: selectedDimension.dimension_code,
       helper: `${selectedDimension.dimension_type} / ${selectedDimension.value_type}`,
       detail: selectedDimension.is_hierarchical ? "Hierarchy enabled" : "Flat dimension",
@@ -343,7 +539,7 @@ export function DimensionsManagementPage() {
       value: memberSetsForDimension.length,
       badge: "Scopes",
       helper: `${templateSetCount} template / ${requestSetCount} request`,
-      detail: reportSetCount ? `${reportSetCount} report scope` : "No report scope in sample",
+      detail: reportSetCount ? `${reportSetCount} report scope` : `${selectedDimensionSetCount} sets in definition metadata`,
       footnote: "Used to constrain template and request axes",
       targetTab: "member-sets",
     },
@@ -352,8 +548,8 @@ export function DimensionsManagementPage() {
       value: dependencyRecordCount,
       badge: highRiskCount ? `${highRiskCount} high` : "Checked",
       helper: `${usageRows.length} dependency areas`,
-      detail: `${selectedDimension.template_usage_count} template bindings`,
-      footnote: highRiskCount ? "Review before structural edits" : "No high-risk sample dependency",
+      detail: selectedDimensionTemplateUsageCount ? `${selectedDimensionTemplateUsageCount} template bindings` : "No live usage endpoint available",
+      footnote: highRiskCount ? "Review before structural edits" : "Dependency evidence awaits usage APIs",
       targetTab: "members",
     },
   ];
@@ -387,7 +583,7 @@ export function DimensionsManagementPage() {
             <span className="block truncate font-semibold">{member.name}</span>
             <span className="block truncate font-mono text-[11px] text-muted-foreground">Depth {getMemberDepth(member)} / {member.member_code}</span>
           </button>
-          <Badge variant={statusVariant(member.status)}>{member.status}</Badge>
+          <Badge variant={statusVariant(normalizeStatus(member.status))}>{normalizeStatus(member.status)}</Badge>
         </div>
         {isExpanded ? children.map((child) => renderTreeMember(child, depth + 1)) : null}
       </div>
@@ -406,15 +602,33 @@ export function DimensionsManagementPage() {
           <div>
             <h1 id="dimensions-title" className="text-2xl font-bold">Dimension Management</h1>
             <p className="mt-1 text-sm text-muted-foreground">Manage dimension definitions, hierarchy members, member sets, geography, and time references for the selected unit.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">Unit {activeUnitCode}</Badge>
+              <Badge variant="secondary">Read-only API</Badge>
+              <Badge variant={healthQuery.data?.status === "ok" ? "secondary" : "outline"}>
+                Health {healthQuery.data?.status ?? "checking"}
+              </Badge>
+              {isRefreshing ? <span>Refreshing live Dimensions data...</span> : <span>Loaded from Dimensions GET endpoints.</span>}
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setModal("bulk-upload")}><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
-            <Button variant="outline"><Download aria-hidden="true" className="size-4" /> Download format</Button>
-            <Button variant="outline" onClick={() => setModal("create-dimension")}><Plus aria-hidden="true" className="size-4" /> New dimension</Button>
-            <Button variant="outline" onClick={() => openMemberModal("create-root")}><Plus aria-hidden="true" className="size-4" /> New root</Button>
-            <Button onClick={() => openMemberModal("add-child")}><Plus aria-hidden="true" className="size-4" /> Add child</Button>
+            <Button variant="outline" disabled title="Dimensions mutation APIs are not available yet."><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
+            <Button variant="outline" disabled title="Download endpoint is not available yet."><Download aria-hidden="true" className="size-4" /> Download format</Button>
+            <Button variant="outline" disabled title="Dimensions mutation APIs are not available yet."><Plus aria-hidden="true" className="size-4" /> New dimension</Button>
+            <Button variant="outline" disabled title="Dimensions mutation APIs are not available yet."><Plus aria-hidden="true" className="size-4" /> New root</Button>
+            <Button disabled title="Dimensions mutation APIs are not available yet."><Plus aria-hidden="true" className="size-4" /> Add child</Button>
           </div>
         </div>
+
+        {isInitialLoading ? (
+          <Loader variant="section" label="Loading Dimensions data" />
+        ) : null}
+
+        {liveDataError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {safeApiMessage(liveDataError)}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
           {statCards.map((card) => (
@@ -444,7 +658,7 @@ export function DimensionsManagementPage() {
                 <Badge variant="outline">{filteredDimensions.length}/{dimensionDefinitions.length}</Badge>
               </div>
             </CardHeader>
-            <CardContent className="grid gap-2">
+            <CardContent className="grid max-h-[460px] gap-2 overflow-y-auto pr-3">
               <label className="mb-1 flex items-center gap-2 rounded-md bg-muted/60 px-2">
                 <Search aria-hidden="true" className="size-4 text-muted-foreground" />
                 <span className="sr-only">Search dimensions</span>
@@ -461,7 +675,7 @@ export function DimensionsManagementPage() {
                   type="button"
                   onClick={() => {
                     setSelectedDimensionCode(dimension.dimension_code);
-                    setSelectedMemberCode(dimensionMembers.find((member) => member.dimension_code === dimension.dimension_code)?.member_code ?? "");
+                    setSelectedMemberCode("");
                     setTreeSearch("");
                     setTableSearch("");
                   }}
@@ -473,8 +687,8 @@ export function DimensionsManagementPage() {
                   <span className="block font-bold">{dimension.name}</span>
                   <span className="block font-mono text-[11px] text-muted-foreground">{dimension.dimension_code} / {dimension.dimension_type}</span>
                   <span className="mt-1 flex gap-1">
-                    <Badge variant={statusVariant(dimension.status)}>{dimension.status}</Badge>
-                    <Badge variant="outline">{dimension.member_count} members</Badge>
+                    <Badge variant={statusVariant(normalizeStatus(dimension.status))}>{normalizeStatus(dimension.status)}</Badge>
+                    <Badge variant="outline">{toNumber(dimension.member_count)} members</Badge>
                   </span>
                 </button>
               ))}
@@ -487,8 +701,8 @@ export function DimensionsManagementPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between gap-2">
-                <CardTitle>Member hierarchy</CardTitle>
-                <Button size="sm" variant="outline" onClick={() => openMemberModal("create-root")}>
+              <CardTitle>Member hierarchy</CardTitle>
+                <Button size="sm" variant="outline" disabled title="Dimensions mutation APIs are not available yet.">
                   <Plus aria-hidden="true" className="size-4" />
                   Root
                 </Button>
@@ -500,8 +714,10 @@ export function DimensionsManagementPage() {
                 <span className="sr-only">Search member hierarchy</span>
                 <Input className="border-0 bg-transparent" placeholder="Search all hierarchy levels" value={treeSearch} onChange={(event) => setTreeSearch(event.target.value)} />
               </label>
-              <div className="max-h-[440px] overflow-y-auto rounded-md bg-muted/30 py-2">
-                {rootMembers.length ? rootMembers.map((member) => renderTreeMember(member)) : (
+              <div className="max-h-[380px] overflow-y-auto rounded-md bg-muted/30 py-2">
+                {membersQuery.isFetching ? (
+                  <Loader variant="inline" label="Loading members" className="justify-center px-3 py-6" />
+                ) : rootMembers.length ? rootMembers.map((member) => renderTreeMember(member)) : (
                   <p className="px-3 py-6 text-center text-xs text-muted-foreground">No members found for this filter.</p>
                 )}
               </div>
@@ -514,10 +730,10 @@ export function DimensionsManagementPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle>Selected member</CardTitle>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => openMemberModal("view-member")}><Eye aria-hidden="true" className="size-4" /> View</Button>
-                <Button size="sm" variant="outline" onClick={() => openMemberModal("edit-member")}><Edit3 aria-hidden="true" className="size-4" /> Edit</Button>
-                <Button size="sm" variant="outline" onClick={() => openMemberModal("add-child")}><Plus aria-hidden="true" className="size-4" /> Add child</Button>
-                <Button size="sm" variant="destructive" onClick={() => openMemberModal("delete-member")}><Trash2 aria-hidden="true" className="size-4" /> Delete</Button>
+                <Button size="sm" variant="outline" disabled={!selectedMember} onClick={() => openMemberModal("view-member")}><Eye aria-hidden="true" className="size-4" /> View</Button>
+                <Button size="sm" variant="outline" disabled title="Dimensions mutation APIs are not available yet."><Edit3 aria-hidden="true" className="size-4" /> Edit</Button>
+                <Button size="sm" variant="outline" disabled title="Dimensions mutation APIs are not available yet."><Plus aria-hidden="true" className="size-4" /> Add child</Button>
+                <Button size="sm" variant="destructive" disabled title="Dimensions mutation APIs are not available yet."><Trash2 aria-hidden="true" className="size-4" /> Delete</Button>
               </div>
             </div>
           </CardHeader>
@@ -531,7 +747,7 @@ export function DimensionsManagementPage() {
                 ["Depth", selectedMember ? `Level ${getMemberDepth(selectedMember)}` : "-"],
                 ["Children", selectedMember ? memberChildren(selectedMember.member_code).length : 0],
                 ["Value type", selectedDimension.value_type],
-                ["Status", selectedMember?.status],
+                ["Status", normalizeStatus(selectedMember?.status)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-md bg-muted/50 p-3">
                   <p className="text-[11px] font-semibold text-muted-foreground">{label}</p>
@@ -543,14 +759,14 @@ export function DimensionsManagementPage() {
             <div className="grid grid-cols-[minmax(0,1fr)_420px] gap-4 max-lg:grid-cols-1">
               <div className="rounded-md bg-muted/40 p-3">
                 <p className="text-sm font-bold">{selectedDimension.name}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{selectedDimension.description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{selectedDimensionDescription}</p>
                 <p className="mt-3 text-sm font-bold">{selectedMember?.name ?? "No member selected"}</p>
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">{selectedMember?.external_code ?? "-"}</p>
               </div>
               <div className="rounded-md bg-muted/40 p-3">
                 <p className="text-sm font-bold">Dependency / usage</p>
                 <div className="mt-2 grid gap-2">
-                  {(usageRows.length ? usageRows : [{ id: "none", usage_area: "None", dependency: "No dependency recorded in sample data", record_count: 0, risk: "LOW" as const }]).map((usage) => (
+                  {(usageRows.length ? usageRows : [{ id: "none", usage_area: "Usage API unavailable", dependency: "No governed Dimensions usage endpoint is available in the current contract.", record_count: 0, risk: "LOW" as const }]).map((usage) => (
                     <div key={usage.id} className="grid grid-cols-[1fr_auto] gap-2 text-xs">
                       <span>
                         <span className="block font-semibold">{usage.usage_area}</span>
@@ -605,26 +821,39 @@ export function DimensionsManagementPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredMembers.map((member) => (
-                    <TableRow key={member.id}>
+                  {membersQuery.isFetching ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-6">
+                        <Loader variant="inline" label="Loading members" className="justify-center" />
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredMembers.map((member) => (
+                    <TableRow key={member.member_code}>
                       <TableCell>
                         <span className="block font-mono text-[11px]">{member.member_code}</span>
                         <span className="text-xs font-semibold">{member.name}</span>
                       </TableCell>
                       <TableCell className="font-mono text-[11px]">{member.parent_member_code ?? "ROOT"}</TableCell>
                       <TableCell className="font-mono text-[11px]">{member.external_code}</TableCell>
-                      <TableCell>{member.sort_order}</TableCell>
-                      <TableCell><Badge variant={statusVariant(member.status)}>{member.status}</Badge></TableCell>
+                      <TableCell>{member.sort_order ?? "-"}</TableCell>
+                      <TableCell><Badge variant={statusVariant(normalizeStatus(member.status))}>{normalizeStatus(member.status)}</Badge></TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => openMemberModal("view-member", member)}><Eye aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Edit" onClick={() => openMemberModal("edit-member", member)}><Edit3 aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Add child" onClick={() => openMemberModal("add-child", member)}><Plus aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="destructive" aria-label="Delete" onClick={() => openMemberModal("delete-member", member)}><Trash2 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Edit" disabled><Edit3 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Add child" disabled><Plus aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="destructive" aria-label="Delete" disabled><Trash2 aria-hidden="true" className="size-3" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
                   ))}
+                  {!membersQuery.isFetching && !filteredMembers.length ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                        No members found for this filter.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             ) : null}
@@ -642,20 +871,34 @@ export function DimensionsManagementPage() {
                 </TableHeader>
                 <TableBody>
                   {memberSetsForDimension.map((set) => (
-                    <TableRow key={set.id}>
+                    <TableRow key={set.set_code}>
                       <TableCell className="font-mono text-[11px]">{set.set_code}</TableCell>
-                      <TableCell>{set.set_type}</TableCell>
+                      <TableCell>{set.set_type ?? "-"}</TableCell>
                       <TableCell>{set.name}</TableCell>
-                      <TableCell>{set.member_count}</TableCell>
-                      <TableCell><Badge variant={statusVariant(set.status)}>{set.status}</Badge></TableCell>
+                      <TableCell>{set.set_code === selectedMemberSet?.set_code ? memberSetMembersQuery.data?.count ?? toNumber(set.member_count) : toNumber(set.member_count)}</TableCell>
+                      <TableCell><Badge variant={statusVariant(normalizeStatus(set.status))}>{normalizeStatus(set.status)}</Badge></TableCell>
                     </TableRow>
                   ))}
+                  {!memberSetsForDimension.length ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-6 text-center text-xs text-muted-foreground">
+                        No member sets returned for this dimension.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             ) : null}
 
             {activeTab === "geography" ? (
               <div className="grid gap-3">
+                {selectedGeographyQuery.data?.data ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-xs">
+                    <span className="font-semibold">Selected geography detail:</span>{" "}
+                    <span className="font-mono">{selectedGeographyQuery.data.data.geography_code}</span>
+                    <span className="text-muted-foreground"> / {selectedGeographyQuery.data.data.name}</span>
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2 text-xs">
                   {geographyLevels.map((level) => (
                     <Badge key={level.level_code} variant="outline">{level.level_number}. {level.name}</Badge>
@@ -681,9 +924,16 @@ export function DimensionsManagementPage() {
                         <TableCell>{geo.level_code}</TableCell>
                         <TableCell className="font-mono text-[11px]">{geo.parent_geography_code ?? "ROOT"}</TableCell>
                         <TableCell className="font-mono text-[11px]">{geo.iso_alpha3_code ?? "-"}</TableCell>
-                        <TableCell><Badge variant={statusVariant(geo.status)}>{geo.status}</Badge></TableCell>
+                        <TableCell><Badge variant={statusVariant(normalizeStatus(geo.status))}>{normalizeStatus(geo.status)}</Badge></TableCell>
                       </TableRow>
                     ))}
+                    {!geographies.length ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-6 text-center text-xs text-muted-foreground">
+                          No geographies returned by the API.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               </div>
@@ -691,6 +941,13 @@ export function DimensionsManagementPage() {
 
             {activeTab === "time" ? (
               <div className="grid gap-3">
+                {selectedTimePeriodQuery.data?.data ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-xs">
+                    <span className="font-semibold">Selected time-period detail:</span>{" "}
+                    <span className="font-mono">{selectedTimePeriodQuery.data.data.time_period_code}</span>
+                    <span className="text-muted-foreground"> / {selectedTimePeriodQuery.data.data.name}</span>
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2 text-xs">
                   {timeFrequencies.map((frequency) => (
                     <Badge key={frequency.frequency_code} variant="outline">{frequency.name}: {frequency.months_interval} months</Badge>
@@ -718,19 +975,26 @@ export function DimensionsManagementPage() {
                         <TableCell>{period.period_year}</TableCell>
                         <TableCell>{period.start_date}</TableCell>
                         <TableCell>{period.end_date}</TableCell>
-                        <TableCell><Badge variant={statusVariant(period.status)}>{period.status}</Badge></TableCell>
+                        <TableCell><Badge variant={statusVariant(normalizeStatus(period.status))}>{normalizeStatus(period.status)}</Badge></TableCell>
                       </TableRow>
                     ))}
+                    {!timePeriods.length ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                          No time periods returned by the API.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               </div>
             ) : null}
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Rows are sample-data previews shaped from Dimensions DB/API contracts.</span>
+              <span>Rows load from live Dimensions GET APIs. Rollup rules remain API pending.</span>
               <div className="flex gap-2">
-                <Button size="xs" variant="outline">Previous</Button>
-                <Button size="xs" variant="outline">Next</Button>
+                <Button size="xs" variant="outline" disabled>Previous</Button>
+                <Button size="xs" variant="outline" disabled>Next</Button>
               </div>
             </div>
           </CardContent>

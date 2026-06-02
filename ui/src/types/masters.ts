@@ -12,6 +12,16 @@ export type OrganizationListItem = {
   name: string;
 };
 
+export type LocaleListItem = {
+  locale_code: string;
+  display_name?: string | null;
+  native_name?: string | null;
+  name?: string | null;
+  is_default?: boolean | string | null;
+  is_active?: boolean | string | null;
+  sort_order?: number | string | null;
+};
+
 export type FrameworkEditionListItem = {
   framework_code: string;
   edition_code: string;
