@@ -309,11 +309,11 @@ function RelatedTable({
   );
 }
 
-function SelectField({ label, value, options, name = label }: { label: string; value?: string; options: MasterRow[]; name?: string }) {
+function SelectField({ label, value, options, name = label, required = false }: { label: string; value?: string; options: MasterRow[]; name?: string; required?: boolean }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <select name={name} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name={name} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required={required}>
         <option value="">Select</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
@@ -339,6 +339,7 @@ function IndicatorDialog({
   selectedIndicator,
   selectedVersion,
   selectedUnitCode,
+  editionCodeOptions,
   organizationRowsData,
   officerRowsData,
   periodicityRowsData,
@@ -351,6 +352,7 @@ function IndicatorDialog({
   selectedIndicator?: MasterRow;
   selectedVersion?: MasterRow;
   selectedUnitCode: string;
+  editionCodeOptions: MasterRow[];
   organizationRowsData: MasterRow[];
   officerRowsData: MasterRow[];
   periodicityRowsData: MasterRow[];
@@ -413,7 +415,7 @@ function IndicatorDialog({
             <div className="grid gap-4">
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
                 <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
-                <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
+                <SelectField label="edition_code" value={row?.edition_code ?? activeEditionCode} options={editionCodeOptions} required />
                 <TextField label="national_indicator_code" value={row?.national_indicator_code} />
                 <TextField label="indicator_number" value={row?.indicator_number} />
               </div>
@@ -561,6 +563,20 @@ export function IndicatorManagementPage() {
     [indicatorsQuery.data],
   );
   const nationalIndicatorRows = liveNationalIndicatorRows.length ? liveNationalIndicatorRows : nationalIndicators;
+  const editionCodeOptions = useMemo(() => {
+    const editionCodes = new Set<string>();
+
+    for (const indicator of nationalIndicatorRows) {
+      if (indicator.edition_code) {
+        editionCodes.add(indicator.edition_code);
+      }
+    }
+
+    return Array.from(editionCodes).map((editionCode) => ({
+      id: editionCode,
+      edition_code: editionCode,
+    }));
+  }, [nationalIndicatorRows]);
   const selectedIndicator = nationalIndicatorRows.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicatorRows[0];
 
   const selectedIndicatorDetailQuery = useQuery({
@@ -1122,6 +1138,7 @@ export function IndicatorManagementPage() {
         selectedIndicator={selectedIndicator}
         selectedVersion={currentVersion}
         selectedUnitCode={selectedUnitCode}
+        editionCodeOptions={editionCodeOptions}
         organizationRowsData={organizationRowsData}
         officerRowsData={officerRowsData}
         periodicityRowsData={periodicityRowsData}
