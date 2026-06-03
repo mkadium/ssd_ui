@@ -81,6 +81,21 @@ export type DimensionUsage = {
   risk: "LOW" | "MEDIUM" | "HIGH";
 };
 
+export type DimensionRollupRule = {
+  id: string;
+  dimension_code: string;
+  parent_member_code: string;
+  parent_label: string;
+  rule_code: string;
+  entry_mode: "MANUAL" | "DERIVED" | "MANUAL_WITH_VALIDATION";
+  aggregation_method: "SUM" | "AVG" | "WEIGHTED_AVG" | "MIN" | "MAX" | "NO_ROLLUP";
+  measure_code: string;
+  weight_measure_code?: string;
+  validation_rule_code: string;
+  children: { member_code: string; label: string; child_order: number; child_weight?: string }[];
+  status: "ACTIVE" | "DRAFT" | "RETIRED";
+};
+
 export const dimensionDefinitions: DimensionDefinition[] = [
   {
     dimension_code: "GEOGRAPHY",
@@ -110,9 +125,9 @@ export const dimensionDefinitions: DimensionDefinition[] = [
     dimension_code: "AREA_TYPE",
     dimension_type: "GENERAL",
     value_type: "TEXT",
-    is_hierarchical: false,
+    is_hierarchical: true,
     name: "Area type",
-    description: "Total, rural, and urban disaggregation members.",
+    description: "Total, rural, and urban disaggregation members with governed Total rollup behavior.",
     status: "ACTIVE",
     member_count: 3,
     set_count: 2,
@@ -144,8 +159,8 @@ export const dimensionMembers: DimensionMember[] = [
   { id: "TIME_2012_13", dimension_code: "TIME_PERIOD", member_code: "TIME_2012_13", external_code: "2012-13", name: "2012-13", short_name: "2012-13", sort_order: 20, status: "ACTIVE", valid_from: "2012-04-01", valid_to: "2013-03-31" },
   { id: "TIME_2025", dimension_code: "TIME_PERIOD", member_code: "TIME_2025", external_code: "2025", name: "2025", short_name: "2025", sort_order: 30, status: "ACTIVE", valid_from: "2025-01-01", valid_to: "2025-12-31" },
   { id: "TOTAL", dimension_code: "AREA_TYPE", member_code: "TOTAL", external_code: "TOTAL", name: "Total", short_name: "Total", sort_order: 10, status: "ACTIVE", valid_from: "2025-04-01" },
-  { id: "RURAL", dimension_code: "AREA_TYPE", member_code: "RURAL", external_code: "RURAL", name: "Rural", short_name: "Rural", sort_order: 20, status: "ACTIVE", valid_from: "2025-04-01" },
-  { id: "URBAN", dimension_code: "AREA_TYPE", member_code: "URBAN", external_code: "URBAN", name: "Urban", short_name: "Urban", sort_order: 30, status: "ACTIVE", valid_from: "2025-04-01" },
+  { id: "RURAL", dimension_code: "AREA_TYPE", member_code: "RURAL", parent_member_code: "TOTAL", external_code: "RURAL", name: "Rural", short_name: "Rural", sort_order: 20, status: "ACTIVE", valid_from: "2025-04-01" },
+  { id: "URBAN", dimension_code: "AREA_TYPE", member_code: "URBAN", parent_member_code: "TOTAL", external_code: "URBAN", name: "Urban", short_name: "Urban", sort_order: 30, status: "ACTIVE", valid_from: "2025-04-01" },
   { id: "GENDER_TOTAL", dimension_code: "GENDER", member_code: "GENDER_TOTAL", external_code: "TOTAL", name: "Total", short_name: "Total", sort_order: 10, status: "ACTIVE", valid_from: "2025-04-01" },
   { id: "FEMALE", dimension_code: "GENDER", member_code: "FEMALE", external_code: "F", name: "Female", short_name: "Female", sort_order: 20, status: "ACTIVE", valid_from: "2025-04-01" },
   { id: "MALE", dimension_code: "GENDER", member_code: "MALE", external_code: "M", name: "Male", short_name: "Male", sort_order: 30, status: "ACTIVE", valid_from: "2025-04-01" },
@@ -195,4 +210,39 @@ export const dimensionUsage: DimensionUsage[] = [
   { id: "TPL_GENDER", dimension_code: "GENDER", usage_area: "Templates", dependency: "Used as optional subgroup in generated grid templates", record_count: 1, risk: "LOW" },
   { id: "TPL_TIME", dimension_code: "TIME_PERIOD", usage_area: "Templates", dependency: "Used as merged year header in template designer", record_count: 3, risk: "MEDIUM" },
   { id: "DASH_TIME", dimension_code: "TIME_PERIOD", usage_area: "Dashboard", dependency: "Used for published trend and snapshot filtering", record_count: 4, risk: "LOW" },
+];
+
+export const dimensionRollupRules: DimensionRollupRule[] = [
+  {
+    id: "ROLLUP_SUBGROUP_LOCATION_TOTAL",
+    dimension_code: "AREA_TYPE",
+    parent_member_code: "TOTAL",
+    parent_label: "Total",
+    rule_code: "ROLLUP_SUBGROUP_LOCATION_TOTAL",
+    entry_mode: "MANUAL_WITH_VALIDATION",
+    aggregation_method: "SUM",
+    measure_code: "INDICATOR_VALUE",
+    validation_rule_code: "TOTAL_EQUALS_CHILD_SUM",
+    status: "ACTIVE",
+    children: [
+      { member_code: "RURAL", label: "Rural", child_order: 1 },
+      { member_code: "URBAN", label: "Urban", child_order: 2 },
+    ],
+  },
+  {
+    id: "ROLLUP_GENDER_TOTAL",
+    dimension_code: "GENDER",
+    parent_member_code: "GENDER_TOTAL",
+    parent_label: "Total",
+    rule_code: "ROLLUP_GENDER_TOTAL",
+    entry_mode: "DERIVED",
+    aggregation_method: "SUM",
+    measure_code: "PERSON_COUNT",
+    validation_rule_code: "TOTAL_EQUALS_CHILD_SUM",
+    status: "DRAFT",
+    children: [
+      { member_code: "FEMALE", label: "Female", child_order: 1 },
+      { member_code: "MALE", label: "Male", child_order: 2 },
+    ],
+  },
 ];

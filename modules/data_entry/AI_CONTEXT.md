@@ -23,6 +23,7 @@ DEPARTMENT_DATA_ENTRY_INTERACTIVE_SAMPLE_FLOW
 - Numeric value entry is constrained to percent-style numeric values with up to two decimals. Geography, area type, gender, measure, unit, required flag, and validation rule bindings remain template-controlled and are not editable in Data Entry.
 - Data Entry grid supports keyboard interaction: arrow keys move the selected cell, Space selects the focused cell, Enter starts editing from a selected cell, and Enter/Escape exits edit mode from an active value editor.
 - Preview submit includes a dynamic data-entry JSON object. It is regenerated from the current years, generated cross-section columns, row geography, and cell values so added/deleted years remain bound to the correct row objects.
+- Data Entry now mirrors stacked template headers by showing the lowest dimension label with a measure/unit chip, while the sanitized JSON keeps `axis_tuple`, `measure_code`, `unit_code`, and `value_numeric` as separate governed fields.
 - Preview submit is a visual modal only and does not execute an API mutation.
 
 ## Boundaries

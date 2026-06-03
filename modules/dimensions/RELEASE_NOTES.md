@@ -4,7 +4,7 @@
 |---|---|
 | Module | Dimensions UI |
 | Status | DIMENSIONS_MANAGEMENT_SAMPLE_DATA |
-| Last Updated | 2026-05-31 |
+| Last Updated | 2026-06-01 |
 
 ## v0.1.0
 - Created UI module context from ready Dimensions API contract.
@@ -15,6 +15,7 @@
 - Made `dimension_code` editable for New root member flow while keeping Add child dimension locked to selected parent context.
 - Added Dimension selector search and enriched stat cards with active/root/child counts, hierarchy state, member-set scope counts, and dependency usage context.
 - Rebalanced the Dimension Management layout so summary stats sit first, Dimensions and Member hierarchy share the second row, and Selected member expands full width below them.
+- Added DB v0.2 rollup sample data and a Rollups tab for parent-member entry modes, aggregation methods, validation rule codes, and rollup children.
 - Added `ssd_ui/ui/src/data/dimensionsManagement.sample.ts` with contract-shaped dimensions sample data.
 - Registered `/dimensions` route behind the authenticated route guard.
 - Verified lint and production build.

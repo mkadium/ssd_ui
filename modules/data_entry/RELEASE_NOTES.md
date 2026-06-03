@@ -16,5 +16,7 @@
 - Updated `/data-entry` to use a standalone external-link layout with no left navigation.
 - Fixed numeric canvas cell editing so the focused input remains active instead of reverting to selection mode.
 - Added spreadsheet-style keyboard editing for selected numeric cells using digit, decimal, backspace, delete, Enter, and arrow keys.
+- Added stacked measure/unit chips in data-entry headers to mirror combined template designer headers.
+- Extended sanitized JSON preview so each submitted value includes an `axis_tuple`, `measure_code`, `unit_code`, and `value_numeric`.
 - Added `ssd_ui/ui/src/data/dataEntry.sample.ts` with request/template/ingestion-shaped sample data.
 - Registered route behind authenticated route guard.

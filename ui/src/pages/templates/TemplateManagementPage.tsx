@@ -106,10 +106,12 @@ type CanvasSnapshot = {
   columnWidths: Record<string, number>;
   rowHeights: Record<number, number>;
   boundObjects: BoundObject[];
+  boundMeasureCodes: MeasureCode[];
   rowAxes: BindingObjectCode[];
   columnAxes: BindingObjectCode[];
   visibleColumnCount: number;
   visibleRowCount: number;
+  combineMeasureBelowDimension: boolean;
 };
 
 type GridContextMenu = {
@@ -134,6 +136,14 @@ type StructuredRowCell = {
   value: string;
   memberCode?: string;
   columnLabel: string;
+};
+
+type StrictMeasureOwner = {
+  address: string;
+  cell: CanvasCell;
+  row: number;
+  col: number;
+  endCol: number;
 };
 
 const canvasColumns = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
@@ -294,6 +304,99 @@ function rangeAddresses(anchor: string, focus: string) {
   return addresses;
 }
 
+function shiftAddressRight(address: string | undefined, afterCol: number, delta: number) {
+  if (!address || delta <= 0) return address;
+  const coord = addressToCoord(address);
+  if (coord.col <= afterCol) return address;
+  const nextCol = coord.col + delta;
+  if (nextCol > canvasColumns.length) return undefined;
+  return coordToAddress(coord.row, nextCol);
+}
+
+function shiftCellReferencesRight(cell: CanvasCell, afterCol: number, delta: number): CanvasCell {
+  if (delta <= 0) return cell;
+  return {
+    ...cell,
+    mergeOwner: shiftAddressRight(cell.mergeOwner, afterCol, delta),
+    groupAnchor: shiftAddressRight(cell.groupAnchor, afterCol, delta),
+    groupFocus: shiftAddressRight(cell.groupFocus, afterCol, delta),
+  };
+}
+
+function shiftCellsRightFromColumn(
+  current: Record<string, CanvasCell>,
+  afterCol: number,
+  delta: number,
+  fromRow: number,
+) {
+  if (delta <= 0) return current;
+
+  const shifted: Record<string, CanvasCell> = {};
+  Object.entries(current).forEach(([address, cell]) => {
+    const coord = addressToCoord(address);
+    if (coord.row >= fromRow && coord.col > afterCol) {
+      const nextCol = coord.col + delta;
+      if (nextCol <= canvasColumns.length) {
+        shifted[coordToAddress(coord.row, nextCol)] = shiftCellReferencesRight(cell, afterCol, delta);
+      }
+      return;
+    }
+    shifted[address] = cell;
+  });
+
+  return shifted;
+}
+
+function shiftAddressLeftAfterColumnRemoval(address: string | undefined, startCol: number, endCol: number, delta: number) {
+  if (!address || delta <= 0) return address;
+  const coord = addressToCoord(address);
+  if (coord.col >= startCol && coord.col <= endCol) return undefined;
+  if (coord.col <= endCol) return address;
+  return coordToAddress(coord.row, Math.max(1, coord.col - delta));
+}
+
+function shiftCellReferencesLeftAfterColumnRemoval(cell: CanvasCell, startCol: number, endCol: number, delta: number): CanvasCell {
+  if (delta <= 0) return cell;
+  return {
+    ...cell,
+    mergeOwner: shiftAddressLeftAfterColumnRemoval(cell.mergeOwner, startCol, endCol, delta),
+    groupAnchor: shiftAddressLeftAfterColumnRemoval(cell.groupAnchor, startCol, endCol, delta),
+    groupFocus: shiftAddressLeftAfterColumnRemoval(cell.groupFocus, startCol, endCol, delta),
+  };
+}
+
+function removeColumnRangeFromRows(
+  current: Record<string, CanvasCell>,
+  startCol: number,
+  endCol: number,
+  fromRow: number,
+) {
+  const delta = Math.max(0, endCol - startCol + 1);
+  if (delta <= 0) return current;
+
+  const shifted: Record<string, CanvasCell> = {};
+  Object.entries(current).forEach(([address, cell]) => {
+    const coord = addressToCoord(address);
+    if (coord.row < fromRow) {
+      shifted[address] = cell;
+      return;
+    }
+
+    if (coord.col >= startCol && coord.col <= endCol) {
+      return;
+    }
+
+    if (coord.col > endCol) {
+      shifted[coordToAddress(coord.row, coord.col - delta)] = shiftCellReferencesLeftAfterColumnRemoval(cell, startCol, endCol, delta);
+      return;
+    }
+
+    shifted[address] = cell;
+  });
+
+  return shifted;
+}
+
 function isInRange(address: string, anchor: string, focus: string) {
   return rangeAddresses(anchor, focus).includes(address);
 }
@@ -368,6 +471,21 @@ function getMembersForObject(code: BindingObjectCode, geographyScope: GeographyS
   if (code === "GENDER") {
     return dimensionMembers.filter((member) => member.dimension_code === "GENDER" && member.member_code !== "GENDER_TOTAL");
   }
+  if (code === "INDICATOR_VALUE") {
+    const measureMembers: DimensionMemberSample[] = measureBindingOptions.map((measure, index) => ({
+      id: `measure-${measure.code}`,
+      dimension_code: "MEASURE",
+      member_code: measure.code,
+      parent_member_code: undefined,
+      external_code: measure.code,
+      name: `${measure.label} (${measure.unitCode})`,
+      short_name: measure.label,
+      sort_order: (index + 1) * 10,
+      status: "ACTIVE" as const,
+      valid_from: "2025-04-01",
+    }));
+    return measureMembers;
+  }
   return [];
 }
 
@@ -437,9 +555,12 @@ function getCellClasses(cell: CanvasCell | undefined, selected: boolean) {
     MEASURE: "bg-purple-50 text-purple-900 font-bold",
   }[role];
   const align = cell?.align === "center" ? "justify-center text-center" : cell?.align === "right" ? "justify-end text-right" : "justify-start text-left";
-  const frozen = cell?.frozen ? "shadow-[inset_0_0_0_2px_rgba(37,99,235,0.25)]" : "";
+  const valign = cell?.valign === "top" ? "items-start" : cell?.valign === "bottom" ? "items-end" : "items-center";
+  const wrapping = cell?.value?.includes("\n") ? "whitespace-pre-line leading-tight" : "whitespace-nowrap";
+  const frozen = cell?.frozen ? "shadow-[inset_0_0_0_2px_rgba(37,99,235,0.28)]" : "";
+  const editable = cell?.editable ? "outline outline-1 outline-offset-[-2px] outline-emerald-500" : "";
   const selectedClass = selected ? "ring-2 ring-primary/70" : "";
-  return `flex h-full w-full items-center overflow-hidden text-ellipsis whitespace-nowrap px-2 ${roleClass} ${align} ${frozen} ${selectedClass}`;
+  return `flex h-full w-full overflow-hidden text-ellipsis px-2 ${roleClass} ${align} ${valign} ${wrapping} ${frozen} ${editable} ${selectedClass}`;
 }
 
 function Field({ label, value, readOnly = false }: { label: string; value?: string | number; readOnly?: boolean }) {
@@ -745,7 +866,6 @@ function CanvasTable({
   readOnly?: boolean;
 }) {
   const selectedRangeText = rangeLabel(selectedAnchor, selectedFocus);
-  const singleSelected = selectedAnchor === selectedFocus;
   const tableWidth = rowHeaderWidth + columns.reduce((total, column) => total + (columnWidths[column] ?? 112), 0);
   const startColumnResize = (column: string, event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -833,7 +953,7 @@ function CanvasTable({
                 if (cell?.mergeOwner) return null;
 
                 const selected = isInRange(address, selectedAnchor, selectedFocus);
-                const isActiveInput = !readOnly && singleSelected && selected && address === selectedFocus && editingCell === address;
+                const isActiveInput = !readOnly && selected && editingCell === address;
                 const inlineCompletion = isActiveInput ? getInlineCompletion(cellText, suggestions[0]) : "";
                 const rowSpan = cell?.merge?.rowSpan ?? 1;
                 const colSpan = cell?.merge?.colSpan ?? 1;
@@ -1010,6 +1130,7 @@ function BindingPanel({
   verticalAlign,
   suggestions,
   boundObjects,
+  boundMeasureCodes,
   operations,
   onCellTextChange,
   onHeaderTypeChange,
@@ -1033,6 +1154,7 @@ function BindingPanel({
   onUnmerge,
   onFreeze,
   onMarkEditable,
+  onCombineMeasureBelowDimension,
   onUnbindGroup,
   onClose,
 }: {
@@ -1056,6 +1178,7 @@ function BindingPanel({
   verticalAlign: VerticalAlign;
   suggestions: typeof bindingOptions;
   boundObjects: BoundObject[];
+  boundMeasureCodes: MeasureCode[];
   operations: CanvasOperation[];
   onCellTextChange: (value: string) => void;
   onHeaderTypeChange: (value: HeaderType) => void;
@@ -1079,9 +1202,15 @@ function BindingPanel({
   onUnmerge: () => void;
   onFreeze: () => void;
   onMarkEditable: () => void;
+  onCombineMeasureBelowDimension: () => void;
   onUnbindGroup: () => void;
   onClose: () => void;
 }) {
+  const availableMeasureOptions = measureBindingOptions.filter((measure) => !boundMeasureCodes.includes(measure.code));
+  const selectableMeasureCode = availableMeasureOptions.some((measure) => measure.code === selectedMeasureCode)
+    ? selectedMeasureCode
+    : availableMeasureOptions[0]?.code;
+
   return (
     <Card className="min-w-0">
       <CardHeader>
@@ -1111,7 +1240,9 @@ function BindingPanel({
                   className="grid grid-cols-[80px_1fr] gap-2 rounded-md bg-card px-2 py-2 text-left text-xs hover:bg-muted"
                   onClick={() => {
                     onHeaderTypeChange(suggestion.type);
-                    onBindingObjectChange(suggestion.code);
+                    if (suggestion.type !== "Measure") {
+                      onBindingObjectChange(suggestion.code);
+                    }
                   }}
                 >
                   <Badge variant="outline">{suggestion.type}</Badge>
@@ -1134,32 +1265,40 @@ function BindingPanel({
               { value: "Measure", label: "Measure" },
             ]}
           />
-          <SelectField
-            label="Object"
-            value={bindingObject}
-            onChange={(value) => onBindingObjectChange(value as BindingObjectCode)}
-            options={bindingOptions
-              .filter((option) => option.type === headerType)
-              .map((option) => ({ value: option.code, label: `${option.label} (${option.memberCount})` }))}
-          />
+          {headerType !== "Measure" ? (
+            <SelectField
+              label="Object"
+              value={bindingObject}
+              onChange={(value) => onBindingObjectChange(value as BindingObjectCode)}
+              options={bindingOptions
+                .filter((option) => option.type === headerType)
+                .map((option) => ({ value: option.code, label: `${option.label} (${option.memberCount})` }))}
+            />
+          ) : null}
           {headerType === "Measure" ? (
             <div className="grid gap-2 rounded-md bg-muted/40 p-3">
-              <p className="text-xs font-bold">Measure defaults</p>
-              <SelectField
-                label="Measure"
-                value={selectedMeasureCode}
-                onChange={(value) => onSelectedMeasureCodeChange(value as MeasureCode)}
-                options={measureBindingOptions.map((measure) => ({
-                  value: measure.code,
-                  label: `${measure.code} / ${measure.unitCode}`,
-                }))}
-              />
+              <p className="text-xs font-bold">Measure header</p>
+              {availableMeasureOptions.length ? (
+                <SelectField
+                  label="Measure"
+                  value={selectableMeasureCode}
+                  onChange={(value) => onSelectedMeasureCodeChange(value as MeasureCode)}
+                  options={availableMeasureOptions.map((measure) => ({
+                    value: measure.code,
+                    label: `${measure.code} / ${measure.unitCode}`,
+                  }))}
+                />
+              ) : (
+                <div className="rounded-md bg-card p-2 text-[11px] font-semibold text-muted-foreground">
+                  All configured measures are already bound. Unbind a measure header to make it available again.
+                </div>
+              )}
               <p className="text-[11px] text-muted-foreground">
-                Each generated data-entry cell stores axis tuple + measure code. This lets one template support count, rate, percent, or other measure columns without changing dimension headers.
+                Bind adds one selected measure as a column header at the selected cell. Already-bound measures are hidden from this list until unbound.
               </p>
             </div>
           ) : null}
-          {bindingObject === "GEOGRAPHY" ? (
+          {headerType === "Dimension" && bindingObject === "GEOGRAPHY" ? (
             <SelectField
               label="Geography scope"
               value={geographyScope}
@@ -1230,10 +1369,12 @@ function BindingPanel({
             label="Axis alignment"
             value={axisAlignment}
             onChange={(value) => onAxisAlignmentChange(value as AxisAlignment)}
-            options={[
-              { value: "row", label: "Row align" },
-              { value: "column", label: "Column align" },
-            ]}
+            options={headerType === "Measure"
+              ? [{ value: "column", label: "Column align" }]
+              : [
+                  { value: "row", label: "Row align" },
+                  { value: "column", label: "Column align" },
+                ]}
           />
           <SelectField
             label="Column datatype"
@@ -1290,11 +1431,12 @@ function BindingPanel({
             ]}
           />
           <div className="grid grid-cols-2 gap-2 border-t border-border pt-3">
-            <Button type="button" variant="outline" onClick={onMerge}>Merge</Button>
-            <Button type="button" variant="outline" onClick={onUnmerge}>Unmerge</Button>
-            <Button type="button" variant="outline" onClick={onFreeze}>Freeze</Button>
-            <Button type="button" variant="outline" onClick={onMarkEditable}>Editable cells</Button>
-            <Button type="button" variant="destructive" onClick={onUnbindGroup} className="col-span-2">Unbind selected group</Button>
+            <Button type="button" variant="outline" onClick={onMerge} title="Merge the selected canvas cells into one visual header or label area.">Merge</Button>
+            <Button type="button" variant="outline" onClick={onUnmerge} title="Split a merged visual range back into individual cells.">Unmerge</Button>
+            <Button type="button" variant="outline" onClick={onFreeze} title="Toggle freeze metadata for selected header/range. Frozen groups stay visible in rendered template panes.">Freeze</Button>
+            <Button type="button" variant="outline" onClick={onMarkEditable} title="Toggle whether selected cells become department data-entry fields.">Editable cells</Button>
+            <Button type="button" variant="outline" onClick={onCombineMeasureBelowDimension} title="Toggle stacked headers where the selected dimension label is shown above the measure/unit label.">Combine measure</Button>
+            <Button type="button" variant="destructive" onClick={onUnbindGroup} className="col-span-2" title="Remove the selected bound axis/measure group from the generated template canvas.">Unbind selected group</Button>
           </div>
 
           <div className="grid gap-2 border-t border-border pt-3">
@@ -1364,11 +1506,13 @@ export function TemplateManagementPage() {
   const [visibleRowCount, setVisibleRowCount] = useState(initialVisibleRowCount);
   const [rowAxes, setRowAxes] = useState<BindingObjectCode[]>([]);
   const [columnAxes, setColumnAxes] = useState<BindingObjectCode[]>([]);
+  const [combineMeasureBelowDimension, setCombineMeasureBelowDimension] = useState(false);
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
   const [gridContextMenu, setGridContextMenu] = useState<GridContextMenu>(null);
   const [isDesignerFullPage, setIsDesignerFullPage] = useState(false);
   const [boundObjects, setBoundObjects] = useState<BoundObject[]>([]);
+  const [boundMeasureCodes, setBoundMeasureCodes] = useState<MeasureCode[]>([]);
   const [operations, setOperations] = useState<CanvasOperation[]>([
     { id: "start", label: "Designer opened", detail: "Blank governed template canvas is ready." },
   ]);
@@ -1409,19 +1553,26 @@ export function TemplateManagementPage() {
   ];
 
   const templateJson = useMemo(() => {
+    const measureForCode = (code?: string) => measureBindingOptions.find((measure) => measure.code === code) ?? selectedMeasure;
+    const measureAxisIndex = columnAxes.indexOf("INDICATOR_VALUE");
+    const combinedDimensionAxis =
+      combineMeasureBelowDimension && measureAxisIndex > 0 ? columnAxes[measureAxisIndex - 1] : null;
     const editableCells = Object.entries(cells)
       .filter(([, cell]) => cell.role === "INPUT" || cell.editable)
       .slice(0, 80)
-      .map(([address, cell]) => ({
-        address,
-        measure_code: selectedMeasure.code,
-        value_type: cell.datatype ?? datatype,
-        unit_code: selectedMeasure.unitCode,
-        required: cell.required ?? required,
-        validation_rule: cell.validationRule ?? validationRule,
-        align: cell.align ?? horizontalAlign,
-        vertical_align: cell.valign ?? verticalAlign,
-      }));
+      .map(([address, cell]) => {
+        const cellMeasure = measureForCode(cell.boundCode);
+        return {
+          address,
+          measure_code: cellMeasure.code,
+          value_type: cell.datatype ?? cellMeasure.valueType,
+          unit_code: cellMeasure.unitCode,
+          required: cell.required ?? required,
+          validation_rule: cell.validationRule ?? cellMeasure.validationRule,
+          align: cell.align ?? horizontalAlign,
+          vertical_align: cell.valign ?? verticalAlign,
+        };
+      });
 
     const axisMembers = (code: BindingObjectCode) =>
       getMembersForObject(code, geographyScope).map((member) => ({
@@ -1488,6 +1639,12 @@ export function TemplateManagementPage() {
                   child_member_codes: ["RURAL", "URBAN"],
                 }
               : undefined,
+            header_combine: combinedDimensionAxis === code
+              ? {
+                  combined_with: "INDICATOR_VALUE",
+                  display_mode: "DIMENSION_LABEL_OVER_MEASURE_UNIT",
+                }
+              : undefined,
           })),
           {
             binding_group_code: `BIND_${selectedMeasure.code}`,
@@ -1512,6 +1669,25 @@ export function TemplateManagementPage() {
           decimal_places: selectedMeasure.decimalPlaces,
           validation_rule: selectedMeasure.validationRule,
         },
+        measures: measureBindingOptions.map((measure) => ({
+          measure_code: measure.code,
+          label: measure.label,
+          value_type: measure.valueType,
+          unit_code: measure.unitCode,
+          decimal_places: measure.decimalPlaces,
+          validation_rule: measure.validationRule,
+        })),
+        header_combine_rules: combinedDimensionAxis
+          ? [
+              {
+                rule_code: "COMBINE_DIMENSION_MEASURE_STACKED",
+                dimension_axis_code: combinedDimensionAxis,
+                measure_axis_code: "INDICATOR_VALUE",
+                display_mode: "DIMENSION_LABEL_OVER_MEASURE_UNIT",
+                visual_example: "Total\\nPerson count [NUMBER]",
+              },
+            ]
+          : [],
         rollup_rules: columnAxes.includes("AREA_TYPE")
           ? [
               {
@@ -1532,7 +1708,8 @@ export function TemplateManagementPage() {
           value_object: {
             cell_code: "generated from row/column axis members",
             value_numeric: "entered by department user",
-            unit_code: selectedMeasure.unitCode,
+            measure_code: "resolved from cell binding",
+            unit_code: "resolved from measure_code",
             dimensions: ["geography", "time_period", "area_type", "gender"].filter((item) =>
               [...rowAxes, ...columnAxes].join(" ").toLowerCase().includes(item.split("_")[0]),
             ),
@@ -1542,7 +1719,7 @@ export function TemplateManagementPage() {
       null,
       2,
     );
-  }, [aggregationMethod, cells, columnAxes, datatype, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, validationRule, verticalAlign]);
+  }, [aggregationMethod, cells, columnAxes, combineMeasureBelowDimension, datatype, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, validationRule, verticalAlign]);
 
   const addOperation = (label: string, detail: string) => {
     setOperations((current) => [...current, { id: `${Date.now()}-${label}`, label, detail }]);
@@ -1553,11 +1730,13 @@ export function TemplateManagementPage() {
     columnWidths,
     rowHeights,
     boundObjects,
+    boundMeasureCodes,
     rowAxes,
     columnAxes,
     visibleColumnCount,
     visibleRowCount,
-  }), [boundObjects, cells, columnAxes, columnWidths, rowAxes, rowHeights, visibleColumnCount, visibleRowCount]);
+    combineMeasureBelowDimension,
+  }), [boundMeasureCodes, boundObjects, cells, columnAxes, columnWidths, combineMeasureBelowDimension, rowAxes, rowHeights, visibleColumnCount, visibleRowCount]);
 
   const pushUndo = () => {
     setUndoStack((current) => [...current, snapshot()].slice(-30));
@@ -1569,10 +1748,12 @@ export function TemplateManagementPage() {
     setColumnWidths(next.columnWidths);
     setRowHeights(next.rowHeights);
     setBoundObjects(next.boundObjects);
+    setBoundMeasureCodes(next.boundMeasureCodes);
     setRowAxes(next.rowAxes);
     setColumnAxes(next.columnAxes);
     setVisibleColumnCount(next.visibleColumnCount);
     setVisibleRowCount(next.visibleRowCount);
+    setCombineMeasureBelowDimension(next.combineMeasureBelowDimension);
   }, []);
 
   const handleUndo = useCallback(() => {
@@ -1637,8 +1818,9 @@ export function TemplateManagementPage() {
   const buildStructuredGrid = (
     nextRowAxes: BindingObjectCode[],
     nextColumnAxes: BindingObjectCode[],
-    includeMeasureCells = boundObjects.some((item) => item.code === "INDICATOR_VALUE"),
+    includeMeasureCells = boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0,
     scopeOverride = geographyScope,
+    combineOverride = combineMeasureBelowDimension,
   ) => {
     const next: Record<string, CanvasCell> = buildHeaderCells(selectedTemplate);
     const activeGeographyScope = scopeOverride;
@@ -1691,14 +1873,26 @@ export function TemplateManagementPage() {
             };
           }),
         );
+    const strictMeasureHeaderEndRow = boundMeasureCodes.length
+      ? Object.values(cells).reduce((lastRow, cell) => {
+          if (!isStrictMeasureHeaderCell(cell)) return lastRow;
+          const endAddress = cell.groupFocus ?? cell.groupAnchor;
+          if (!endAddress) return lastRow;
+          return Math.max(lastRow, addressToCoord(endAddress).row);
+        }, 1)
+      : 1;
     const rowAxisColumnCount = rowAxisColumns.length;
     const columnsStart = rowAxisColumnCount + 1;
-    const headerStartRow = 2;
+    const headerStartRow = Math.max(2, strictMeasureHeaderEndRow + 1);
     const axisMembers = nextColumnAxes.map((code) => ({
       code,
       members: getMembersForObject(code, activeGeographyScope),
     }));
-    const headerRowCount = Math.max(axisMembers.length, 1);
+    const columnCombinations = axisMembers.length ? cartesianProduct(axisMembers.map((axis) => axis.members)) : [[]];
+    const measureAxisIndex = axisMembers.findIndex((axis) => axis.code === "INDICATOR_VALUE");
+    const canCombineMeasureHeaders = combineOverride && measureAxisIndex > 0;
+    const combinedDimensionIndex = canCombineMeasureHeaders ? measureAxisIndex - 1 : -1;
+    const headerRowCount = Math.max(axisMembers.length - (canCombineMeasureHeaders ? 1 : 0), 1);
     const dataStartRow = headerStartRow + headerRowCount;
     const leafColumnCount = Math.max(1, axisMembers.reduce((total, axis) => total * Math.max(axis.members.length, 1), 1));
     const lastDataColumn = Math.min(canvasColumns.length, columnsStart + leafColumnCount - 1);
@@ -1770,7 +1964,35 @@ export function TemplateManagementPage() {
     });
 
     axisMembers.forEach((axis, axisIndex) => {
-      const row = headerStartRow + axisIndex;
+      if (canCombineMeasureHeaders && axisIndex === measureAxisIndex) return;
+
+      const row = headerStartRow + axisIndex - (canCombineMeasureHeaders && axisIndex > measureAxisIndex ? 1 : 0);
+      if (canCombineMeasureHeaders && axisIndex === combinedDimensionIndex) {
+        const groupAnchor = coordToAddress(row, columnsStart);
+        const groupFocus = coordToAddress(row, lastDataColumn);
+        for (let col = columnsStart; col <= lastDataColumn; col += 1) {
+          const combination = columnCombinations[col - columnsStart] ?? [];
+          const dimensionMember = combination[combinedDimensionIndex];
+          const measureMember = combination[measureAxisIndex];
+          const measure = measureBindingOptions.find((item) => item.code === measureMember?.member_code) ?? selectedMeasure;
+          set(coordToAddress(row, col), {
+            value: `${dimensionMember?.name ?? optionFor(axis.code).label}\n${measure.label} [${measure.unitCode}]`,
+            role: "HEADER",
+            boundCode: dimensionMember?.member_code,
+            align: "center",
+            valign: "middle",
+            frozen: true,
+            groupId: `axis-${axis.code}-measure-combined`,
+            groupLabel: `${optionFor(axis.code).label} + measure columns`,
+            groupAnchor,
+            groupFocus,
+            groupBindingCode: axis.code,
+            groupAlignment: "column",
+          });
+        }
+        return;
+      }
+
       const span = productAfter(axisIndex);
       const cycle = span * Math.max(axis.members.length, 1);
       const groupAnchor = coordToAddress(row, columnsStart);
@@ -1814,18 +2036,21 @@ export function TemplateManagementPage() {
     if (includeMeasureCells && rowRecords.length) {
       rowRecords.forEach((_, rowIndex) => {
         for (let col = columnsStart; col <= lastDataColumn; col += 1) {
+          const columnCombination = columnCombinations[col - columnsStart] ?? [];
+          const measureMember = measureAxisIndex >= 0 ? columnCombination[measureAxisIndex] : undefined;
+          const measureForCell = measureBindingOptions.find((measure) => measure.code === measureMember?.member_code) ?? selectedMeasure;
           set(coordToAddress(dataStartRow + rowIndex, col), {
             value: "",
             role: "INPUT",
-            boundCode: selectedMeasure.code,
+            boundCode: measureForCell.code,
             editable: true,
             required,
-            datatype: selectedMeasure.valueType,
-            validationRule: selectedMeasure.validationRule,
+            datatype: measureForCell.valueType,
+            validationRule: measureForCell.validationRule,
             align: horizontalAlign,
             valign: verticalAlign,
             groupId: "measure-input-cells",
-            groupLabel: "Indicator value cells",
+            groupLabel: measureAxisIndex >= 0 ? "Measure column cells" : "Indicator value cells",
             groupAnchor: coordToAddress(dataStartRow, columnsStart),
             groupFocus: coordToAddress(dataStartRow + rowRecords.length - 1, lastDataColumn),
             groupBindingCode: "INDICATOR_VALUE",
@@ -1838,6 +2063,47 @@ export function TemplateManagementPage() {
     setVisibleColumnCount(requiredVisibleColumns);
     setVisibleRowCount(requiredVisibleRows);
     return next;
+  };
+
+  const isStrictMeasureHeaderCell = (cell?: CanvasCell) =>
+    cell?.groupBindingCode === "INDICATOR_VALUE" &&
+    typeof cell.groupId === "string" &&
+    cell.groupId.startsWith("measure-");
+
+  const preserveStrictMeasureHeaders = (
+    nextCells: Record<string, CanvasCell>,
+    previousCells = cells,
+  ) => {
+    if (!boundMeasureCodes.length) return nextCells;
+
+    const merged = { ...nextCells };
+    Object.entries(previousCells).forEach(([address, cell]) => {
+      if (isStrictMeasureHeaderCell(cell)) {
+        merged[address] = { ...cell };
+      }
+    });
+    return merged;
+  };
+
+  const withStrictMeasureBoundObject = (
+    nextBoundObjects: BoundObject[],
+    measureCodes = boundMeasureCodes,
+  ) => {
+    if (!measureCodes.length) return nextBoundObjects;
+
+    const measureBinding: BoundObject = {
+      code: "INDICATOR_VALUE",
+      label: "Measures",
+      type: "Measure",
+      alignment: "column",
+      range: measureCodes.join(", "),
+      memberCount: measureCodes.length,
+    };
+
+    return [
+      ...nextBoundObjects.filter((item) => item.code !== "INDICATOR_VALUE"),
+      measureBinding,
+    ];
   };
 
   const clearMergeInRange = (next: Record<string, CanvasCell>, anchor: string, focus: string) => {
@@ -1897,6 +2163,9 @@ export function TemplateManagementPage() {
         value: ownerCell.value ?? "",
         bindingCode: ownerCell.groupBindingCode,
         alignment: ownerCell.groupAlignment,
+        role: ownerCell.role,
+        boundCode: ownerCell.boundCode,
+        isBlank: false,
       };
     }
 
@@ -1909,9 +2178,13 @@ export function TemplateManagementPage() {
         value: ownerCell.value ?? "",
         bindingCode: ownerCell.groupBindingCode,
         alignment: ownerCell.groupAlignment,
+        role: ownerCell.role,
+        boundCode: ownerCell.boundCode,
+        isBlank: false,
       };
     }
 
+    const hasCellContext = Boolean(ownerCell?.role || ownerCell?.boundCode || ownerCell?.groupBindingCode || ownerCell?.value);
     return {
       anchor: address,
       focus: address,
@@ -1919,7 +2192,46 @@ export function TemplateManagementPage() {
       value: ownerCell?.value ?? "",
       bindingCode: ownerCell?.groupBindingCode,
       alignment: ownerCell?.groupAlignment,
+      role: ownerCell?.role,
+      boundCode: ownerCell?.boundCode,
+      isBlank: !hasCellContext,
     };
+  };
+
+  const syncBindingControlsForSelection = (selection: ReturnType<typeof getSelectableRangeForAddress>, address: string) => {
+    if (selection.bindingCode) {
+      handleBindingObjectChange(selection.bindingCode);
+      if (selection.alignment === "row" || selection.alignment === "column") setAxisAlignment(selection.alignment);
+      if (selection.bindingCode === "INDICATOR_VALUE" && measureBindingOptions.some((measure) => measure.code === selection.boundCode)) {
+        const measure = measureBindingOptions.find((item) => item.code === selection.boundCode) ?? selectedMeasure;
+        setSelectedMeasureCode(measure.code);
+        setDatatype(measure.valueType);
+        setDecimalPlaces(measure.decimalPlaces);
+        setValidationRule(measure.validationRule);
+      }
+      return;
+    }
+
+    if (selection.role === "INPUT" || measureBindingOptions.some((measure) => measure.code === selection.boundCode)) {
+      const measure = measureBindingOptions.find((item) => item.code === selection.boundCode) ?? selectedMeasure;
+      setHeaderType("Measure");
+      setBindingObject("INDICATOR_VALUE");
+      setSelectedMeasureCode(measure.code);
+      setDatatype(measure.valueType);
+      setDecimalPlaces(measure.decimalPlaces);
+      setValidationRule(measure.validationRule);
+      setHeaderLabel(measure.label);
+      return;
+    }
+
+    setHeaderType("Dimension");
+    setBindingObject("GEOGRAPHY");
+    setAxisAlignment("row");
+    setHeaderLabel("");
+
+    if (selection.isBlank) {
+      setActivityMessage(`${address} is blank. Type to search, or double-click to choose a binding without carrying the previous group options.`);
+    }
   };
 
   const handleSelectCell = (address: string, event: MouseEvent<HTMLButtonElement | HTMLTableCellElement | HTMLInputElement>) => {
@@ -1936,8 +2248,7 @@ export function TemplateManagementPage() {
     setSelectedFocus(nextSelection.focus);
     setCellText(nextSelection.value);
     setEditingCell(address);
-    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
-    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    syncBindingControlsForSelection(nextSelection, address);
     setDesignerStage("typing");
     if (nextSelection.label) {
       setActivityMessage(`${nextSelection.label} selected as a group. Changes apply to ${rangeLabel(nextSelection.anchor, nextSelection.focus)}.`);
@@ -1951,8 +2262,7 @@ export function TemplateManagementPage() {
     setSelectedFocus(nextSelection.focus);
     setCellText(nextSelection.value);
     setEditingCell(null);
-    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
-    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    syncBindingControlsForSelection(nextSelection, address);
     focusTemplateCell(address);
   };
 
@@ -1961,8 +2271,7 @@ export function TemplateManagementPage() {
     setSelectedAnchor(nextSelection.anchor);
     setSelectedFocus(nextSelection.focus);
     setCellText(nextSelection.value);
-    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
-    if (nextSelection.alignment === "row" || nextSelection.alignment === "column") setAxisAlignment(nextSelection.alignment);
+    syncBindingControlsForSelection(nextSelection, address);
     setEditingCell(null);
     setOptionsOpen(true);
     setDesignerStage("options");
@@ -1973,6 +2282,7 @@ export function TemplateManagementPage() {
     setSelectedAnchor(nextSelection.anchor);
     setSelectedFocus(nextSelection.focus);
     setCellText(nextSelection.value);
+    syncBindingControlsForSelection(nextSelection, address);
     setEditingCell(address);
     setDesignerStage("typing");
     focusTemplateCell(address);
@@ -1997,30 +2307,63 @@ export function TemplateManagementPage() {
     setSelectedFocus(nextSelection.focus);
     setCellText(nextSelection.value);
     setEditingCell(null);
-    if (nextSelection.bindingCode) handleBindingObjectChange(nextSelection.bindingCode);
+    syncBindingControlsForSelection(nextSelection, next);
     focusTemplateCell(next);
   };
 
   const handleCellTextChange = (value: string) => {
     setCellText(value);
-    setCells((current) => ({
-      ...current,
-      [selectedFocus]: {
-        ...(current[selectedFocus] ?? {}),
-        value,
-      },
-    }));
+    setCells((current) => {
+      const editAddress = editingCell ?? selectedAnchor;
+      const selection = getSelectableRangeForAddress(editAddress);
+      const targetAddress = current[selection.anchor]?.mergeOwner ?? selection.anchor;
+      return {
+        ...current,
+        [targetAddress]: {
+          ...(current[targetAddress] ?? {}),
+          value,
+        },
+      };
+    });
     setDesignerStage(value ? "typing" : "basics");
   };
 
   const handleSuggestionClick = (suggestion: (typeof bindingOptions)[number]) => {
-    setHeaderType(suggestion.type);
-    setBindingObject(suggestion.code);
-    setHeaderLabel(suggestion.code === "GEOGRAPHY" ? "Location" : suggestion.label);
+    handleHeaderTypeChange(suggestion.type);
+    if (suggestion.type !== "Measure") {
+      setBindingObject(suggestion.code);
+      setHeaderLabel(suggestion.code === "GEOGRAPHY" ? "Location" : suggestion.label);
+    }
     if (suggestion.defaultAlignment !== "context") setAxisAlignment(suggestion.defaultAlignment);
     setOptionsOpen(true);
     setDesignerStage("options");
     setActivityMessage(`${suggestion.label} selected. Choose options, then click Bind values.`);
+  };
+
+  const handleHeaderTypeChange = (value: HeaderType) => {
+    setHeaderType(value);
+
+    if (value === "Indicator") {
+      handleBindingObjectChange("NIF_1_2_1");
+      setAxisAlignment("column");
+      return;
+    }
+
+    if (value === "Measure") {
+      const nextMeasure = measureBindingOptions.find((measure) => !boundMeasureCodes.includes(measure.code)) ?? selectedMeasure;
+      setBindingObject("INDICATOR_VALUE");
+      setSelectedMeasureCode(nextMeasure.code);
+      setDatatype(nextMeasure.valueType);
+      setDecimalPlaces(nextMeasure.decimalPlaces);
+      setValidationRule(nextMeasure.validationRule);
+      setHeaderLabel(nextMeasure.label);
+      setAxisAlignment("column");
+      return;
+    }
+
+    handleBindingObjectChange("GEOGRAPHY");
+    setAxisAlignment("row");
+    setHeaderLabel("Location");
   };
 
   const handleBindingObjectChange = (code: BindingObjectCode) => {
@@ -2028,6 +2371,10 @@ export function TemplateManagementPage() {
     setBindingObject(code);
     setHeaderType(option.type);
     setHeaderLabel(code === "GEOGRAPHY" ? "Location" : option.label);
+    if (option.type === "Measure") {
+      setAxisAlignment("column");
+      return;
+    }
     if (option.defaultAlignment !== "context") setAxisAlignment(option.defaultAlignment);
   };
 
@@ -2080,7 +2427,7 @@ export function TemplateManagementPage() {
   const objectsFromAxes = (
     nextRowAxes: BindingObjectCode[],
     nextColumnAxes: BindingObjectCode[],
-    includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE"),
+    includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0,
     scopeOverride = geographyScope,
   ) => {
     const next: BoundObject[] = [];
@@ -2088,7 +2435,7 @@ export function TemplateManagementPage() {
       next.push({
         code,
         label: optionFor(code).label,
-        type: "Dimension",
+        type: optionFor(code).type,
         alignment: "row",
         range: `${coordToAddress(2, index + 1)}`,
         memberCount: getMembersForObject(code, scopeOverride).length,
@@ -2098,13 +2445,13 @@ export function TemplateManagementPage() {
       next.push({
         code,
         label: optionFor(code).label,
-        type: "Dimension",
+        type: optionFor(code).type,
         alignment: "column",
-        range: code === "TIME_PERIOD" ? "B2" : code === "AREA_TYPE" ? "B3" : "B4",
+        range: code === "TIME_PERIOD" ? "B2" : code === "AREA_TYPE" ? "B3" : code === "INDICATOR_VALUE" ? "Measure columns" : "B4",
         memberCount: getMembersForObject(code, scopeOverride).length,
       });
     });
-    if (includeMeasure) {
+    if (includeMeasure && !nextRowAxes.includes("INDICATOR_VALUE") && !nextColumnAxes.includes("INDICATOR_VALUE")) {
       next.push({
         code: "INDICATOR_VALUE",
         label: optionFor("INDICATOR_VALUE").label,
@@ -2126,7 +2473,7 @@ export function TemplateManagementPage() {
       code === "GEOGRAPHY" && isHierarchyGeographyScope(geographyScope)
         ? "row"
         : alignment;
-    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
+    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0;
     let nextRowAxes = rowAxes.filter((axisCode) => axisCode !== code);
     let nextColumnAxes = columnAxes.filter((axisCode) => axisCode !== code);
 
@@ -2140,11 +2487,11 @@ export function TemplateManagementPage() {
       pushUndo();
     }
 
-    const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, includeMeasure);
+    const nextCells = preserveStrictMeasureHeaders(buildStructuredGrid(nextRowAxes, nextColumnAxes, includeMeasure));
     setRowAxes(nextRowAxes);
     setColumnAxes(nextColumnAxes);
     setCells(nextCells);
-    setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, includeMeasure));
+    setBoundObjects(withStrictMeasureBoundObject(objectsFromAxes(nextRowAxes, nextColumnAxes, includeMeasure)));
     setDesignerStage("binding");
     setActivityMessage(`${optionFor(code).label} aligned as ${effectiveAlignment}. Canvas regenerated without duplicate axes.`);
     addOperation("Align axis", `${optionFor(code).label} moved to ${effectiveAlignment} alignment.`);
@@ -2404,6 +2751,274 @@ export function TemplateManagementPage() {
     }
   };
 
+  const findStrictMeasureOwnerForSelection = () => {
+    const { start } = normalizeRange(selectedAnchor, selectedFocus);
+    let selectedOwner: StrictMeasureOwner | undefined;
+
+    Object.entries(cells).forEach(([address, cell]) => {
+      if (!isStrictMeasureHeaderCell(cell) || cell.mergeOwner) return;
+      const coord = addressToCoord(address);
+      const endCol = coord.col + Math.max(cell.merge?.colSpan ?? 1, 1) - 1;
+      if (coord.row > start.row || start.col < coord.col || start.col > endCol) return;
+      if (!selectedOwner || coord.row >= selectedOwner.row) {
+        selectedOwner = { address, cell, row: coord.row, col: coord.col, endCol };
+      }
+    });
+
+    return selectedOwner;
+  };
+
+  const getLocalMeasureColumnAxes = (
+    owner: { row: number; col: number; endCol: number },
+    newCode: BindingObjectCode,
+  ) => {
+    const existingAxes: BindingObjectCode[] = [];
+    const { start } = normalizeRange(selectedAnchor, selectedFocus);
+    for (let row = owner.row + 1; row < start.row; row += 1) {
+      const axisCode = Object.values(cells).find((cell) => {
+        if (!cell.groupBindingCode || cell.groupAlignment !== "column") return false;
+        if (cell.groupBindingCode === "INDICATOR_VALUE" || cell.groupBindingCode === "NIF_1_2_1") return false;
+        if (!cell.groupAnchor || !cell.groupFocus) return false;
+        const anchor = addressToCoord(cell.groupAnchor);
+        const focus = addressToCoord(cell.groupFocus);
+        return anchor.row === row && anchor.col <= owner.endCol && focus.col >= owner.col;
+      })?.groupBindingCode;
+
+      if (axisCode && !existingAxes.includes(axisCode)) {
+        existingAxes.push(axisCode);
+      }
+    }
+
+    return [...existingAxes.filter((axisCode) => axisCode !== newCode), newCode];
+  };
+
+  const getAllLocalMeasureColumnAxes = (
+    owner: StrictMeasureOwner,
+    sourceCells: Record<string, CanvasCell> = cells,
+  ) => {
+    const rowsByAxis = new Map<BindingObjectCode, number>();
+
+    Object.entries(sourceCells).forEach(([address, cell]) => {
+      if (!cell.groupId?.startsWith("measure-local-") || cell.mergeOwner) return;
+      if (!cell.groupBindingCode || cell.groupBindingCode === "INDICATOR_VALUE" || cell.groupBindingCode === "NIF_1_2_1") return;
+      if (!cell.groupAnchor || !cell.groupFocus) return;
+      const anchor = addressToCoord(cell.groupAnchor);
+      const focus = addressToCoord(cell.groupFocus);
+      if (focus.col < owner.col || anchor.col > owner.endCol) return;
+      rowsByAxis.set(cell.groupBindingCode, addressToCoord(address).row);
+    });
+
+    return [...rowsByAxis.entries()]
+      .sort(([, firstRow], [, secondRow]) => firstRow - secondRow)
+      .map(([axisCode]) => axisCode);
+  };
+
+  const getMaxLocalMeasureDepth = (
+    selectedOwner: StrictMeasureOwner,
+    selectedAxes: BindingObjectCode[],
+  ) => {
+    const ownerDepths = Object.entries(cells)
+      .filter(([, cell]) => isStrictMeasureHeaderCell(cell) && !cell.mergeOwner)
+      .map(([address, cell]) => {
+        if (address === selectedOwner.address) return selectedAxes.length;
+        const coord = addressToCoord(address);
+        const owner: StrictMeasureOwner = {
+          address,
+          cell,
+          row: coord.row,
+          col: coord.col,
+          endCol: coord.col + Math.max(cell.merge?.colSpan ?? 1, 1) - 1,
+        };
+        return getAllLocalMeasureColumnAxes(owner).length;
+      });
+
+    return Math.max(selectedAxes.length, ...ownerDepths, 0);
+  };
+
+  const applyStrictMeasureLocalAxes = (owner: StrictMeasureOwner, axes: BindingObjectCode[]) => {
+    const oldAxisDepth = getAllLocalMeasureColumnAxes(owner).length;
+    const headerDepth = getMaxLocalMeasureDepth(owner, axes);
+    const axisMembers = axes.map((axisCode) => ({
+      code: axisCode,
+      members: getMembersForObject(axisCode, geographyScope),
+    }));
+    const leafColumnCount = Math.max(1, axisMembers.reduce((total, axis) => total * Math.max(axis.members.length, 1), 1));
+    const lastCol = Math.min(canvasColumns.length, owner.col + leafColumnCount - 1);
+    const localGroupFocus = coordToAddress(owner.row + Math.max(axes.length, 1), lastCol);
+    const measureSpan = Math.max(1, lastCol - owner.col + 1);
+    const expansionDelta = Math.max(0, lastCol - owner.endCol);
+    const shrinkDelta = Math.max(0, owner.endCol - lastCol);
+
+    setCells((current) => {
+      let next =
+        expansionDelta > 0
+          ? shiftCellsRightFromColumn({ ...current }, owner.endCol, expansionDelta, owner.row)
+          : { ...current };
+      if (shrinkDelta > 0) {
+        next = removeColumnRangeFromRows(next, lastCol + 1, owner.endCol, owner.row);
+      }
+      if (lastCol > owner.col) {
+        clearCellsInRange(next, coordToAddress(owner.row, owner.col + 1), coordToAddress(owner.row, lastCol));
+      }
+      clearCellsInRange(next, coordToAddress(owner.row + 1, owner.col), coordToAddress(owner.row + Math.max(oldAxisDepth, axes.length, 1), lastCol));
+      clearMergeInRange(next, coordToAddress(owner.row, owner.col), coordToAddress(owner.row + Math.max(oldAxisDepth, axes.length, 1), lastCol));
+
+      setCell(next, owner.address, {
+        ...owner.cell,
+        merge: measureSpan > 1 ? { rowSpan: 1, colSpan: measureSpan } : undefined,
+        mergeOwner: undefined,
+        groupFocus: coordToAddress(owner.row, lastCol),
+      });
+      for (let col = owner.col + 1; col <= lastCol; col += 1) {
+        setCell(next, coordToAddress(owner.row, col), {
+          mergeOwner: owner.address,
+          groupId: owner.cell.groupId,
+          groupLabel: owner.cell.groupLabel,
+          groupAnchor: owner.address,
+          groupFocus: coordToAddress(owner.row, lastCol),
+          groupBindingCode: "INDICATOR_VALUE",
+          groupAlignment: "column",
+        });
+      }
+
+      const productAfter = (axisIndex: number) =>
+        axisMembers.slice(axisIndex + 1).reduce((total, axis) => total * Math.max(axis.members.length, 1), 1);
+
+      axisMembers.forEach((axis, axisIndex) => {
+        const row = owner.row + axisIndex + 1;
+        const span = productAfter(axisIndex);
+        const cycle = span * Math.max(axis.members.length, 1);
+        const groupAnchor = coordToAddress(row, owner.col);
+        const groupFocus = coordToAddress(row, lastCol);
+        for (let col = owner.col; col <= lastCol; col += cycle) {
+          axis.members.forEach((member, memberIndex) => {
+            const ownerCol = col + memberIndex * span;
+            if (ownerCol > lastCol) return;
+            const cellOwner = coordToAddress(row, ownerCol);
+            const effectiveSpan = Math.min(span, lastCol - ownerCol + 1);
+            setCell(next, cellOwner, {
+              value: member.name,
+              role: "HEADER",
+              boundCode: member.member_code,
+              align: "center",
+              valign: "middle",
+              frozen: true,
+              merge: effectiveSpan > 1 ? { rowSpan: 1, colSpan: effectiveSpan } : undefined,
+              groupId: `measure-local-${axis.code}-${owner.address}`,
+              groupLabel: `${optionFor(axis.code).label} under ${owner.cell.value ?? "measure"}`,
+              groupAnchor,
+              groupFocus,
+              groupBindingCode: axis.code,
+              groupAlignment: "column",
+            });
+            for (let hiddenCol = ownerCol + 1; hiddenCol < ownerCol + effectiveSpan; hiddenCol += 1) {
+              setCell(next, coordToAddress(row, hiddenCol), {
+                mergeOwner: cellOwner,
+                groupId: `measure-local-${axis.code}-${owner.address}`,
+                groupLabel: `${optionFor(axis.code).label} under ${owner.cell.value ?? "measure"}`,
+                groupAnchor,
+                groupFocus,
+                groupBindingCode: axis.code,
+                groupAlignment: "column",
+              });
+            }
+          });
+        }
+      });
+
+      if (rowAxes.length) {
+        const dataStartRow = owner.row + headerDepth + 1;
+        const headerRowSpan = headerDepth + 1;
+        const rowAxisMembers = rowAxes.map((axisCode) => ({
+          code: axisCode,
+          members: getMembersForObject(axisCode, geographyScope),
+        }));
+        const rowCombinations = cartesianProduct(rowAxisMembers.map((axis) => axis.members));
+        const lastRowAxisRow = dataStartRow + Math.max(rowCombinations.length - 1, 0);
+
+        clearCellsInRange(next, coordToAddress(owner.row, 1), coordToAddress(lastRowAxisRow, rowAxes.length));
+        clearMergeInRange(next, coordToAddress(owner.row, 1), coordToAddress(lastRowAxisRow, rowAxes.length));
+
+        rowAxes.forEach((axisCode, axisIndex) => {
+          const col = axisIndex + 1;
+          const axisHeader = coordToAddress(owner.row, col);
+          const groupFocus = coordToAddress(lastRowAxisRow, col);
+          setCell(next, axisHeader, {
+            value: axisCode === "GEOGRAPHY" ? getCurrentAxisHeaderLabel("GEOGRAPHY") : optionFor(axisCode).label,
+            role: "HEADER",
+            boundCode: axisCode,
+            align: "center",
+            valign: "middle",
+            frozen: true,
+            merge: { rowSpan: headerRowSpan, colSpan: 1 },
+            groupId: `axis-${axisCode}-row`,
+            groupLabel: `${optionFor(axisCode).label} rows`,
+            groupAnchor: axisHeader,
+            groupFocus,
+            groupBindingCode: axisCode,
+            groupAlignment: "row",
+          });
+          for (let row = owner.row + 1; row < dataStartRow; row += 1) {
+            setCell(next, coordToAddress(row, col), {
+              mergeOwner: axisHeader,
+              groupId: `axis-${axisCode}-row`,
+              groupLabel: `${optionFor(axisCode).label} rows`,
+              groupAnchor: axisHeader,
+              groupFocus,
+              groupBindingCode: axisCode,
+              groupAlignment: "row",
+            });
+          }
+        });
+
+        rowCombinations.forEach((combination, rowIndex) => {
+          combination.forEach((member, axisIndex) => {
+            const axisCode = rowAxisMembers[axisIndex]?.code ?? "GEOGRAPHY";
+            const address = coordToAddress(dataStartRow + rowIndex, axisIndex + 1);
+            setCell(next, address, {
+              value: member.name,
+              role: "DIMENSION_MEMBER",
+              boundCode: member.member_code,
+              align: "left",
+              valign: "middle",
+              groupId: `axis-${axisCode}-row`,
+              groupLabel: `${optionFor(axisCode).label} rows`,
+              groupAnchor: coordToAddress(owner.row, axisIndex + 1),
+              groupFocus: coordToAddress(lastRowAxisRow, axisIndex + 1),
+              groupBindingCode: axisCode,
+              groupAlignment: "row",
+            });
+          });
+        });
+      }
+
+      return next;
+    });
+
+    setVisibleColumnCount((current) => Math.min(canvasColumns.length, Math.max(initialVisibleColumnCount, current + expansionDelta - shrinkDelta, lastCol + 1)));
+    setVisibleRowCount((current) => {
+      const generatedRows = rowAxes.length
+        ? cartesianProduct(rowAxes.map((axisCode) => getMembersForObject(axisCode, geographyScope))).length
+        : 0;
+      return Math.min(canvasRows.length, Math.max(current, owner.row + headerDepth + Math.max(generatedRows, 8) + 1));
+    });
+
+    return { lastCol, localGroupFocus, measureSpan };
+  };
+
+  const bindColumnDimensionInsideStrictMeasure = (code: BindingObjectCode) => {
+    const owner = findStrictMeasureOwnerForSelection();
+    if (!owner) return false;
+
+    const axes = getLocalMeasureColumnAxes(owner, code);
+    const { localGroupFocus, measureSpan } = applyStrictMeasureLocalAxes(owner, axes);
+    recordBinding(code, `${coordToAddress(owner.row + 1, owner.col)}:${localGroupFocus}`, "column");
+    setDesignerStage("binding");
+    setActivityMessage(`${optionFor(code).label} bound under ${owner.cell.value ?? "the selected measure"}. The measure header now spans ${measureSpan} generated column(s).`);
+    addOperation("Bind local axis", `${optionFor(code).label} generated under measure at ${owner.address}.`);
+    return true;
+  };
+
   const bindSelectedObject = (alignmentOverride: AxisAlignment = axisAlignment) => {
     const option = optionFor(bindingObject);
     const effectiveAlignment =
@@ -2413,10 +3028,92 @@ export function TemplateManagementPage() {
     const range = selectedRange;
     pushUndo();
 
+    if (headerType === "Dimension" && effectiveAlignment === "column" && boundMeasureCodes.length) {
+      if (bindColumnDimensionInsideStrictMeasure(bindingObject)) {
+        return;
+      }
+    }
+
     if (headerType === "Dimension") {
       rebuildDimensionAxis(bindingObject, effectiveAlignment, false);
       setActivityMessage(`${option.label} bound as ${effectiveAlignment} axis. Existing headers were regenerated to match the template structure.`);
       addOperation("Bind axis", `${option.label} generated as ${effectiveAlignment} axis.`);
+      return;
+    }
+
+    if (headerType === "Measure") {
+      if (boundMeasureCodes.includes(selectedMeasure.code)) {
+        setActivityMessage(`${selectedMeasure.code} is already bound. Unbind that measure before adding it again.`);
+        return;
+      }
+
+      const { start, end } = normalizeRange(selectedAnchor, selectedFocus);
+      const owner = coordToAddress(start.row, start.col);
+      const rowSpan = end.row - start.row + 1;
+      const colSpan = end.col - start.col + 1;
+      const groupId = `measure-${selectedMeasure.code}-${Date.now()}`;
+      const groupFocus = coordToAddress(end.row, end.col);
+
+      setCells((current) => {
+        const next = { ...current };
+        clearMergeInRange(next, selectedAnchor, selectedFocus);
+        rangeAddresses(selectedAnchor, selectedFocus).forEach((address) => {
+          if (address !== owner) {
+            setCell(next, address, {
+              mergeOwner: owner,
+              groupId,
+              groupLabel: `${selectedMeasure.label} measure header`,
+              groupAnchor: owner,
+              groupFocus,
+              groupBindingCode: "INDICATOR_VALUE",
+              groupAlignment: "column",
+            });
+          }
+        });
+        setCell(next, owner, {
+          value: `${headerLabel || selectedMeasure.label}\n[${selectedMeasure.unitCode}]`,
+          role: "MEASURE",
+          boundCode: selectedMeasure.code,
+          align: "center",
+          valign: "middle",
+          frozen: true,
+          merge: rowSpan > 1 || colSpan > 1 ? { rowSpan, colSpan } : undefined,
+          groupId,
+          groupLabel: `${selectedMeasure.label} measure header`,
+          groupAnchor: owner,
+          groupFocus,
+          groupBindingCode: "INDICATOR_VALUE",
+          groupAlignment: "column",
+        });
+        return next;
+      });
+
+      const nextBoundMeasures = [...boundMeasureCodes, selectedMeasure.code];
+      setBoundMeasureCodes(nextBoundMeasures);
+      setBoundObjects((current) => {
+        const measureBinding: BoundObject = {
+          code: "INDICATOR_VALUE",
+          label: "Measures",
+          type: "Measure",
+          alignment: "column",
+          range: nextBoundMeasures.join(", "),
+          memberCount: nextBoundMeasures.length,
+        };
+        return [...current.filter((item) => item.code !== "INDICATOR_VALUE"), measureBinding];
+      });
+
+      const nextAvailable = measureBindingOptions.find((measure) => !nextBoundMeasures.includes(measure.code));
+      if (nextAvailable) {
+        setSelectedMeasureCode(nextAvailable.code);
+        setHeaderLabel(nextAvailable.label);
+        setDatatype(nextAvailable.valueType);
+        setDecimalPlaces(nextAvailable.decimalPlaces);
+        setValidationRule(nextAvailable.validationRule);
+      }
+
+      setDesignerStage("binding");
+      setActivityMessage(`${selectedMeasure.label} bound as a measure header. It is hidden from the measure dropdown until unbound.`);
+      addOperation("Bind measure", `${selectedMeasure.code} added at ${range}.`);
       return;
     }
 
@@ -2511,10 +3208,10 @@ export function TemplateManagementPage() {
     }
 
     pushUndo();
-    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
-    const nextCells = buildStructuredGrid(rowAxes, columnAxes, includeMeasure, value);
+    const includeMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0;
+    const nextCells = preserveStrictMeasureHeaders(buildStructuredGrid(rowAxes, columnAxes, includeMeasure, value));
     setCells(nextCells);
-    setBoundObjects(objectsFromAxes(rowAxes, columnAxes, includeMeasure, value));
+    setBoundObjects(withStrictMeasureBoundObject(objectsFromAxes(rowAxes, columnAxes, includeMeasure, value)));
     setDesignerStage("binding");
     setActivityMessage("Geography scope changed and the canvas was regenerated with the selected national/state/district layout.");
     addOperation("Geography scope", "Rebuilt geography rows/columns for the selected scope.");
@@ -2534,28 +3231,11 @@ export function TemplateManagementPage() {
   const handleSelectedMeasureCodeChange = (value: MeasureCode) => {
     const measure = measureBindingOptions.find((item) => item.code === value) ?? measureBindingOptions[0];
     setSelectedMeasureCode(value);
+    setHeaderLabel(measure.label);
     setDatatype(measure.valueType);
     setDecimalPlaces(measure.decimalPlaces);
     setValidationRule(measure.validationRule);
-
-    if (boundObjects.some((item) => item.code === "INDICATOR_VALUE") && (rowAxes.length || columnAxes.length)) {
-      pushUndo();
-      const nextCells = buildStructuredGrid(rowAxes, columnAxes, true);
-      Object.keys(nextCells).forEach((address) => {
-        if (nextCells[address]?.role === "INPUT") {
-          nextCells[address] = {
-            ...nextCells[address],
-            boundCode: measure.code,
-            datatype: measure.valueType,
-            validationRule: measure.validationRule,
-          };
-        }
-      });
-      setCells(nextCells);
-      setBoundObjects(objectsFromAxes(rowAxes, columnAxes, true));
-      addOperation("Measure defaults", `${measure.code} applied to generated editable cells.`);
-      setActivityMessage(`${measure.label} selected. Existing editable cells were regenerated with ${measure.unitCode} defaults.`);
-    }
+    setActivityMessage(`${measure.label} selected. Click Bind values to place it as a measure header.`);
   };
 
   const handleMerge = () => {
@@ -2589,23 +3269,130 @@ export function TemplateManagementPage() {
   };
 
   const handleFreeze = () => {
+    const addresses = rangeAddresses(selectedAnchor, selectedFocus);
+    const shouldFreeze = !addresses.every((address) => cells[address]?.frozen);
     pushUndo();
-    applyToSelectedRange({ frozen: true });
-    addOperation("Freeze", `${selectedRange} marked as frozen visual area.`);
+    applyToSelectedRange({ frozen: shouldFreeze });
+    addOperation("Freeze", `${selectedRange} ${shouldFreeze ? "marked as" : "removed from"} frozen visual area.`);
+    setActivityMessage(
+      shouldFreeze
+        ? `${selectedRange} will stay visible in the rendered template when that region is used as a row/column header.`
+        : `${selectedRange} freeze marker removed.`,
+    );
   };
 
   const handleMarkEditable = () => {
+    const addresses = rangeAddresses(selectedAnchor, selectedFocus);
+    const shouldEnableEditable = !addresses.every((address) => cells[address]?.editable);
     pushUndo();
-    applyToSelectedRange({
-      role: "INPUT",
-      editable: true,
-      required,
-      datatype,
-      validationRule,
-      align: horizontalAlign,
-      valign: verticalAlign,
-    });
-    addOperation("Editable cells", `${selectedRange} marked editable with ${datatype} datatype.`);
+    if (shouldEnableEditable) {
+      applyToSelectedRange({
+        role: "INPUT",
+        editable: true,
+        required,
+        datatype,
+        validationRule,
+        align: horizontalAlign,
+        valign: verticalAlign,
+      });
+      addOperation("Editable cells", `${selectedRange} marked editable with ${datatype} datatype.`);
+      setActivityMessage(`${selectedRange} is now a data-entry range. Department users can enter values here.`);
+      return;
+    }
+
+    applyToSelectedRange({ editable: false });
+    addOperation("Editable cells", `${selectedRange} removed from editable data-entry range.`);
+    setActivityMessage(`${selectedRange} is now read-only in the rendered template.`);
+  };
+
+  const handleCombineMeasureBelowDimension = () => {
+    if (boundMeasureCodes.length && !columnAxes.includes("INDICATOR_VALUE")) {
+      const selectedOwner =
+        findStrictMeasureOwnerForSelection() ??
+        Object.entries(cells).reduce<ReturnType<typeof findStrictMeasureOwnerForSelection>>((firstOwner, [address, cell]) => {
+          if (firstOwner || !isStrictMeasureHeaderCell(cell) || cell.mergeOwner) return firstOwner;
+          const coord = addressToCoord(address);
+          return {
+            address,
+            cell,
+            row: coord.row,
+            col: coord.col,
+            endCol: coord.col + Math.max(cell.merge?.colSpan ?? 1, 1) - 1,
+          };
+        }, undefined);
+
+      if (!selectedOwner) {
+        setActivityMessage("Bind a measure header first, then bind a dimension below it before combining.");
+        return;
+      }
+
+      pushUndo();
+      const nextCombine = !combineMeasureBelowDimension;
+      setCombineMeasureBelowDimension(nextCombine);
+      const measureText = (selectedOwner.cell.value ?? "Measure").replace(/\n/g, " ");
+      setCells((current) => {
+        const next = { ...current };
+        const localHeaderRows = Object.entries(current)
+          .filter(([, cell]) => cell.groupId?.startsWith("measure-local-") && !cell.mergeOwner)
+          .map(([address]) => addressToCoord(address))
+          .filter((coord) => coord.row > selectedOwner.row && coord.col >= selectedOwner.col && coord.col <= selectedOwner.endCol)
+          .map((coord) => coord.row);
+        const deepestHeaderRow = Math.max(...localHeaderRows, selectedOwner.row + 1);
+        Object.entries(current).forEach(([address, cell]) => {
+          if (!cell.groupId?.startsWith("measure-local-") || cell.mergeOwner) return;
+          const coord = addressToCoord(address);
+          if (coord.row <= selectedOwner.row || coord.col < selectedOwner.col || coord.col > selectedOwner.endCol) return;
+          if (coord.row !== deepestHeaderRow) return;
+          const baseValue = (cell.value ?? "").split("\nMeasure:")[0];
+          setCell(next, address, {
+            ...cell,
+            value: nextCombine ? `${baseValue}\nMeasure: ${measureText}` : baseValue,
+            valign: "middle",
+          });
+        });
+        return next;
+      });
+      addOperation(
+        "Combine headers",
+        nextCombine
+          ? `Measure text stacked below local dimension headers for ${measureText}.`
+          : `Measure text removed from local dimension headers for ${measureText}.`,
+      );
+      setActivityMessage(
+        nextCombine
+          ? "Combined view enabled for the selected strict measure group. Dimension headers show the measure/unit below them."
+          : "Combined view disabled for the selected strict measure group.",
+      );
+      return;
+    }
+
+    if (!columnAxes.includes("INDICATOR_VALUE") || columnAxes.indexOf("INDICATOR_VALUE") === 0) {
+      setActivityMessage("Bind at least one column dimension first, then bind Measure as a column before combining.");
+      return;
+    }
+
+    pushUndo();
+    const nextCombine = !combineMeasureBelowDimension;
+    setCombineMeasureBelowDimension(nextCombine);
+    const nextCells = preserveStrictMeasureHeaders(buildStructuredGrid(
+      rowAxes,
+      columnAxes,
+      boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0,
+      geographyScope,
+      nextCombine,
+    ));
+    setCells(nextCells);
+    addOperation(
+      "Combine headers",
+      nextCombine
+        ? "Measure labels are stacked below the nearest dimension header."
+        : "Measure labels returned to a separate header row.",
+    );
+    setActivityMessage(
+      nextCombine
+        ? "Combined view enabled: dimension label appears above measure/unit, while JSON keeps dimension and measure codes separate."
+        : "Combined view disabled: measure returns to its own header row.",
+    );
   };
 
   const handleUnbindGroup = () => {
@@ -2614,9 +3401,84 @@ export function TemplateManagementPage() {
       return;
     }
 
+    const selectedSelection = getSelectableRangeForAddress(selectedAnchor);
+    const selectedOwnerAddress = cells[selectedSelection.anchor]?.mergeOwner ?? selectedSelection.anchor;
+    const selectedOwnerCell = cells[selectedOwnerAddress] ?? cells[selectedSelection.anchor];
+    const strictMeasureOwner = findStrictMeasureOwnerForSelection();
+    const isLocalMeasureDimension =
+      selectedOwnerCell?.groupId?.startsWith("measure-local-") &&
+      bindingObject !== "INDICATOR_VALUE";
+
     pushUndo();
 
-    if (bindingObject === "INDICATOR_VALUE") {
+    if (isLocalMeasureDimension && strictMeasureOwner) {
+      const existingAxes = getAllLocalMeasureColumnAxes(strictMeasureOwner);
+      const nextAxes = existingAxes.filter((axisCode) => axisCode !== bindingObject);
+      const { measureSpan } = applyStrictMeasureLocalAxes(strictMeasureOwner, nextAxes);
+      addOperation(
+        "Unbind local axis",
+        `${optionFor(bindingObject).label} removed from ${strictMeasureOwner.cell.value ?? "selected measure"} only.`,
+      );
+      setActivityMessage(
+        `${optionFor(bindingObject).label} unbound only from the selected measure group. Other measure groups were preserved; the selected measure now spans ${measureSpan} column(s).`,
+      );
+      return;
+    }
+
+    if (bindingObject === "INDICATOR_VALUE" && !rowAxes.includes("INDICATOR_VALUE") && !columnAxes.includes("INDICATOR_VALUE")) {
+      const selectedCellMeasureCode = measureBindingOptions.find((measure) => measure.code === selectedOwnerCell?.boundCode)?.code;
+      const measureCodeToUnbind = selectedCellMeasureCode ?? selectedMeasureCode;
+      const ownerForMeasure =
+        strictMeasureOwner ??
+        Object.entries(cells).reduce<StrictMeasureOwner | undefined>((foundOwner, [address, cell]) => {
+          if (foundOwner || !isStrictMeasureHeaderCell(cell) || cell.mergeOwner || cell.boundCode !== measureCodeToUnbind) return foundOwner;
+          const coord = addressToCoord(address);
+          return {
+            address,
+            cell,
+            row: coord.row,
+            col: coord.col,
+            endCol: coord.col + Math.max(cell.merge?.colSpan ?? 1, 1) - 1,
+          };
+        }, undefined);
+
+      if (boundMeasureCodes.includes(measureCodeToUnbind) && ownerForMeasure) {
+        const selectedMeasureToUnbind = measureBindingOptions.find((measure) => measure.code === measureCodeToUnbind) ?? selectedMeasure;
+        const nextBoundMeasures = boundMeasureCodes.filter((measureCode) => measureCode !== measureCodeToUnbind);
+        const removedWidth = ownerForMeasure.endCol - ownerForMeasure.col + 1;
+
+        setCells((current) => {
+          return removeColumnRangeFromRows(current, ownerForMeasure.col, ownerForMeasure.endCol, ownerForMeasure.row);
+        });
+        setVisibleColumnCount((current) => Math.max(initialVisibleColumnCount, current - removedWidth));
+        setBoundMeasureCodes(nextBoundMeasures);
+        setBoundObjects((current) => {
+          const withoutMeasure = current.filter((item) => item.code !== "INDICATOR_VALUE");
+          if (!nextBoundMeasures.length) return withoutMeasure;
+          return [
+            ...withoutMeasure,
+            {
+              code: "INDICATOR_VALUE",
+              label: "Measures",
+              type: "Measure",
+              alignment: "column",
+              range: nextBoundMeasures.join(", "),
+              memberCount: nextBoundMeasures.length,
+            },
+          ];
+        });
+        setSelectedMeasureCode(selectedMeasureToUnbind.code);
+        setHeaderLabel(selectedMeasureToUnbind.label);
+        setDatatype(selectedMeasureToUnbind.valueType);
+        setDecimalPlaces(selectedMeasureToUnbind.decimalPlaces);
+        setValidationRule(selectedMeasureToUnbind.validationRule);
+        setSelectedAnchor(coordToAddress(ownerForMeasure.row, Math.max(1, ownerForMeasure.col - 1)));
+        setSelectedFocus(coordToAddress(ownerForMeasure.row, Math.max(1, ownerForMeasure.col - 1)));
+        addOperation("Unbind measure", `${selectedMeasureToUnbind.code} and its local dimensions removed from ${selectedRange}.`);
+        setActivityMessage(`${selectedMeasureToUnbind.label} unbound with its local Time/Area/Gender headers and returned to the measure dropdown.`);
+        return;
+      }
+
       const nextCells = buildStructuredGrid(rowAxes, columnAxes, false);
       setCells(nextCells);
       setBoundObjects(objectsFromAxes(rowAxes, columnAxes, false));
@@ -2627,12 +3489,13 @@ export function TemplateManagementPage() {
 
     const nextRowAxes = rowAxes.filter((code) => code !== bindingObject);
     const nextColumnAxes = columnAxes.filter((code) => code !== bindingObject);
-    const hasMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE");
-    const nextCells = buildStructuredGrid(nextRowAxes, nextColumnAxes, hasMeasure);
+    const hasMeasure = boundObjects.some((item) => item.code === "INDICATOR_VALUE") && boundMeasureCodes.length === 0;
+    const nextCells = preserveStrictMeasureHeaders(buildStructuredGrid(nextRowAxes, nextColumnAxes, hasMeasure));
     setRowAxes(nextRowAxes);
     setColumnAxes(nextColumnAxes);
     setCells(nextCells);
-    setBoundObjects(objectsFromAxes(nextRowAxes, nextColumnAxes, hasMeasure));
+    setBoundObjects(withStrictMeasureBoundObject(objectsFromAxes(nextRowAxes, nextColumnAxes, hasMeasure)));
+    if (!nextColumnAxes.includes("INDICATOR_VALUE")) setCombineMeasureBelowDimension(false);
     setSelectedAnchor("B2");
     setSelectedFocus("B2");
     setEditingCell(null);
@@ -2772,6 +3635,7 @@ export function TemplateManagementPage() {
     setCells(next);
     setRowAxes(["GEOGRAPHY"]);
     setColumnAxes(["TIME_PERIOD", "AREA_TYPE", "GENDER"]);
+    setBoundMeasureCodes([]);
     setVisibleColumnCount(initialVisibleColumnCount);
     setVisibleRowCount(initialVisibleRowCount);
     setBoundObjects([
@@ -2796,8 +3660,10 @@ export function TemplateManagementPage() {
     pushUndo();
     setCells(buildHeaderCells(selectedTemplate));
     setBoundObjects([]);
+    setBoundMeasureCodes([]);
     setRowAxes([]);
     setColumnAxes([]);
+    setCombineMeasureBelowDimension(false);
     setVisibleColumnCount(initialVisibleColumnCount);
     setVisibleRowCount(initialVisibleRowCount);
     setSelectedAnchor("B2");
@@ -2838,8 +3704,10 @@ export function TemplateManagementPage() {
     setSelectedTemplateCode(demoTemplate.template_code);
     setCells(buildHeaderCells(demoTemplate));
     setBoundObjects([]);
+    setBoundMeasureCodes([]);
     setRowAxes([]);
     setColumnAxes([]);
+    setCombineMeasureBelowDimension(false);
     setVisibleColumnCount(initialVisibleColumnCount);
     setVisibleRowCount(initialVisibleRowCount);
     setSelectedAnchor("B2");
@@ -3176,9 +4044,10 @@ export function TemplateManagementPage() {
                 verticalAlign={verticalAlign}
                 suggestions={suggestions}
                 boundObjects={boundObjects}
+                boundMeasureCodes={boundMeasureCodes}
                 operations={operations}
                 onCellTextChange={handleCellTextChange}
-                onHeaderTypeChange={setHeaderType}
+                onHeaderTypeChange={handleHeaderTypeChange}
                 onBindingObjectChange={handleBindingObjectChange}
                 onAxisAlignmentChange={handleAxisAlignmentChange}
                 onGeographyScopeChange={handleGeographyScopeChange}
@@ -3199,6 +4068,7 @@ export function TemplateManagementPage() {
                 onUnmerge={handleUnmerge}
                 onFreeze={handleFreeze}
                 onMarkEditable={handleMarkEditable}
+                onCombineMeasureBelowDimension={handleCombineMeasureBelowDimension}
                 onUnbindGroup={handleUnbindGroup}
                 onClose={() => setOptionsOpen(false)}
               />

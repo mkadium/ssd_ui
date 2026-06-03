@@ -12,6 +12,7 @@
 - Deleting a year must remove its generated cross-section columns and bound local values.
 - Year label entry must show a format warning when it does not match `YYYY-YY` and a duplicate warning when values repeat.
 - Data entry preview must be able to show a sanitized JSON object that maps request item, template instance, years, row geography, column dimensions, measure, unit, and numeric values.
+- If template headers are visually combined, Data Entry may display dimension plus measure/unit together, but submitted values must still carry separate axis tuple entries and separate `measure_code`.
 - Geography, area type, gender, measure, unit, required flag, and validation rules must remain template-controlled in Data Entry.
 - User notes must support both cell-level comments and submission-level reviewer notes.
 - Draft/validate/preview/submit actions are visual states until API mutation integration is governed.

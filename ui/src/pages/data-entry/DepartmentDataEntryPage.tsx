@@ -56,6 +56,9 @@ type DataEntryCanvasColumn = {
   yearLabel: string;
   areaType: string;
   gender: string;
+  measureCode: string;
+  measureLabel: string;
+  unitCode: string;
 };
 
 type DataEntryNavigationDirection = "up" | "down" | "left" | "right";
@@ -77,6 +80,9 @@ const getDataEntryColumns = (years: DataEntryYearHeader[]): DataEntryCanvasColum
         yearLabel: year.label,
         areaType,
         gender,
+        measureCode: "INDICATOR_VALUE",
+        measureLabel: "Indicator value",
+        unitCode: "PERCENT",
       })),
     ),
   );
@@ -360,7 +366,12 @@ function DataEntryGrid({
           <tr className="bg-muted/50 text-center font-bold">
             <th className="border-b border-r border-border/60 px-3 py-2">Geography</th>
             {columns.map((column) => (
-              <th key={column.key} className="border-b border-r border-border/60 px-3 py-2">{column.gender}</th>
+              <th key={column.key} className="border-b border-r border-border/60 px-3 py-2">
+                <span className="block">{column.gender}</span>
+                <span className="mt-1 inline-flex rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-800">
+                  {column.measureLabel} [{column.unitCode}]
+                </span>
+              </th>
             ))}
             <th className="border-b border-border/60 px-3 py-2">Status</th>
           </tr>
@@ -919,10 +930,17 @@ export function DepartmentDataEntryPage() {
         area_type_code: column.areaType.toUpperCase(),
         gender: column.gender,
         gender_code: column.gender.toUpperCase(),
-        measure_code: "INDICATOR_VALUE",
-        unit_code: "PERCENT",
+        measure_code: column.measureCode,
+        measure_label: column.measureLabel,
+        unit_code: column.unitCode,
         value_numeric: row.values[column.key] ?? "",
         column_key: column.key,
+        axis_tuple: [
+          { axis_code: "GEOGRAPHY", member_code: row.geography_code, label: row.geography_label },
+          { axis_code: "TIME_PERIOD", member_code: column.yearId, label: column.yearLabel },
+          { axis_code: "AREA_TYPE", member_code: column.areaType.toUpperCase(), label: column.areaType },
+          { axis_code: "GENDER", member_code: column.gender.toUpperCase(), label: column.gender },
+        ],
       })),
     );
 
@@ -985,6 +1003,7 @@ export function DepartmentDataEntryPage() {
         ],
         measure: {
           measure_code: "INDICATOR_VALUE",
+          label: "Indicator value",
           value_type: "NUMERIC",
           unit_code: "PERCENT",
           required: true,
@@ -995,17 +1014,27 @@ export function DepartmentDataEntryPage() {
         fixed_template_axes: {
           row_axis: "GEOGRAPHY",
           column_axes: ["TIME_PERIOD", "AREA_TYPE", "GENDER"],
-          measure_code: "INDICATOR_VALUE",
-          unit_code: "PERCENT",
+          measure_axis: "INDICATOR_VALUE",
+          measure_code: "resolved from each submitted value",
+          unit_code: "resolved from measure_code",
           value_type: "NUMERIC",
         },
+        header_combine_rules: [
+          {
+            rule_code: "COMBINE_DIMENSION_MEASURE_STACKED",
+            dimension_axis_code: "GENDER",
+            measure_axis_code: "INDICATOR_VALUE",
+            display_mode: "DIMENSION_LABEL_OVER_MEASURE_UNIT",
+          },
+        ],
         data_entry_binding_shape: {
           rows_from: ["GEOGRAPHY"],
           columns_from: ["TIME_PERIOD", "AREA_TYPE", "GENDER"],
           value_object: {
             cell_code: "generated from row/column axis members",
             value_numeric: "entered by department user",
-            unit_code: "PERCENT",
+            measure_code: "resolved from template cell binding",
+            unit_code: "resolved from measure_code",
             dimensions: ["geography", "time_period", "area_type", "gender"],
           },
         },

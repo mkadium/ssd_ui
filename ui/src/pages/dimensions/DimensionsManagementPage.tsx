@@ -28,16 +28,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  dimensionDefinitions as sampleDimensionDefinitions,
+  dimensionMemberSets as sampleDimensionMemberSets,
+  dimensionMembers as sampleDimensionMembers,
+  dimensionRollupRules,
+  dimensionUsage,
+  geographies as sampleGeographies,
+  geographyLevels as sampleGeographyLevels,
+  timeFrequencies as sampleTimeFrequencies,
+  timePeriods as sampleTimePeriods,
+} from "@/data/dimensionsManagement.sample";
 import { useLanguage } from "@/providers/language-context";
 import { dimensionsService } from "@/services/dimensionsService";
 import type {
   DimensionDefinitionItem,
   DimensionMemberItem,
+  GeographyItem,
+  TimePeriodItem,
 } from "@/types/dimensions";
 
-type DimensionMember = DimensionMemberItem;
-
-type DimensionTab = "members" | "member-sets" | "geography" | "time";
+type DimensionTab = "members" | "rollups" | "member-sets" | "geography" | "time";
 type DimensionModal =
   | "view-member"
   | "create-root"
@@ -135,7 +146,7 @@ function DimensionModalView({
   modal: DimensionModal;
   selectedDimensionCode: string;
   selectedDimensionName: string;
-  selectedMember?: DimensionMember;
+  selectedMember?: DimensionMemberItem;
   onClose: () => void;
 }) {
   if (!modal) return null;
@@ -321,17 +332,19 @@ export function DimensionsManagementPage() {
   const [expandedMembers, setExpandedMembers] = useState<Record<string, boolean>>({});
   const [modal, setModal] = useState<DimensionModal>(null);
 
-  const healthQuery = useQuery({
-    queryKey: ["dimensions", "health"],
-    queryFn: () => dimensionsService.getHealth(),
-  });
-
   const dimensionsQuery = useQuery({
     queryKey: ["dimensions", "definitions", locale],
     queryFn: () => dimensionsService.listDimensions({ locale }),
   });
 
-  const dimensionDefinitions = dimensionsQuery.data?.data ?? [];
+  const healthQuery = useQuery({
+    queryKey: ["dimensions", "health"],
+    queryFn: () => dimensionsService.getHealth(),
+  });
+
+  const dimensionDefinitions: DimensionDefinitionItem[] = dimensionsQuery.data?.data?.length
+    ? dimensionsQuery.data.data
+    : sampleDimensionDefinitions;
   const selectedDimension =
     dimensionDefinitions.find((dimension) => dimension.dimension_code === selectedDimensionCode) ??
     dimensionDefinitions[0] ??
@@ -375,10 +388,16 @@ export function DimensionsManagementPage() {
   });
 
   const selectedDimensionDetail = dimensionDetailQuery.data?.data ?? selectedDimension;
-  const membersForDimension = membersQuery.data?.data ?? [];
+  const membersForDimension: DimensionMemberItem[] = membersQuery.data?.data?.length
+    ? membersQuery.data.data
+    : sampleDimensionMembers.filter((member) => member.dimension_code === effectiveDimensionCode);
   const selectedMember = membersForDimension.find((member) => member.member_code === selectedMemberCode) ?? membersForDimension[0];
-  const memberSetsForDimension = memberSetsQuery.data?.data ?? [];
+  const memberSetsForDimension = memberSetsQuery.data?.data?.length
+    ? memberSetsQuery.data.data
+    : sampleDimensionMemberSets.filter((set) => set.dimension_code === effectiveDimensionCode);
   const selectedMemberSet = memberSetsForDimension[0];
+  const usageRows = dimensionUsage.filter((usage) => usage.dimension_code === effectiveDimensionCode);
+  const rollupRulesForDimension = dimensionRollupRules.filter((rule) => rule.dimension_code === effectiveDimensionCode);
 
   const memberSetMembersQuery = useQuery({
     queryKey: ["dimensions", "member-set-members", selectedMemberSet?.set_code, locale],
@@ -386,8 +405,8 @@ export function DimensionsManagementPage() {
     enabled: Boolean(selectedMemberSet?.set_code),
   });
 
-  const geographies = geographiesQuery.data?.data ?? [];
-  const timePeriods = timePeriodsQuery.data?.data ?? [];
+  const geographies: GeographyItem[] = geographiesQuery.data?.data?.length ? geographiesQuery.data.data : sampleGeographies;
+  const timePeriods: TimePeriodItem[] = timePeriodsQuery.data?.data?.length ? timePeriodsQuery.data.data : sampleTimePeriods;
   const selectedGeographyCode = geographies[0]?.geography_code;
   const selectedTimePeriodCode = timePeriods[0]?.time_period_code;
 
@@ -406,24 +425,32 @@ export function DimensionsManagementPage() {
   const filteredDimensions = dimensionDefinitions.filter((dimension) =>
     dimensionToSearchText(dimension).toLowerCase().includes(dimensionSearch.toLowerCase()),
   );
-  const usageRows: Array<{ id: string; usage_area: string; dependency: string; record_count: number; risk: "LOW" | "MEDIUM" | "HIGH" }> = [];
 
   const geographyLevels = useMemo(
-    () => uniqueBy(geographies, (geo) => geo.level_code).map((geo, index) => ({
-      level_code: geo.level_code,
-      level_number: index + 1,
-      name: geo.level_code,
-    })),
-    [geographies],
+    () => {
+      if (!geographiesQuery.data?.data?.length) return sampleGeographyLevels;
+
+      return uniqueBy(geographies, (geo) => geo.level_code).map((geo, index) => ({
+        level_code: geo.level_code,
+        level_number: index + 1,
+        name: geo.level_code,
+      }));
+    },
+    [geographies, geographiesQuery.data],
   );
 
   const timeFrequencies = useMemo(
-    () => uniqueBy(timePeriods, (period) => period.frequency_code).map((period) => ({
-      frequency_code: period.frequency_code,
-      name: period.frequency_code,
-      months_interval: period.frequency_code === "ANNUAL" ? 12 : period.frequency_code === "QUARTERLY" ? 3 : period.frequency_code === "MONTHLY" ? 1 : "-",
-    })),
-    [timePeriods],
+    () => {
+      if (!timePeriodsQuery.data?.data?.length) return sampleTimeFrequencies;
+
+      return uniqueBy(timePeriods, (period) => period.frequency_code).map((period) => ({
+        frequency_code: period.frequency_code,
+        name: period.frequency_code,
+        months_interval: period.frequency_code === "ANNUAL" ? 12 : period.frequency_code === "QUARTERLY" ? 3 : period.frequency_code === "MONTHLY" ? 1 : "-",
+        status: "ACTIVE",
+      }));
+    },
+    [timePeriods, timePeriodsQuery.data],
   );
 
   const liveDataError =
@@ -445,11 +472,11 @@ export function DimensionsManagementPage() {
     timePeriodsQuery.isPending;
   const memberChildren = (memberCode: string, members = membersForDimension) => members.filter((member) => member.parent_member_code === memberCode);
   const treeQuery = treeSearch.trim().toLowerCase();
-  const memberMatchesSearch = (member: DimensionMember) =>
+  const memberMatchesSearch = (member: DimensionMemberItem) =>
     memberToSearchText(member).toLowerCase().includes(treeQuery);
-  const hasMatchingDescendant = (member: DimensionMember): boolean =>
+  const hasMatchingDescendant = (member: DimensionMemberItem): boolean =>
     memberChildren(member.member_code).some((child) => memberMatchesSearch(child) || hasMatchingDescendant(child));
-  const hasMatchingAncestor = (member: DimensionMember): boolean => {
+  const hasMatchingAncestor = (member: DimensionMemberItem): boolean => {
     const parent = membersForDimension.find((candidate) => candidate.member_code === member.parent_member_code);
     return parent ? memberMatchesSearch(parent) || hasMatchingAncestor(parent) : false;
   };
@@ -457,7 +484,7 @@ export function DimensionsManagementPage() {
     ? membersForDimension.filter((member) => memberMatchesSearch(member) || hasMatchingDescendant(member) || hasMatchingAncestor(member))
     : membersForDimension;
   const rootMembers = searchableMembers.filter((member) => !member.parent_member_code);
-  const getMemberDepth = (member: DimensionMember): number => {
+  const getMemberDepth = (member: DimensionMemberItem): number => {
     const parent = membersForDimension.find((candidate) => candidate.member_code === member.parent_member_code);
     return parent ? getMemberDepth(parent) + 1 : 1;
   };
@@ -468,6 +495,7 @@ export function DimensionsManagementPage() {
 
   const tabs: { code: DimensionTab; label: string }[] = [
     { code: "members", label: "Members" },
+    { code: "rollups", label: "Rollups" },
     { code: "member-sets", label: "Member sets" },
     { code: "geography", label: "Geography" },
     { code: "time", label: "Time periods" },
@@ -537,9 +565,18 @@ export function DimensionsManagementPage() {
       footnote: highRiskCount ? "Review before structural edits" : "Dependency evidence awaits usage APIs",
       targetTab: "members",
     },
+    {
+      label: "Rollups",
+      value: rollupRulesForDimension.length,
+      badge: rollupRulesForDimension.some((rule) => rule.status === "ACTIVE") ? "Active" : "None",
+      helper: rollupRulesForDimension.length ? rollupRulesForDimension[0].entry_mode : "No rollup rule",
+      detail: rollupRulesForDimension.length ? `${rollupRulesForDimension[0].parent_label} -> ${rollupRulesForDimension[0].children.map((child) => child.label).join(" + ")}` : "Flat/manual members only",
+      footnote: rollupRulesForDimension.length ? `${rollupRulesForDimension[0].aggregation_method} / ${rollupRulesForDimension[0].validation_rule_code}` : "Optional enterprise template behavior",
+      targetTab: "rollups",
+    },
   ];
 
-  const renderTreeMember = (member: DimensionMember, depth = 0) => {
+  const renderTreeMember = (member: DimensionMemberItem, depth = 0) => {
     const children = searchableMembers.filter((candidate) => candidate.parent_member_code === member.member_code);
     const searchShouldOpen = Boolean(treeQuery && (memberMatchesSearch(member) || hasMatchingDescendant(member)));
     const isExpanded = expandedMembers[member.member_code] ?? (treeQuery ? searchShouldOpen : true);
@@ -602,12 +639,12 @@ export function DimensionsManagementPage() {
         ) : null}
 
         {liveDataError ? (
-          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {safeApiMessage(liveDataError)}
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+            {safeApiMessage(liveDataError)} Showing available fallback data where possible.
           </div>
         ) : null}
 
-        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        <div className="grid grid-cols-5 gap-3 max-xl:grid-cols-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
           {statCards.map((card) => (
             <button
               key={card.label}
@@ -833,6 +870,56 @@ export function DimensionsManagementPage() {
                   ) : null}
                 </TableBody>
               </Table>
+            ) : null}
+
+            {activeTab === "rollups" ? (
+              <div className="grid gap-3">
+                <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+                  Rollup rules define parent-member behavior for template/data-entry validation. They are not a full formula engine.
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Rule</TableHead>
+                      <TableHead>Parent</TableHead>
+                      <TableHead>Children</TableHead>
+                      <TableHead>Entry mode</TableHead>
+                      <TableHead>Aggregation</TableHead>
+                      <TableHead>Measure</TableHead>
+                      <TableHead>Validation</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rollupRulesForDimension.map((rule) => (
+                      <TableRow key={rule.id}>
+                        <TableCell className="font-mono text-[11px]">{rule.rule_code}</TableCell>
+                        <TableCell>
+                          <span className="block font-semibold">{rule.parent_label}</span>
+                          <span className="font-mono text-[11px] text-muted-foreground">{rule.parent_member_code}</span>
+                        </TableCell>
+                        <TableCell className="max-w-64 whitespace-normal">
+                          {rule.children.map((child) => (
+                            <Badge key={child.member_code} variant="outline" className="mr-1">{child.child_order}. {child.label}</Badge>
+                          ))}
+                        </TableCell>
+                        <TableCell><Badge variant="outline">{rule.entry_mode}</Badge></TableCell>
+                        <TableCell>{rule.aggregation_method}</TableCell>
+                        <TableCell className="font-mono text-[11px]">{rule.measure_code}</TableCell>
+                        <TableCell className="font-mono text-[11px]">{rule.validation_rule_code}</TableCell>
+                        <TableCell><Badge variant={statusVariant(rule.status)}>{rule.status}</Badge></TableCell>
+                      </TableRow>
+                    ))}
+                    {!rollupRulesForDimension.length ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-8 text-center text-xs text-muted-foreground">
+                          No rollup rules configured for this dimension.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
             ) : null}
 
             {activeTab === "member-sets" ? (
