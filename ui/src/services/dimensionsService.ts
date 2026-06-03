@@ -1,14 +1,24 @@
 import { apiRequest } from "@/api/client";
 import type {
   DimensionDefinitionItem,
+  DimensionMemberRequest,
+  DimensionMemberRelationshipRequest,
   DimensionDetailResponse,
   DimensionListResponse,
   DimensionMemberItem,
+  DimensionMemberRollupRuleItem,
   DimensionMemberSetItem,
+  DimensionMemberSetRequest,
   DimensionMemberSetMemberItem,
+  DimensionMemberSetItemRequest,
+  DimensionRequest,
   DimensionsHealthResponse,
+  GeographyLevelItem,
   GeographyItem,
+  GeographyRequest,
+  TimeFrequencyItem,
   TimePeriodItem,
+  TimePeriodRequest,
 } from "@/types/dimensions";
 
 export const dimensionsService = {
@@ -42,6 +52,58 @@ export const dimensionsService = {
     );
   },
 
+  createDimension: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: DimensionRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateDimension: async ({
+    dimensionCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    body: DimensionRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  setDimensionActive: async ({
+    dimensionCode,
+    locale,
+    active,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    active: boolean;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+    const path = active
+      ? `/dimensions/${encodeURIComponent(dimensionCode)}/restore`
+      : `/dimensions/${encodeURIComponent(dimensionCode)}`;
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `${path}?${params.toString()}`,
+      { method: active ? "POST" : "DELETE" },
+    );
+  },
+
   listMembers: async ({
     dimensionCode,
     locale,
@@ -70,6 +132,81 @@ export const dimensionsService = {
     );
   },
 
+  createMember: async ({
+    dimensionCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    body: DimensionMemberRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/members?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateMember: async ({
+    dimensionCode,
+    memberCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    memberCode: string;
+    locale: string;
+    body: DimensionMemberRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/members/${encodeURIComponent(memberCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  setMemberActive: async ({
+    dimensionCode,
+    memberCode,
+    locale,
+    active,
+  }: {
+    dimensionCode: string;
+    memberCode: string;
+    locale: string;
+    active: boolean;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+    const path = active
+      ? `/dimensions/${encodeURIComponent(dimensionCode)}/members/${encodeURIComponent(memberCode)}/restore`
+      : `/dimensions/${encodeURIComponent(dimensionCode)}/members/${encodeURIComponent(memberCode)}`;
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `${path}?${params.toString()}`,
+      { method: active ? "POST" : "DELETE" },
+    );
+  },
+
+  createMemberRelationship: async ({
+    dimensionCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    body: DimensionMemberRelationshipRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/member-relationships?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
   listMemberSets: async ({
     locale,
     dimensionCode,
@@ -85,6 +222,64 @@ export const dimensionsService = {
 
     return apiRequest<DimensionListResponse<DimensionMemberSetItem>>(
       `/dimensions/member-sets?${params.toString()}`,
+    );
+  },
+
+  createMemberSet: async ({
+    dimensionCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    body: DimensionMemberSetRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateMemberSet: async ({
+    dimensionCode,
+    setCode,
+    locale,
+    body,
+  }: {
+    dimensionCode: string;
+    setCode: string;
+    locale: string;
+    body: DimensionMemberSetRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  setMemberSetActive: async ({
+    dimensionCode,
+    setCode,
+    locale,
+    active,
+  }: {
+    dimensionCode: string;
+    setCode: string;
+    locale: string;
+    active: boolean;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+    const path = active
+      ? `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}/restore`
+      : `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}`;
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `${path}?${params.toString()}`,
+      { method: active ? "POST" : "DELETE" },
     );
   },
 
@@ -107,6 +302,54 @@ export const dimensionsService = {
 
     return apiRequest<DimensionListResponse<DimensionMemberSetMemberItem>>(
       `/dimensions/member-sets/${encodeURIComponent(setCode)}/members?${params.toString()}`,
+    );
+  },
+
+  createMemberSetMember: async ({
+    setCode,
+    locale,
+    body,
+  }: {
+    setCode: string;
+    locale: string;
+    body: DimensionMemberSetItemRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/member-sets/${encodeURIComponent(setCode)}/members?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateMemberSetMember: async ({
+    setCode,
+    memberCode,
+    locale,
+    body,
+  }: {
+    setCode: string;
+    memberCode: string;
+    locale: string;
+    body: DimensionMemberSetItemRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/member-sets/${encodeURIComponent(setCode)}/members/${encodeURIComponent(memberCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  listGeographyLevels: async ({
+    locale,
+  }: {
+    locale: string;
+  }): Promise<DimensionListResponse<GeographyLevelItem>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionListResponse<GeographyLevelItem>>(
+      `/dimensions/geography-levels?${params.toString()}`,
     );
   },
 
@@ -156,6 +399,70 @@ export const dimensionsService = {
     );
   },
 
+  createGeography: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: GeographyRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/geographies?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateGeography: async ({
+    geographyCode,
+    locale,
+    body,
+  }: {
+    geographyCode: string;
+    locale: string;
+    body: GeographyRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/geographies/${encodeURIComponent(geographyCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  setGeographyActive: async ({
+    geographyCode,
+    locale,
+    active,
+  }: {
+    geographyCode: string;
+    locale: string;
+    active: boolean;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+    const path = active
+      ? `/dimensions/geographies/${encodeURIComponent(geographyCode)}/restore`
+      : `/dimensions/geographies/${encodeURIComponent(geographyCode)}`;
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `${path}?${params.toString()}`,
+      { method: active ? "POST" : "DELETE" },
+    );
+  },
+
+  listTimeFrequencies: async ({
+    locale,
+  }: {
+    locale: string;
+  }): Promise<DimensionListResponse<TimeFrequencyItem>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionListResponse<TimeFrequencyItem>>(
+      `/dimensions/time-frequencies?${params.toString()}`,
+    );
+  },
+
   listTimePeriods: async ({
     locale,
     frequencyCode,
@@ -193,6 +500,80 @@ export const dimensionsService = {
 
     return apiRequest<DimensionDetailResponse<TimePeriodItem>>(
       `/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}?${params.toString()}`,
+    );
+  },
+
+  createTimePeriod: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: TimePeriodRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/time-periods?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateTimePeriod: async ({
+    timePeriodCode,
+    locale,
+    body,
+  }: {
+    timePeriodCode: string;
+    locale: string;
+    body: TimePeriodRequest;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  setTimePeriodActive: async ({
+    timePeriodCode,
+    locale,
+    active,
+  }: {
+    timePeriodCode: string;
+    locale: string;
+    active: boolean;
+  }): Promise<DimensionDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+    const path = active
+      ? `/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}/restore`
+      : `/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}`;
+
+    return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
+      `${path}?${params.toString()}`,
+      { method: active ? "POST" : "DELETE" },
+    );
+  },
+
+  listRollupRules: async ({
+    dimensionCode,
+    locale,
+    limit = 500,
+    offset = 0,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<DimensionListResponse<DimensionMemberRollupRuleItem>> => {
+    const params = new URLSearchParams({
+      locale,
+      limit: String(limit),
+      offset: String(offset),
+    });
+
+    return apiRequest<DimensionListResponse<DimensionMemberRollupRuleItem>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/rollup-rules?${params.toString()}`,
     );
   },
 };
