@@ -20,8 +20,6 @@ import {
 } from "@/components/ui/table";
 import {
   getMasterTab,
-  organizationOptions,
-  unitOptions,
   type MasterRow,
   type MasterTab,
   type MasterTabCode,
@@ -246,7 +244,7 @@ function getReferenceStats(tab: MasterTab) {
     return [
       ["Locales", tab.rows.length, tab.tableName],
       ["Active", activeRows.length, "enabled languages"],
-      ["Default", tab.rows.filter((row) => row.is_default === "YES").length, "fallback locale"],
+      ["Default", tab.rows.filter((row) => row.is_default === "YES").length, "default locale"],
       ["Hindi ready", tab.rows.filter((row) => row.locale_code === "hi-IN" && row.is_active === "YES").length, "bilingual access"],
     ];
   }
@@ -451,22 +449,22 @@ export function ReferenceMastersPage() {
       Boolean(row.organization_code && unitScopedOrganizationCodes.has(row.organization_code)) ||
       Boolean(row.parent_organization_code && unitScopedOrganizationCodes.has(row.parent_organization_code)),
     )
-    : organizationOptions;
+    : [];
   const liveOfficerRows = officersQuery.data?.data !== undefined
     ? officersToRows(officersQuery.data.data).filter((row) =>
       !selectedUnitCode || Boolean(row.organization_code && unitScopedOrganizationCodes.has(row.organization_code)),
     )
-    : getMasterTab("officers")?.rows ?? [];
+    : [];
   const livePeriodicityRows = periodicitiesQuery.data?.data !== undefined
     ? periodicitiesToRows(periodicitiesQuery.data.data)
-    : getMasterTab("periodicities")?.rows ?? [];
+    : [];
   const liveLocaleRows = localesQuery.data?.data !== undefined
     ? localesToRows(localesQuery.data.data)
-    : getMasterTab("locales")?.rows ?? [];
+    : [];
   const liveMeasureRows = versionQuery.data?.data !== undefined
     ? measuresFromVersion(versionQuery.data.data)
-    : getMasterTab("measures")?.rows ?? [];
-  const liveUnitRows = liveMeasureRows.length > 0 ? unitsFromMeasures(liveMeasureRows) : unitOptions;
+    : [];
+  const liveUnitRows = liveMeasureRows.length > 0 ? unitsFromMeasures(liveMeasureRows) : [];
 
   const referenceTabsData = referenceTabs.map((tab) => {
     if (tab.code === "locales") return { ...tab, rows: liveLocaleRows };
@@ -680,7 +678,7 @@ export function ReferenceMastersPage() {
 
         {liveDataError ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-            {safeApiMessage(liveDataError)} Showing available fallback data where possible.
+            {safeApiMessage(liveDataError)} Data is not available.
           </div>
         ) : null}
 
@@ -785,6 +783,13 @@ export function ReferenceMastersPage() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {!filteredRows.length ? (
+                  <TableRow>
+                    <TableCell colSpan={activeTab.columns.length + 1} className="py-6 text-center text-xs text-muted-foreground">
+                      Not available.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
             <div className="flex items-center justify-between text-xs text-muted-foreground">

@@ -29,12 +29,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  getMasterTab,
   globalIndicatorOptions,
   indicatorMappingNodeOptions,
-  officerOptions,
-  organizationOptions,
-  periodicityOptions,
   type MasterRow,
 } from "@/data/mastersManagement.sample";
 import { useLanguage } from "@/providers/language-context";
@@ -58,12 +54,7 @@ type DialogState = {
   entity?: DialogEntity;
 } | null;
 
-const nationalIndicators = getMasterTab("national-indicators")?.rows ?? [];
-const globalMappings = getMasterTab("global-mappings")?.rows ?? [];
-const versions = getMasterTab("indicator-versions")?.rows ?? [];
-const measures = getMasterTab("measures")?.rows ?? [];
-const metadataDetails = getMasterTab("metadata-details")?.rows ?? [];
-const sourceAssignments = getMasterTab("source-assignments")?.rows ?? [];
+const globalMappings: MasterRow[] = [];
 
 const activeVersionChanges: MasterRow[] = [
   {
@@ -527,7 +518,7 @@ export function IndicatorManagementPage() {
   const [searchParams] = useSearchParams();
   const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [query, setQuery] = useState("");
-  const [selectedIndicatorCode, setSelectedIndicatorCode] = useState(nationalIndicators[0]?.national_indicator_code ?? "");
+  const [selectedIndicatorCode, setSelectedIndicatorCode] = useState("");
   const [activeTab, setActiveTab] = useState<IndicatorTab>("overview");
   const [dialog, setDialog] = useState<DialogState>(null);
   const [mutationMessage, setMutationMessage] = useState<string | null>(null);
@@ -562,7 +553,7 @@ export function IndicatorManagementPage() {
     () => (indicatorsQuery.data?.data ?? []).map(indicatorToRow),
     [indicatorsQuery.data],
   );
-  const nationalIndicatorRows = liveNationalIndicatorRows.length ? liveNationalIndicatorRows : nationalIndicators;
+  const nationalIndicatorRows = liveNationalIndicatorRows;
   const editionCodeOptions = useMemo(() => {
     const editionCodes = new Set<string>();
 
@@ -591,8 +582,7 @@ export function IndicatorManagementPage() {
 
   const selectedVersionCode =
     selectedIndicatorDetailQuery.data?.data.current_version_code ??
-    selectedIndicator?.current_version_code ??
-    versions.find((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code)?.version_code;
+    selectedIndicator?.current_version_code;
 
   const selectedVersionQuery = useQuery({
     queryKey: ["masters", "indicator-version", language, selectedUnitCode, selectedVersionCode],
@@ -614,30 +604,29 @@ export function IndicatorManagementPage() {
   );
   const indicatorVersions = liveIndicatorVersions.length
     ? liveIndicatorVersions
-    : versions.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
+    : [];
   const currentVersion = indicatorVersions.find((item) => item.is_current === "YES") ?? indicatorVersions[0];
   const indicatorMetadataRows = metadataRowsFromVersion(selectedVersionQuery.data?.data);
   const indicatorMeasures = indicatorMetadataRows.length
     ? indicatorMetadataRows
-    : measures.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
-  const fallbackIndicatorMetadata = metadataDetails.filter((item) => indicatorVersions.some((version) => version.version_code === item.version_code));
+    : [];
   const indicatorGlobalMappings = globalMappings.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
   const liveSourceAssignmentRows = useMemo(
     () => (sourceAssignmentsQuery.data?.data ?? selectedIndicatorDetailQuery.data?.data.source_assignments ?? []).map(sourceToRow),
     [sourceAssignmentsQuery.data, selectedIndicatorDetailQuery.data],
   );
-  const sourceAssignmentRows = liveSourceAssignmentRows.length ? liveSourceAssignmentRows : sourceAssignments;
+  const sourceAssignmentRows = liveSourceAssignmentRows;
   const indicatorSources = sourceAssignmentRows.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
   const organizationRowsData = useMemo(
-    () => (organizationsQuery.data?.data ? organizationRows(organizationsQuery.data.data) : organizationOptions),
+    () => (organizationsQuery.data?.data ? organizationRows(organizationsQuery.data.data) : []),
     [organizationsQuery.data],
   );
   const officerRowsData = useMemo(
-    () => (officersQuery.data?.data ? officerRows(officersQuery.data.data) : officerOptions),
+    () => (officersQuery.data?.data ? officerRows(officersQuery.data.data) : []),
     [officersQuery.data],
   );
   const periodicityRowsData = useMemo(
-    () => (periodicitiesQuery.data?.data ? periodicityRows(periodicitiesQuery.data.data) : periodicityOptions),
+    () => (periodicitiesQuery.data?.data ? periodicityRows(periodicitiesQuery.data.data) : []),
     [periodicitiesQuery.data],
   );
   const selectedVersionChanges = activeVersionChanges.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
@@ -880,7 +869,7 @@ export function IndicatorManagementPage() {
 
         {liveDataError ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-            {safeApiMessage(liveDataError)} Showing available fallback data where possible.
+            {safeApiMessage(liveDataError)} Data is not available.
           </div>
         ) : null}
 
@@ -937,7 +926,7 @@ export function IndicatorManagementPage() {
               <TableBody>
                 {filteredIndicators.map((indicator) => {
                   const sourceCount = sourceAssignmentRows.filter((item) => item.national_indicator_code === indicator.national_indicator_code).length;
-                  const global = globalMappings.find((item) => item.national_indicator_code === indicator.national_indicator_code);
+                  const global = indicatorGlobalMappings.find((item) => item.national_indicator_code === indicator.national_indicator_code);
                   return (
                     <TableRow key={indicator.id} className={selectedIndicatorCode === indicator.national_indicator_code ? "bg-accent/60" : ""}>
                       <TableCell className="max-w-80 whitespace-normal">
@@ -961,6 +950,13 @@ export function IndicatorManagementPage() {
                     </TableRow>
                   );
                 })}
+                {!filteredIndicators.length ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                      Not available.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </CardContent>
@@ -1080,7 +1076,7 @@ export function IndicatorManagementPage() {
 
             {activeTab === "metadata" ? (
               <RelatedTable
-                rows={indicatorMetadataRows.length ? indicatorMetadataRows : fallbackIndicatorMetadata}
+                rows={indicatorMetadataRows}
                 columns={[
                   { key: "version_code", label: "Version" },
                   { key: "measure_code", label: "Measure" },
