@@ -259,10 +259,12 @@ export const mastersService = {
 
   listIndicators: async ({
     locale,
+    unitCode,
     limit = 500,
     offset = 0,
   }: {
     locale: string;
+    unitCode?: string;
     limit?: number;
     offset?: number;
   }): Promise<MetadataListResponse<IndicatorListItem>> => {
@@ -272,6 +274,10 @@ export const mastersService = {
       offset: String(offset),
     });
 
+    if (unitCode) {
+      params.set("unit_code", unitCode);
+    }
+
     return apiRequest<MetadataListResponse<IndicatorListItem>>(
       `/masters/indicators?${params.toString()}`,
     );
@@ -280,28 +286,202 @@ export const mastersService = {
   getIndicator: async ({
     indicatorCode,
     locale,
+    unitCode,
   }: {
     indicatorCode: string;
     locale: string;
+    unitCode?: string;
   }): Promise<MetadataDetailResponse<IndicatorDetail>> => {
     const params = new URLSearchParams({ locale });
+
+    if (unitCode) {
+      params.set("unit_code", unitCode);
+    }
 
     return apiRequest<MetadataDetailResponse<IndicatorDetail>>(
       `/masters/indicators/${encodeURIComponent(indicatorCode)}?${params.toString()}`,
     );
   },
 
+  createIndicator: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicators?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateIndicator: async ({
+    indicatorCode,
+    locale,
+    body,
+  }: {
+    indicatorCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicators/${encodeURIComponent(indicatorCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
   getIndicatorVersion: async ({
     versionCode,
     locale,
+    unitCode,
   }: {
     versionCode: string;
     locale: string;
+    unitCode?: string;
   }): Promise<MetadataDetailResponse<IndicatorVersionDetail>> => {
     const params = new URLSearchParams({ locale });
 
+    if (unitCode) {
+      params.set("unit_code", unitCode);
+    }
+
     return apiRequest<MetadataDetailResponse<IndicatorVersionDetail>>(
       `/masters/indicator-versions/${encodeURIComponent(versionCode)}?${params.toString()}`,
+    );
+  },
+
+  createIndicatorVersion: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicator-versions?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateIndicatorVersion: async ({
+    versionCode,
+    locale,
+    body,
+  }: {
+    versionCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicator-versions/${encodeURIComponent(versionCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  createIndicatorMeasure: async ({
+    versionCode,
+    locale,
+    body,
+  }: {
+    versionCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicator-versions/${encodeURIComponent(versionCode)}/measures?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateIndicatorMeasure: async ({
+    versionCode,
+    measureCode,
+    locale,
+    body,
+  }: {
+    versionCode: string;
+    measureCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/indicator-versions/${encodeURIComponent(versionCode)}/measures/${encodeURIComponent(measureCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  createGlobalIndicator: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/global-indicators?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateGlobalIndicator: async ({
+    indicatorCode,
+    locale,
+    body,
+  }: {
+    indicatorCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/global-indicators/${encodeURIComponent(indicatorCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  createFrameworkIndicatorMapping: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/framework-indicator-mappings?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  createNationalGlobalIndicatorMapping: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/national-global-indicator-mappings?${params.toString()}`,
+      { method: "POST", json: body },
     );
   },
 
@@ -314,6 +494,38 @@ export const mastersService = {
 
     return apiRequest<MetadataListResponse<PeriodicityListItem>>(
       `/masters/periodicities?${params.toString()}`,
+    );
+  },
+
+  createPeriodicity: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/periodicities?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updatePeriodicity: async ({
+    periodicityCode,
+    locale,
+    body,
+  }: {
+    periodicityCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/periodicities/${encodeURIComponent(periodicityCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
     );
   },
 
@@ -369,6 +581,38 @@ export const mastersService = {
     );
   },
 
+  createOrganization: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/organizations?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateOrganization: async ({
+    organizationCode,
+    locale,
+    body,
+  }: {
+    organizationCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/organizations/${encodeURIComponent(organizationCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
   listOfficers: async ({
     locale,
     organizationCode,
@@ -392,6 +636,55 @@ export const mastersService = {
 
     return apiRequest<MetadataListResponse<OfficerListItem>>(
       `/masters/officers?${params.toString()}`,
+    );
+  },
+
+  createOfficer: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/officers?${params.toString()}`,
+      { method: "POST", json: body },
+    );
+  },
+
+  updateOfficer: async ({
+    organizationCode,
+    officerCode,
+    locale,
+    body,
+  }: {
+    organizationCode: string;
+    officerCode: string;
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/organizations/${encodeURIComponent(organizationCode)}/officers/${encodeURIComponent(officerCode)}?${params.toString()}`,
+      { method: "PATCH", json: body },
+    );
+  },
+
+  createSourceAssignment: async ({
+    locale,
+    body,
+  }: {
+    locale: string;
+    body: Record<string, unknown>;
+  }): Promise<MetadataDetailResponse<Record<string, unknown>>> => {
+    const params = new URLSearchParams({ locale });
+
+    return apiRequest<MetadataDetailResponse<Record<string, unknown>>>(
+      `/masters/source-assignments?${params.toString()}`,
+      { method: "POST", json: body },
     );
   },
 };

@@ -9,8 +9,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
@@ -108,6 +108,28 @@ function valueToString(value: unknown) {
   if (value === null || value === undefined) return undefined;
   if (typeof value === "boolean") return value ? "YES" : "NO";
   return String(value);
+}
+
+function readString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readOptionalString(formData: FormData, key: string) {
+  const value = readString(formData, key);
+  return value || null;
+}
+
+function readBoolean(formData: FormData, key: string, fallback = true) {
+  const value = readString(formData, key).toUpperCase();
+  if (!value) return fallback;
+  return value === "YES" || value === "TRUE" || value === "ACTIVE";
+}
+
+function readInteger(formData: FormData, key: string, fallback?: number) {
+  const value = readString(formData, key);
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function indicatorToRow(indicator: IndicatorListItem): MasterRow {
@@ -231,54 +253,66 @@ function RelatedTable({
   rows,
   columns,
   onAction,
+  onCreate,
 }: {
   rows: MasterRow[];
   columns: { key: string; label: string }[];
   onAction: (mode: NonNullable<DialogState>["mode"], row?: MasterRow) => void;
+  onCreate?: () => void;
 }) {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          {columns.map((column) => <TableHead key={column.key}>{column.label}</TableHead>)}
-          <TableHead>Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row.id}>
-            {columns.map((column) => (
-              <TableCell key={column.key} className="max-w-80 whitespace-normal font-mono text-[11px]">
-                {["status", "is_active", "mapping_type"].includes(column.key)
-                  ? <Badge variant={statusVariant(row[column.key])}>{row[column.key]}</Badge>
-                  : row[column.key] ?? "-"}
-              </TableCell>
-            ))}
-            <TableCell>
-              <div className="flex gap-1">
-                <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => onAction("view", row)}>
-                  <Eye aria-hidden="true" className="size-3" />
-                </Button>
-                <Button size="icon-xs" variant="outline" aria-label="Edit" disabled title="Masters mutation API not available yet">
-                  <Edit3 aria-hidden="true" className="size-3" />
-                </Button>
-                <Button size="icon-xs" variant="destructive" aria-label="Delete" disabled title="Masters mutation API not available yet">
-                  <Trash2 aria-hidden="true" className="size-3" />
-                </Button>
-              </div>
-            </TableCell>
+    <div className="grid gap-2">
+      {onCreate ? (
+        <div className="flex justify-end">
+          <Button size="sm" onClick={onCreate}>
+            <Plus aria-hidden="true" className="size-4" />
+            Add
+          </Button>
+        </div>
+      ) : null}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {columns.map((column) => <TableHead key={column.key}>{column.label}</TableHead>)}
+            <TableHead>Actions</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.id}>
+              {columns.map((column) => (
+                <TableCell key={column.key} className="max-w-80 whitespace-normal font-mono text-[11px]">
+                  {["status", "is_active", "mapping_type"].includes(column.key)
+                    ? <Badge variant={statusVariant(row[column.key])}>{row[column.key]}</Badge>
+                    : row[column.key] ?? "-"}
+                </TableCell>
+              ))}
+              <TableCell>
+                <div className="flex gap-1">
+                  <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => onAction("view", row)}>
+                    <Eye aria-hidden="true" className="size-3" />
+                  </Button>
+                  <Button size="icon-xs" variant="outline" aria-label="Edit" onClick={() => onAction("edit", row)}>
+                    <Edit3 aria-hidden="true" className="size-3" />
+                  </Button>
+                  <Button size="icon-xs" variant="destructive" aria-label="Deactivate" onClick={() => onAction("delete", row)}>
+                    <Trash2 aria-hidden="true" className="size-3" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
-function SelectField({ label, value, options }: { label: string; value?: string; options: MasterRow[] }) {
+function SelectField({ label, value, options, name = label }: { label: string; value?: string; options: MasterRow[]; name?: string }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name={name} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
         <option value="">Select</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
@@ -290,29 +324,59 @@ function SelectField({ label, value, options }: { label: string; value?: string;
   );
 }
 
-function TextField({ label, value }: { label: string; value?: string }) {
+function TextField({ label, value, name = label, required = false }: { label: string; value?: string; name?: string; required?: boolean }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <Input defaultValue={value ?? ""} />
+      <Input name={name} defaultValue={value ?? ""} required={required} />
     </label>
   );
 }
 
-function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: () => void }) {
+function IndicatorDialog({
+  dialog,
+  selectedIndicator,
+  selectedVersion,
+  selectedUnitCode,
+  organizationRowsData,
+  officerRowsData,
+  periodicityRowsData,
+  isSubmitting,
+  errorMessage,
+  onSubmit,
+  onClose,
+}: {
+  dialog: DialogState;
+  selectedIndicator?: MasterRow;
+  selectedVersion?: MasterRow;
+  selectedUnitCode: string;
+  organizationRowsData: MasterRow[];
+  officerRowsData: MasterRow[];
+  periodicityRowsData: MasterRow[];
+  isSubmitting: boolean;
+  errorMessage?: string | null;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onClose: () => void;
+}) {
   if (!dialog) return null;
 
   const isDelete = dialog.mode === "delete";
   const row = dialog.row;
   const entity = dialog.entity ?? "indicator";
   const isFormMode = ["create", "edit", "map"].includes(dialog.mode);
-  const isIndicatorForm = isFormMode && (entity === "indicator" || entity === "global-mapping");
+  const isIndicatorForm = isFormMode && entity === "indicator";
   const isSourceForm = isFormMode && entity === "source";
-  const isGenericRelatedForm = isFormMode && ["version", "metadata"].includes(entity);
+  const isVersionForm = isFormMode && entity === "version";
+  const isMeasureForm = isFormMode && entity === "metadata";
+  const isGlobalMappingForm = isFormMode && entity === "global-mapping";
+  const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
+  const activeFrameworkCode = selectedIndicator?.framework_code ?? "SDG_NIF";
+  const activeEditionCode = selectedIndicator?.edition_code ?? "SDG_NIF_2025";
+  const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="indicator-dialog-title">
-      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+      <form onSubmit={onSubmit} className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
         <div className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4">
           <div>
             <p className="text-[11px] font-semibold uppercase text-muted-foreground">Indicator management</p>
@@ -337,27 +401,77 @@ function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
 
           {isDelete && row ? (
             <div className="rounded-md bg-red-50 p-4 text-sm text-red-900">
-              Confirm delete for <strong>{row.national_indicator_code ?? row.id}</strong>. Related versions, mappings, assignments, requests, validation, and review history must be checked.
+              Confirm deactivate for <strong>{row.national_indicator_code ?? row.version_code ?? row.measure_code ?? row.global_indicator_code ?? row.source_organization_code ?? row.id}</strong>. Related versions, mappings, assignments, requests, validation, and review history must be checked.
+              {Object.entries(row).map(([key, value]) => (
+                <input key={key} type="hidden" name={key} value={value ?? ""} />
+              ))}
             </div>
           ) : null}
 
           {isIndicatorForm ? (
             <div className="grid gap-4">
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
+                <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
                 <TextField label="national_indicator_code" value={row?.national_indicator_code} />
                 <TextField label="indicator_number" value={row?.indicator_number} />
-                <TextField label="owning_unit_code" value={row?.owning_unit_code ?? "SDG"} />
-                <SelectField label="framework_node" value={row?.mapped_node_code} options={indicatorMappingNodeOptions} />
               </div>
-              <TextField label="name" value={row?.name} />
+              <TextField label="name" value={row?.name} required />
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <SelectField label="global_indicator" value={row?.global_indicator_code} options={globalIndicatorOptions} />
+                <TextField label="owning_unit_code" value={row?.owning_unit_code ?? (selectedUnitCode || "SDG")} />
+                <SelectField label="framework_node" name="node_code" value={row?.mapped_node_code} options={indicatorMappingNodeOptions} />
                 <TextField label="status" value={row?.status ?? "ACTIVE"} />
                 <TextField label="color_value" value={row?.color_value} />
-                <TextField label="sort_order" value={row?.sort_order ?? "10"} />
               </div>
               <div className="rounded-md bg-accent px-3 py-2 text-xs text-accent-foreground">
-                Source ministry, department, officer, and cadence are managed as multiple rows from the Sources tab.
+                If a framework node is selected, the UI also submits the framework-indicator mapping after saving the indicator.
+              </div>
+            </div>
+          ) : null}
+
+          {isVersionForm ? (
+            <div className="grid gap-4">
+              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
+                <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
+                <TextField label="national_indicator_code" value={activeIndicatorCode} required />
+                <TextField label="version_code" value={row?.version_code} />
+                <TextField label="name" value={row?.name ?? selectedIndicator?.name} required />
+                <TextField label="version_number" value={row?.version_number ?? "1"} />
+                <TextField label="data_type" value={row?.data_type ?? "NUMERIC"} />
+                <TextField label="unit_of_measure_code" value={row?.unit_of_measure_code ?? "PERCENT"} />
+                <TextField label="decimal_places" value={row?.decimal_places ?? "2"} />
+                <SelectField label="is_current" value={row?.is_current ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
+                <TextField label="status" value={row?.status ?? "ACTIVE"} />
+              </div>
+            </div>
+          ) : null}
+
+          {isMeasureForm ? (
+            <div className="grid gap-4">
+              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+                <TextField label="version_code" value={activeVersionCode} required />
+                <TextField label="measure_code" value={row?.measure_code} />
+                <TextField label="name" value={row?.name ?? "Indicator value"} required />
+                <TextField label="value_type" value={row?.value_type ?? "NUMERIC"} />
+                <TextField label="unit_code" value={row?.unit_code ?? "PERCENT"} />
+                <TextField label="aggregation_type" value={row?.aggregation_type ?? "SUM"} />
+                <SelectField label="is_required" value={row?.is_required ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
+                <SelectField label="is_active" value={row?.is_active ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
+              </div>
+            </div>
+          ) : null}
+
+          {isGlobalMappingForm ? (
+            <div className="grid gap-4">
+              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
+                <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
+                <TextField label="national_indicator_code" value={activeIndicatorCode} required />
+                <SelectField label="global_indicator_code" value={row?.global_indicator_code} options={globalIndicatorOptions} />
+                <TextField label="mapping_type" value={row?.mapping_type ?? "DIRECT"} />
+                <TextField label="mapping_note" value={row?.mapping_note} />
+                <SelectField label="is_active" value={row?.is_active ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
               </div>
             </div>
           ) : null}
@@ -365,19 +479,22 @@ function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
           {isSourceForm ? (
             <div className="grid gap-4">
               <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-2">
-                <SelectField label="national_indicator" value={row?.national_indicator_code} options={nationalIndicators} />
-                <SelectField label="source_organization" value={row?.source_organization_code} options={organizationOptions} />
-                <SelectField label="officer" value={row?.officer_code} options={officerOptions} />
-                <SelectField label="periodicity" value={row?.periodicity_code} options={periodicityOptions} />
+                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
+                <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
+                <TextField label="national_indicator_code" value={activeIndicatorCode} required />
+                <SelectField label="source_organization_code" value={row?.source_organization_code} options={organizationRowsData} />
+                <SelectField label="officer_code" value={row?.officer_code} options={officerRowsData} />
+                <SelectField label="periodicity_code" value={row?.periodicity_code} options={periodicityRowsData} />
                 <label className="grid gap-1 text-xs font-semibold">
                   assignment_role
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={row?.assignment_role ?? "PRIMARY_SOURCE"}>
-                    <option>PRIMARY_SOURCE</option>
-                    <option>SECONDARY_SOURCE</option>
-                    <option>REVIEW_SOURCE</option>
+                  <select name="assignment_role" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={row?.assignment_role ?? "PRIMARY_SOURCE"}>
+                    <option value="PRIMARY_SOURCE">PRIMARY_SOURCE</option>
+                    <option value="SECONDARY_SOURCE">SECONDARY_SOURCE</option>
+                    <option value="REVIEW_SOURCE">REVIEW_SOURCE</option>
                   </select>
                 </label>
                 <TextField label="valid_from" value={row?.valid_from ?? "2025-04-01"} />
+                <SelectField label="is_active" value={row?.is_active ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
               </div>
               <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
                 Add one row per source. The same indicator can have primary, secondary, and review source assignments.
@@ -385,45 +502,42 @@ function IndicatorDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
             </div>
           ) : null}
 
-          {isGenericRelatedForm ? (
-            <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-              {Object.entries(row ?? {}).filter(([key]) => key !== "id").map(([key, value]) => (
-                <TextField key={key} label={key} value={value} />
-              ))}
-            </div>
-          ) : null}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-border/70 bg-muted/40 px-5 py-4">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          {errorMessage ? <span className="mr-auto text-xs font-semibold text-red-700">{errorMessage}</span> : null}
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
           {dialog.mode !== "view" ? (
-            <Button type="button" variant={isDelete ? "destructive" : "default"} onClick={onClose}>
-              {isDelete ? "Delete" : "Save/Submit"}
+            <Button type="submit" variant={isDelete ? "destructive" : "default"} disabled={isSubmitting}>
+              {isSubmitting ? "Saving..." : isDelete ? "Deactivate" : "Save/Submit"}
             </Button>
           ) : null}
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
 export function IndicatorManagementPage() {
   const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [query, setQuery] = useState("");
   const [selectedIndicatorCode, setSelectedIndicatorCode] = useState(nationalIndicators[0]?.national_indicator_code ?? "");
   const [activeTab, setActiveTab] = useState<IndicatorTab>("overview");
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const indicatorsQuery = useQuery({
-    queryKey: ["masters", "indicators", language],
-    queryFn: () => mastersService.listIndicators({ locale: language }),
+    queryKey: ["masters", "indicators", language, selectedUnitCode],
+    queryFn: () => mastersService.listIndicators({ locale: language, unitCode: selectedUnitCode }),
   });
 
   const sourceAssignmentsQuery = useQuery({
-    queryKey: ["masters", "source-assignments", language],
-    queryFn: () => mastersService.listSourceAssignments({ locale: language }),
+    queryKey: ["masters", "source-assignments", language, selectedUnitCode],
+    queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: selectedUnitCode }),
   });
 
   const organizationsQuery = useQuery({
@@ -444,10 +558,8 @@ export function IndicatorManagementPage() {
   const sourceAssignmentData = sourceAssignmentsQuery.data?.data;
   const indicatorData = indicatorsQuery.data?.data;
   const selectedUnitSources = useMemo(
-    () => (sourceAssignmentData ?? []).filter((source) =>
-      !selectedUnitCode || source.source_organization_code === selectedUnitCode,
-    ),
-    [selectedUnitCode, sourceAssignmentData],
+    () => sourceAssignmentData ?? [],
+    [sourceAssignmentData],
   );
   const sourceIndicatorCodes = useMemo(
     () => new Set(selectedUnitSources.map((source) => source.national_indicator_code)),
@@ -483,6 +595,7 @@ export function IndicatorManagementPage() {
       mastersService.getIndicator({
         indicatorCode: selectedIndicator?.national_indicator_code ?? "",
         locale: language,
+        unitCode: selectedUnitCode,
       }),
     enabled: Boolean(selectedIndicator?.national_indicator_code),
   });
@@ -496,6 +609,7 @@ export function IndicatorManagementPage() {
       mastersService.getIndicatorVersion({
         versionCode: currentVersionCode ?? "",
         locale: language,
+        unitCode: selectedUnitCode,
       }),
     enabled: Boolean(currentVersionCode),
   });
@@ -540,7 +654,187 @@ export function IndicatorManagementPage() {
     title: string,
     row?: MasterRow,
     entity: DialogEntity = "indicator",
-  ) => setDialog({ mode, title, row, entity });
+  ) => {
+    setMutationError(null);
+    setMutationMessage(null);
+    setDialog({ mode, title, row, entity });
+  };
+
+  const invalidateIndicatorQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["masters", "indicators"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "indicator-detail"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "indicator-version"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "source-assignments"] }),
+    ]);
+  };
+
+  const indicatorMutation = useMutation({
+    mutationFn: async ({
+      currentDialog,
+      formData,
+    }: {
+      currentDialog: NonNullable<DialogState>;
+      formData: FormData;
+    }) => {
+      const entity = currentDialog.entity ?? "indicator";
+      const row = currentDialog.row;
+      const isDeactivate = currentDialog.mode === "delete";
+      const frameworkCode = readString(formData, "framework_code") || selectedIndicator?.framework_code || "SDG_NIF";
+      const editionCode = readString(formData, "edition_code") || selectedIndicator?.edition_code || "SDG_NIF_2025";
+      const nationalIndicatorCode = readString(formData, "national_indicator_code") || selectedIndicator?.national_indicator_code || "";
+
+      if (entity === "indicator") {
+        const body = {
+          framework_code: frameworkCode,
+          edition_code: editionCode,
+          national_indicator_code: nationalIndicatorCode || null,
+          indicator_number: readOptionalString(formData, "indicator_number"),
+          owning_unit_code: readOptionalString(formData, "owning_unit_code"),
+          name: readString(formData, "name") || row?.name || "",
+          color_value: readOptionalString(formData, "color_value"),
+          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          is_active: !isDeactivate,
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createIndicator({ locale: language, body });
+        } else {
+          await mastersService.updateIndicator({
+            indicatorCode: row?.national_indicator_code ?? nationalIndicatorCode,
+            locale: language,
+            body,
+          });
+        }
+
+        const nodeCode = readString(formData, "node_code");
+        if (!isDeactivate && nodeCode && nationalIndicatorCode) {
+          await mastersService.createFrameworkIndicatorMapping({
+            locale: language,
+            body: {
+              framework_code: frameworkCode,
+              edition_code: editionCode,
+              node_code: nodeCode,
+              national_indicator_code: nationalIndicatorCode,
+              mapping_type: "PRIMARY",
+              is_active: true,
+            },
+          });
+        }
+
+        setSelectedIndicatorCode(nationalIndicatorCode || row?.national_indicator_code || selectedIndicatorCode);
+        return;
+      }
+
+      if (entity === "version") {
+        const versionCode = readString(formData, "version_code") || row?.version_code || "";
+        const body = {
+          framework_code: frameworkCode,
+          edition_code: editionCode,
+          national_indicator_code: nationalIndicatorCode,
+          version_code: versionCode || null,
+          name: readString(formData, "name") || selectedIndicator?.name || "",
+          version_number: readInteger(formData, "version_number", 1),
+          unit_of_measure_code: readOptionalString(formData, "unit_of_measure_code"),
+          data_type: readString(formData, "data_type") || "NUMERIC",
+          decimal_places: readInteger(formData, "decimal_places"),
+          is_current: readBoolean(formData, "is_current", true),
+          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createIndicatorVersion({ locale: language, body });
+        } else {
+          await mastersService.updateIndicatorVersion({
+            versionCode: row?.version_code ?? versionCode,
+            locale: language,
+            body: { ...body, is_current: isDeactivate ? false : body.is_current },
+          });
+        }
+        return;
+      }
+
+      if (entity === "metadata") {
+        const versionCode = readString(formData, "version_code") || currentVersion?.version_code || "";
+        const measureCode = readString(formData, "measure_code") || row?.measure_code || "";
+        const body = {
+          measure_code: measureCode || null,
+          name: readString(formData, "name") || row?.name || "Indicator value",
+          value_type: readString(formData, "value_type") || "NUMERIC",
+          unit_code: readOptionalString(formData, "unit_code"),
+          aggregation_type: readOptionalString(formData, "aggregation_type"),
+          is_required: readBoolean(formData, "is_required", true),
+          is_active: isDeactivate ? false : readBoolean(formData, "is_active", true),
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createIndicatorMeasure({ versionCode, locale: language, body });
+        } else {
+          await mastersService.updateIndicatorMeasure({
+            versionCode,
+            measureCode: row?.measure_code ?? measureCode,
+            locale: language,
+            body,
+          });
+        }
+        return;
+      }
+
+      if (entity === "global-mapping") {
+        await mastersService.createNationalGlobalIndicatorMapping({
+          locale: language,
+          body: {
+            framework_code: frameworkCode,
+            edition_code: editionCode,
+            national_indicator_code: nationalIndicatorCode,
+            global_indicator_code: readString(formData, "global_indicator_code") || row?.global_indicator_code || "",
+            mapping_type: readString(formData, "mapping_type") || "DIRECT",
+            mapping_note: readOptionalString(formData, "mapping_note"),
+            is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+          },
+        });
+        return;
+      }
+
+      if (entity === "source") {
+        await mastersService.createSourceAssignment({
+          locale: language,
+          body: {
+            framework_code: frameworkCode,
+            edition_code: editionCode,
+            national_indicator_code: nationalIndicatorCode,
+            source_organization_code: readString(formData, "source_organization_code") || row?.source_organization_code || "",
+            officer_code: readOptionalString(formData, "officer_code"),
+            periodicity_code: readOptionalString(formData, "periodicity_code"),
+            assignment_role: readString(formData, "assignment_role") || "PRIMARY_SOURCE",
+            valid_from: readOptionalString(formData, "valid_from"),
+            is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+          },
+        });
+      }
+    },
+    onSuccess: async () => {
+      await invalidateIndicatorQueries();
+      setMutationError(null);
+      setMutationMessage("Indicator setup saved. Latest API data is being refreshed.");
+      setDialog(null);
+      window.setTimeout(() => setMutationMessage(null), 5000);
+    },
+    onError: (error) => {
+      setMutationMessage(null);
+      setMutationError(safeApiMessage(error));
+    },
+  });
+
+  const handleDialogSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!dialog) return;
+    setMutationError(null);
+    indicatorMutation.mutate({
+      currentDialog: dialog,
+      formData: new FormData(event.currentTarget),
+    });
+  };
 
   const tabConfig: { code: IndicatorTab; label: string }[] = [
     { code: "overview", label: "Overview" },
@@ -563,7 +857,7 @@ export function IndicatorManagementPage() {
           <div className="flex gap-2">
             <Button variant="outline" disabled title="Masters mutation API not available yet"><Download aria-hidden="true" className="size-4" /> Format</Button>
             <Button variant="outline" disabled title="Masters mutation API not available yet"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
-            <Button disabled title="Masters mutation API not available yet"><Plus aria-hidden="true" className="size-4" /> New indicator</Button>
+            <Button onClick={() => openDialog("create", "Create indicator", undefined, "indicator")}><Plus aria-hidden="true" className="size-4" /> New indicator</Button>
           </div>
         </div>
 
@@ -574,6 +868,12 @@ export function IndicatorManagementPage() {
         {liveDataError ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
             {safeApiMessage(liveDataError)} Showing available fallback data where possible.
+          </div>
+        ) : null}
+
+        {mutationMessage ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-900" role="status">
+            {mutationMessage}
           </div>
         ) : null}
 
@@ -625,7 +925,7 @@ export function IndicatorManagementPage() {
               </TableHeader>
               <TableBody>
                 {filteredIndicators.map((indicator) => {
-                  const sourceCount = sourceAssignments.filter((item) => item.national_indicator_code === indicator.national_indicator_code).length;
+                  const sourceCount = sourceAssignmentRows.filter((item) => item.national_indicator_code === indicator.national_indicator_code).length;
                   const global = globalMappings.find((item) => item.national_indicator_code === indicator.national_indicator_code);
                   return (
                     <TableRow key={indicator.id} className={selectedIndicatorCode === indicator.national_indicator_code ? "bg-accent/60" : ""}>
@@ -642,8 +942,9 @@ export function IndicatorManagementPage() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => openDialog("view", "Indicator detail", indicator)}><Eye aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Edit" disabled title="Masters mutation API not available yet"><Edit3 aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Map" disabled title="Mapping mutation API not available yet"><Link2 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Edit" onClick={() => openDialog("edit", "Edit indicator", indicator)}><Edit3 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Map" onClick={() => openDialog("map", "Map indicator", indicator, "global-mapping")}><Link2 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="destructive" aria-label="Deactivate" onClick={() => openDialog("delete", "Deactivate indicator", indicator)}><Trash2 aria-hidden="true" className="size-3" /></Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -661,7 +962,7 @@ export function IndicatorManagementPage() {
                 <h2 className="text-base font-bold">{selectedIndicator?.indicator_number} {selectedIndicator?.name}</h2>
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">{selectedIndicator?.national_indicator_code}</p>
               </div>
-              <Button variant="outline" disabled title="Masters mutation API not available yet">Edit selected</Button>
+              <Button variant="outline" onClick={() => openDialog("edit", "Edit selected indicator", selectedIndicator)}>Edit selected</Button>
             </div>
 
             <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Indicator detail tabs">
@@ -736,6 +1037,7 @@ export function IndicatorManagementPage() {
                   { key: "is_current", label: "Current" },
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Indicator version", row, "version")}
+                onCreate={() => openDialog("create", "Create indicator version", undefined, "version")}
               />
             ) : null}
 
@@ -750,6 +1052,7 @@ export function IndicatorManagementPage() {
                   { key: "is_active", label: "Active" },
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Metadata detail", row, "metadata")}
+                onCreate={() => openDialog("create", "Create measure metadata", undefined, "metadata")}
               />
             ) : null}
 
@@ -764,13 +1067,14 @@ export function IndicatorManagementPage() {
                   { key: "is_active", label: "Active" },
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Global mapping", row, "global-mapping")}
+                onCreate={() => openDialog("create", "Create global mapping", undefined, "global-mapping")}
               />
             ) : null}
 
             {activeTab === "sources" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
-                  <Button disabled title="Masters mutation API not available yet">
+                  <Button onClick={() => openDialog("create", "Add source assignment", undefined, "source")}>
                     <Plus aria-hidden="true" className="size-4" />
                     Add source
                   </Button>
@@ -792,7 +1096,19 @@ export function IndicatorManagementPage() {
         </Card>
       </section>
 
-      <IndicatorDialog dialog={dialog} onClose={() => setDialog(null)} />
+      <IndicatorDialog
+        dialog={dialog}
+        selectedIndicator={selectedIndicator}
+        selectedVersion={currentVersion}
+        selectedUnitCode={selectedUnitCode}
+        organizationRowsData={organizationRowsData}
+        officerRowsData={officerRowsData}
+        periodicityRowsData={periodicityRowsData}
+        isSubmitting={indicatorMutation.isPending}
+        errorMessage={mutationError}
+        onSubmit={handleDialogSubmit}
+        onClose={() => setDialog(null)}
+      />
     </AppShell>
   );
 }
