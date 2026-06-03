@@ -16,7 +16,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 
 import { ApiError } from "@/api/client";
@@ -48,7 +48,17 @@ import {
 } from "@/data/templatesManagement.sample";
 import { useLanguage } from "@/providers/language-context";
 import { templatesService } from "@/services/templatesService";
-import type { TemplateDefinitionListItem } from "@/types/templates";
+import type {
+  TemplateAxisMemberRequest,
+  TemplateAxisRequest,
+  TemplateBindingGroupRequest,
+  TemplateCellAxisMemberBinding,
+  TemplateCellRequest,
+  TemplateDefinitionListItem,
+  TemplateMeasureRequest,
+  TemplateRenderElementRequest,
+  TemplateValidationRuleRefRequest,
+} from "@/types/templates";
 
 type TemplateTab = "list" | "designer" | "contract";
 type TemplateModal = "create-template" | "view-values" | "template-detail" | "delete-template" | "data-entry-preview" | "json-structure" | null;
@@ -322,6 +332,58 @@ function apiErrorMessage(error: unknown) {
   return "Unable to load templates.";
 }
 
+function canvasRoleFor(value: unknown): CellRole {
+  const normalized = typeof value === "string" ? value.toUpperCase() : "";
+  if (normalized === "TITLE") return "HEADER";
+  if (["EMPTY", "INDICATOR", "HEADER", "DIMENSION_MEMBER", "INPUT", "MEASURE"].includes(normalized)) {
+    return normalized as CellRole;
+  }
+  return "EMPTY";
+}
+
+function numberFromRecord(record: Record<string, unknown>, key: string, fallback: number) {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function stringFromRecord(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function canvasCellsFromRenderContract(contract?: { render_elements?: Array<Record<string, unknown>> }) {
+  if (!contract?.render_elements?.length) return null;
+  const next: Record<string, CanvasCell> = {};
+
+  contract.render_elements.forEach((element) => {
+    const metadata = element.render_metadata && typeof element.render_metadata === "object"
+      ? element.render_metadata as Record<string, unknown>
+      : {};
+    const address = stringFromRecord(metadata, "address") ?? coordToAddress(
+      numberFromRecord(element, "row_start", 1),
+      numberFromRecord(element, "column_start", 1),
+    );
+    next[address] = {
+      value: stringFromRecord(element, "label") ?? "",
+      role: canvasRoleFor(element.element_type),
+      boundCode: stringFromRecord(element, "axis_code") ?? stringFromRecord(element, "cell_code"),
+      editable: Boolean(element.cell_code),
+      align: stringFromRecord(metadata, "align") as HorizontalAlign | undefined,
+      valign: stringFromRecord(metadata, "vertical_align") as VerticalAlign | undefined,
+      merge: {
+        rowSpan: numberFromRecord(element, "row_span", 1),
+        colSpan: numberFromRecord(element, "column_span", 1),
+      },
+      mergeOwner: stringFromRecord(metadata, "merge_owner"),
+      frozen: Boolean(metadata.frozen),
+      groupId: stringFromRecord(metadata, "group_id"),
+      groupLabel: stringFromRecord(metadata, "group_label"),
+    };
+  });
+
+  return Object.keys(next).length ? next : null;
+}
+
 const optionFor = (code: BindingObjectCode) => bindingOptions.find((option) => option.code === code) ?? bindingOptions[0];
 
 function addressToCoord(address: string) {
@@ -333,6 +395,24 @@ function addressToCoord(address: string) {
 
 function coordToAddress(row: number, col: number) {
   return `${canvasColumns[col - 1] ?? "A"}${row}`;
+}
+
+function normalizeCodePart(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "ITEM";
+}
+
+function axisApiCode(code: BindingObjectCode, role: "ROW" | "COLUMN" | "CONTEXT" = "CONTEXT") {
+  if (code === "INDICATOR_VALUE") return "AXIS_MEASURE_CONTEXT";
+  const suffix = role === "ROW" ? "ROWS" : role === "COLUMN" ? "COLUMNS" : "CONTEXT";
+  return `AXIS_${normalizeCodePart(code)}_${suffix}`;
+}
+
+function cellCodeForAddress(templateCode: string, address: string) {
+  return `CELL_${normalizeCodePart(templateCode).slice(0, 36)}_${normalizeCodePart(address)}`;
+}
+
+function elementCodeForAddress(address: string) {
+  return `EL_${normalizeCodePart(address)}`;
 }
 
 const focusTemplateCell = (address: string) => {
@@ -1536,7 +1616,8 @@ function BindingPanel({
 
 export function TemplateManagementPage() {
   const { language } = useLanguage();
-  const [localTemplates, setTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
+  const queryClient = useQueryClient();
+  const [localTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
   const [activeTab, setActiveTab] = useState<TemplateTab>("list");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | "ALL">("ALL");
@@ -1594,6 +1675,27 @@ export function TemplateManagementPage() {
   const templates = apiTemplates ?? localTemplates;
 
   const selectedTemplate = templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? templateDefinitions[0];
+  const activeVersionCode = selectedTemplate.current_version_code;
+  const templateDetailQuery = useQuery({
+    queryKey: ["templates", "detail", selectedTemplate.template_code, templatesUnitCode, language],
+    queryFn: () => templatesService.getTemplate({ templateCode: selectedTemplate.template_code, locale: language, unitCode: templatesUnitCode }),
+    enabled: Boolean(selectedTemplate.template_code),
+  });
+  const templateVersionsQuery = useQuery({
+    queryKey: ["templates", "versions", selectedTemplate.template_code, templatesUnitCode, language],
+    queryFn: () => templatesService.listTemplateVersions({ templateCode: selectedTemplate.template_code, locale: language, unitCode: templatesUnitCode }),
+    enabled: Boolean(selectedTemplate.template_code),
+  });
+  const renderContractQuery = useQuery({
+    queryKey: ["templates", "render-contract", activeVersionCode, templatesUnitCode, language],
+    queryFn: () => templatesService.getRenderContract({ versionCode: activeVersionCode, locale: language, unitCode: templatesUnitCode }),
+    enabled: Boolean(activeVersionCode),
+  });
+  const renderContractCells = useMemo(
+    () => canvasCellsFromRenderContract(renderContractQuery.data?.data),
+    [renderContractQuery.data],
+  );
+  const canvasDisplayCells = renderContractCells && designerStage === "basics" ? renderContractCells : cells;
   const selectedVersion = templateVersions.find((version) => version.version_code === selectedTemplate.current_version_code) ?? templateVersions[0];
   const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
   const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
@@ -1796,9 +1898,395 @@ export function TemplateManagementPage() {
     );
   }, [aggregationMethod, cells, columnAxes, combineMeasureBelowDimension, datatype, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, validationRule, verticalAlign]);
 
+  const templateSavePayload = useMemo(() => {
+    const allAxes = [
+      ...rowAxes.map((code, index) => ({ code, role: "ROW" as const, index })),
+      ...columnAxes.map((code, index) => ({ code, role: "COLUMN" as const, index })),
+    ];
+    const axes: TemplateAxisRequest[] = allAxes
+      .filter((axis) => axis.code !== "INDICATOR_VALUE")
+      .map((axis) => ({
+        axis_code: axisApiCode(axis.code, axis.role),
+        axis_role: axis.role,
+        dimension_code: axis.code,
+        label: axis.code === "GEOGRAPHY" ? "Location" : optionFor(axis.code).label,
+        unit_code: templatesUnitCode,
+        member_strategy: "FIXED",
+        axis_depth: axis.index + 1,
+        is_required: true,
+        allow_multiple: false,
+        sort_order: (axis.index + 1) * 10,
+        render_metadata: {
+          selected_range: axis.role === "ROW" ? "A2:A40" : "B2:Z4",
+          geography_scope: axis.code === "GEOGRAPHY" ? geographyScope : undefined,
+        },
+      }));
+
+    const axisMembers: TemplateAxisMemberRequest[] = axes.flatMap((axis) => {
+      const bindingCode = axis.dimension_code as BindingObjectCode;
+      return getMembersForObject(bindingCode, geographyScope).map((member, index) => ({
+        axis_code: axis.axis_code,
+        member_code: member.member_code,
+        unit_code: templatesUnitCode,
+        member_order: (index + 1) * 10,
+        is_default: index === 0,
+        is_active: true,
+      }));
+    });
+
+    const measures: TemplateMeasureRequest[] = measureBindingOptions
+      .filter((measure) => measure.code === selectedMeasure.code || boundMeasureCodes.includes(measure.code))
+      .map((measure, index) => ({
+        measure_code: measure.code,
+        indicator_version_code: selectedTemplate.mapped_indicator_code,
+        source_measure_code: measure.code,
+        label: measure.label,
+        unit_code: templatesUnitCode,
+        value_type: measure.valueType,
+        measure_unit_code: measure.unitCode,
+        aggregation_type: aggregationMethod,
+        decimal_places: measure.decimalPlaces,
+        validation_rule_code: measure.validationRule,
+        sort_order: (index + 1) * 10,
+        is_editable: true,
+        is_required: required,
+        render_metadata: { selected_range: selectedRange },
+      }));
+
+    const bindingGroups: TemplateBindingGroupRequest[] = [
+      ...rowAxes.map((code, index) => ({
+        binding_group_code: `BIND_${normalizeCodePart(code)}_ROWS`,
+        binding_group_type: "AXIS",
+        unit_code: templatesUnitCode,
+        axis_code: axisApiCode(code, "ROW"),
+        axis_role: "ROW",
+        header_label: code === "GEOGRAPHY" ? "Location" : optionFor(code).label,
+        show_header: showHeader,
+        axis_alignment: "ROW",
+        freeze_group: code === "GEOGRAPHY",
+        is_editable: false,
+        is_required: true,
+        display_order: (index + 1) * 10,
+        nesting_order: index + 1,
+        selected_range: "A2:A40",
+        geography_scope_code: code === "GEOGRAPHY" ? geographyScope : null,
+      })),
+      ...columnAxes.map((code, index) => ({
+        binding_group_code: `BIND_${normalizeCodePart(code)}_COLUMNS`,
+        binding_group_type: code === "INDICATOR_VALUE" ? "MEASURE" : "AXIS",
+        unit_code: templatesUnitCode,
+        axis_code: code === "INDICATOR_VALUE" ? null : axisApiCode(code, "COLUMN"),
+        measure_code: code === "INDICATOR_VALUE" ? selectedMeasure.code : null,
+        axis_role: "COLUMN",
+        header_label: optionFor(code).label,
+        show_header: showHeader,
+        axis_alignment: "COLUMN",
+        freeze_group: code === "TIME_PERIOD",
+        is_editable: code === "INDICATOR_VALUE",
+        is_required: true,
+        display_order: (index + 1) * 10,
+        nesting_order: index + 1,
+        selected_range: "B2:Z4",
+        render_options: code === "AREA_TYPE"
+          ? {
+              rollup_rule_code: "ROLLUP_AREA_TYPE_TOTAL",
+              entry_mode: rollupEntryMode,
+              aggregation_method: aggregationMethod,
+              parent_member_code: "TOTAL",
+              child_member_codes: ["RURAL", "URBAN"],
+            }
+          : {},
+        combine_mode: combineMeasureBelowDimension && code !== "INDICATOR_VALUE" ? "DIMENSION_LABEL_OVER_MEASURE_UNIT" : null,
+      })),
+      {
+        binding_group_code: `BIND_${normalizeCodePart(selectedMeasure.code)}`,
+        binding_group_type: "MEASURE",
+        unit_code: templatesUnitCode,
+        measure_code: selectedMeasure.code,
+        header_label: selectedMeasure.label,
+        show_header: false,
+        axis_alignment: "CONTEXT",
+        freeze_group: false,
+        is_editable: true,
+        is_required: required,
+        display_order: 90,
+        nesting_order: 1,
+        selected_range: selectedRange,
+        horizontal_align: horizontalAlign,
+        vertical_align: verticalAlign,
+        value_type_override: datatype,
+        decimal_places_override: decimalPlaces,
+        validation_rule_code_override: validationRule,
+        geography_scope_code: geographyScope,
+      },
+    ];
+
+    const editableEntries = Object.entries(cells)
+      .filter(([, cell]) => cell.role === "INPUT" || cell.editable)
+      .slice(0, 80);
+
+    const axisForDimension = (dimensionCode: BindingObjectCode) => {
+      if (rowAxes.includes(dimensionCode)) return axisApiCode(dimensionCode, "ROW");
+      if (columnAxes.includes(dimensionCode)) return axisApiCode(dimensionCode, "COLUMN");
+      return axisApiCode(dimensionCode, "CONTEXT");
+    };
+    const axisMemberTupleFor = (address: string): TemplateCellAxisMemberBinding[] => {
+      const { row, col } = addressToCoord(address);
+      return allAxes
+        .filter((axis) => axis.code !== "INDICATOR_VALUE")
+        .map((axis) => {
+          const members = getMembersForObject(axis.code, geographyScope);
+          const index = axis.role === "ROW" ? Math.max(0, row - 5) : Math.max(0, col - 2);
+          const member = members[index % Math.max(members.length, 1)];
+          return {
+            axis_code: axisForDimension(axis.code),
+            dimension_code: axis.code,
+            member_code: member?.member_code ?? "UNSPECIFIED",
+          };
+        });
+    };
+
+    const templateCells = editableEntries.map(([address, cell]) => {
+      const cellMeasure = measureBindingOptions.find((measure) => measure.code === cell.boundCode) ?? selectedMeasure;
+      const cellCode = cellCodeForAddress(selectedTemplate.template_code, address);
+      const cellRequest: TemplateCellRequest = {
+        cell_code: cellCode,
+        measure_code: cellMeasure.code,
+        unit_code: templatesUnitCode,
+        indicator_version_code: selectedTemplate.mapped_indicator_code,
+        row_axis_code: rowAxes[0] ? axisApiCode(rowAxes[0], "ROW") : null,
+        column_axis_code: columnAxes.find((code) => code !== "INDICATOR_VALUE") ? axisApiCode(columnAxes.find((code) => code !== "INDICATOR_VALUE") ?? "TIME_PERIOD", "COLUMN") : null,
+        context_axis_code: null,
+        is_editable: cell.editable ?? true,
+        is_required: cell.required ?? required,
+        validation_profile_code: cell.validationRule ?? cellMeasure.validationRule,
+        render_metadata: {
+          address,
+          align: cell.align ?? horizontalAlign,
+          vertical_align: cell.valign ?? verticalAlign,
+          value_type: cell.datatype ?? cellMeasure.valueType,
+        },
+      };
+      return {
+        cell: cellRequest,
+        axisMembers: axisMemberTupleFor(address),
+      };
+    });
+
+    const renderElements: TemplateRenderElementRequest[] = Object.entries(cells).slice(0, 160).map(([address, cell], index) => {
+      const { row, col } = addressToCoord(address);
+      const merge = cell.merge ?? { rowSpan: 1, colSpan: 1 };
+      const cellCode = cell.role === "INPUT" || cell.editable ? cellCodeForAddress(selectedTemplate.template_code, address) : null;
+      return {
+        element_code: elementCodeForAddress(address),
+        element_type: cell.role ?? "EMPTY",
+        unit_code: templatesUnitCode,
+        label: cell.value ?? null,
+        axis_code: cell.groupBindingCode && cell.groupBindingCode !== "INDICATOR_VALUE" ? axisForDimension(cell.groupBindingCode) : null,
+        cell_code: cellCode,
+        row_start: row,
+        column_start: col,
+        row_span: merge.rowSpan,
+        column_span: merge.colSpan,
+        sort_order: index + 1,
+        render_metadata: {
+          address,
+          align: cell.align,
+          vertical_align: cell.valign,
+          frozen: cell.frozen,
+          merge_owner: cell.mergeOwner,
+          group_id: cell.groupId,
+          group_label: cell.groupLabel,
+        },
+      };
+    });
+
+    const validationRuleRefs: TemplateValidationRuleRefRequest[] = templateCells.map(({ cell }) => ({
+      rule_code: cell.validation_profile_code ?? selectedMeasure.validationRule,
+      unit_code: templatesUnitCode,
+      cell_code: cell.cell_code,
+      measure_code: cell.measure_code,
+      severity: "ERROR",
+      rule_config: {
+        required: cell.is_required,
+        decimal_places: decimalPlaces,
+      },
+    }));
+
+    return { axes, axisMembers, measures, bindingGroups, templateCells, renderElements, validationRuleRefs };
+  }, [aggregationMethod, boundMeasureCodes, cells, columnAxes, combineMeasureBelowDimension, datatype, decimalPlaces, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedRange, selectedTemplate, showHeader, validationRule, verticalAlign]);
+
   const addOperation = (label: string, detail: string) => {
     setOperations((current) => [...current, { id: `${Date.now()}-${label}`, label, detail }]);
   };
+
+  const createTemplateDraftMutation = useMutation({
+    mutationFn: async () => {
+      const stamp = Date.now();
+      const templateCode = `TPL_NIF_1_2_1_UI_${stamp}`;
+      const versionCode = `${templateCode}_V1`;
+
+      await templatesService.upsertTemplate({
+        locale: language,
+        payload: {
+          template_code: templateCode,
+          name: "Live demo NIF 1.2.1 template draft",
+          owning_unit_code: templatesUnitCode,
+          template_type: "DATA_ENTRY",
+          status: "DRAFT",
+          is_active: true,
+          description: "Draft created from Template Designer UI.",
+        },
+      });
+
+      await templatesService.upsertTemplateVersion({
+        locale: language,
+        templateCode,
+        payload: {
+          template_code: templateCode,
+          version_code: versionCode,
+          title: "Live demo NIF 1.2.1 template draft V1",
+          unit_code: templatesUnitCode,
+          version_number: 1,
+          render_contract_version: "v1",
+          is_current: false,
+          status: "DRAFT",
+          instructions: "Bind dimensions, measures, cells, render elements, and validation references before publishing.",
+        },
+      });
+
+      return { templateCode, versionCode };
+    },
+    onSuccess: async ({ templateCode, versionCode }) => {
+      await queryClient.invalidateQueries({ queryKey: ["templates", "list", templatesUnitCode] });
+      setSelectedTemplateCode(templateCode);
+      setCells(buildHeaderCells({
+        ...templateDefinitions[0],
+        template_code: templateCode,
+        current_version_code: versionCode,
+        status: "DRAFT",
+        name: "Live demo NIF 1.2.1 template draft",
+        updated_at: "Created from Templates API",
+      }));
+      setBoundObjects([]);
+      setBoundMeasureCodes([]);
+      setRowAxes([]);
+      setColumnAxes([]);
+      setCombineMeasureBelowDimension(false);
+      setVisibleColumnCount(initialVisibleColumnCount);
+      setVisibleRowCount(initialVisibleRowCount);
+      setSelectedAnchor("B2");
+      setSelectedFocus("B2");
+      setEditingCell("B2");
+      setCellText("");
+      setActiveTab("designer");
+      setActivityMessage("Template draft and version were created through the Templates API.");
+      addOperation("Draft created", `${templateCode} and ${versionCode} created through Templates API.`);
+      setModal(null);
+    },
+    onError: (error) => {
+      setActivityMessage(apiErrorMessage(error));
+    },
+  });
+
+  const saveTemplateDraftMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeVersionCode) {
+        throw new Error("Create a template version before saving the designer contract.");
+      }
+      if (!selectedTemplate.mapped_indicator_code || selectedTemplate.mapped_indicator_code === "-") {
+        throw new Error("This template row does not include an indicator_version_code. Open a template detail that provides it before saving measures.");
+      }
+
+      for (const measure of templateSavePayload.measures) {
+        await templatesService.upsertMeasure({ locale: language, versionCode: activeVersionCode, payload: measure });
+      }
+      for (const axis of templateSavePayload.axes) {
+        await templatesService.upsertAxis({ locale: language, versionCode: activeVersionCode, payload: axis });
+      }
+      for (const member of templateSavePayload.axisMembers) {
+        await templatesService.upsertAxisMember({
+          locale: language,
+          versionCode: activeVersionCode,
+          axisCode: member.axis_code,
+          payload: member,
+        });
+      }
+      for (const group of templateSavePayload.bindingGroups) {
+        await templatesService.upsertBindingGroup({ locale: language, versionCode: activeVersionCode, payload: group });
+      }
+      for (const { cell, axisMembers } of templateSavePayload.templateCells) {
+        await templatesService.upsertCell({ locale: language, versionCode: activeVersionCode, payload: cell });
+        await templatesService.replaceCellAxisMembers({
+          locale: language,
+          versionCode: activeVersionCode,
+          cellCode: cell.cell_code,
+          payload: { unit_code: templatesUnitCode, axis_member_bindings: axisMembers },
+        });
+      }
+      for (const element of templateSavePayload.renderElements) {
+        await templatesService.upsertRenderElement({ locale: language, versionCode: activeVersionCode, payload: element });
+      }
+      for (const ruleRef of templateSavePayload.validationRuleRefs) {
+        await templatesService.upsertValidationRuleRef({ locale: language, versionCode: activeVersionCode, payload: ruleRef });
+      }
+    },
+    onSuccess: async () => {
+      setDesignerStage("saved");
+      await queryClient.invalidateQueries({ queryKey: ["templates", "render-contract", activeVersionCode] });
+      setActivityMessage("Template designer contract saved through relational Templates APIs.");
+      addOperation("Save draft", "Measures, axes, members, binding groups, cells, render elements, and validation refs saved.");
+    },
+    onError: (error) => {
+      setActivityMessage(error instanceof Error && !(error instanceof ApiError) ? error.message : apiErrorMessage(error));
+    },
+  });
+
+  const publishTemplateMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeVersionCode) {
+        throw new Error("Create a template version before publishing.");
+      }
+
+      return templatesService.publishTemplateVersion({
+        locale: language,
+        versionCode: activeVersionCode,
+        payload: {
+          unit_code: templatesUnitCode,
+          publish_notes: "Published from Template Designer UI.",
+        },
+      });
+    },
+    onSuccess: async () => {
+      setDesignerStage("published");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["templates", "list", templatesUnitCode] }),
+        queryClient.invalidateQueries({ queryKey: ["templates", "render-contract", activeVersionCode] }),
+      ]);
+      setActivityMessage("Template version published through the Templates API.");
+      addOperation("Publish active", `${activeVersionCode} published through Templates API.`);
+    },
+    onError: (error) => {
+      setActivityMessage(error instanceof Error && !(error instanceof ApiError) ? error.message : apiErrorMessage(error));
+    },
+  });
+
+  const deactivateTemplateMutation = useMutation({
+    mutationFn: async () => templatesService.deactivateTemplate({
+      locale: language,
+      templateCode: selectedTemplate.template_code,
+      payload: { unit_code: templatesUnitCode, is_active: false },
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["templates", "list", templatesUnitCode] });
+      setActivityMessage("Template deactivated through the Templates API.");
+      addOperation("Template deactivated", `${selectedTemplate.template_code} deactivated in unit ${templatesUnitCode}.`);
+      setModal(null);
+    },
+    onError: (error) => {
+      setActivityMessage(apiErrorMessage(error));
+    },
+  });
 
   const snapshot = useCallback((): CanvasSnapshot => ({
     cells,
@@ -3751,101 +4239,19 @@ export function TemplateManagementPage() {
   };
 
   const handleCreateDraft = () => {
-    const demoTemplate: TemplateDefinitionSample = {
-      template_code: "TPL_NIF_1_2_1_LIVE_DEMO_DRAFT",
-      template_type: "DATA_ENTRY",
-      owning_unit_code: "SDG",
-      status: "DRAFT",
-      is_active: false,
-      current_version_code: "TPL_NIF_1_2_1_AREA_GENDER_TIME_DRAFT_V1",
-      name: "Live demo NIF 1.2.1 template draft",
-      description: "UI-only draft created from the modal to demonstrate the governed template design flow.",
-      mapped_indicator_code: "NIF_1_2_1",
-      mapped_indicator_number: "1.2.1",
-      mapped_indicator_name: "Population below poverty line",
-      mapped_global_indicator_code: "GIND_1_2_1",
-      source_unit_code: "SSD_DEMO_SOURCE",
-      version_count: 1,
-      axis_count: 0,
-      cell_count: 0,
-      validation_rule_count: 3,
-      updated_at: "UI demo session",
-    };
-
-    setTemplates((current) => {
-      if (current.some((template) => template.template_code === demoTemplate.template_code)) return current;
-      return [demoTemplate, ...current];
-    });
-    setSelectedTemplateCode(demoTemplate.template_code);
-    setCells(buildHeaderCells(demoTemplate));
-    setBoundObjects([]);
-    setBoundMeasureCodes([]);
-    setRowAxes([]);
-    setColumnAxes([]);
-    setCombineMeasureBelowDimension(false);
-    setVisibleColumnCount(initialVisibleColumnCount);
-    setVisibleRowCount(initialVisibleRowCount);
-    setSelectedAnchor("B2");
-    setSelectedFocus("B2");
-    setEditingCell("B2");
-    setCellText("");
-    setActiveTab("designer");
-    setActivityMessage("Draft created. The canvas is blank until you bind indicator, dimensions, and measure.");
-    addOperation("Draft created", "Template basics selected: unit SDG, indicator NIF_1_2_1.");
-    setModal(null);
+    createTemplateDraftMutation.mutate();
   };
 
   const handleDeleteDraft = () => {
-    if (selectedTemplate.status !== "DRAFT") {
-      setActivityMessage("Only draft templates can be deleted in this UI demo.");
-      setModal(null);
-      return;
-    }
-
-    const fallback = templates.find((template) => template.template_code !== selectedTemplate.template_code) ?? templateDefinitions[0];
-    setTemplates((current) => current.filter((template) => template.template_code !== selectedTemplate.template_code));
-    setSelectedTemplateCode(fallback.template_code);
-    setActivityMessage("Draft removed locally. No API or database mutation was executed.");
-    addOperation("Draft deleted", `${selectedTemplate.template_code} removed from local UI state.`);
-    setModal(null);
+    deactivateTemplateMutation.mutate();
   };
 
   const handleSaveDesigner = () => {
-    setDesignerStage("saved");
-    setTemplates((current) =>
-      current.map((template) =>
-        template.template_code === selectedTemplate.template_code
-          ? {
-              ...template,
-              axis_count: Math.max(template.axis_count, boundObjects.filter((item) => item.type === "Dimension").length),
-              cell_count: Math.max(template.cell_count, generatedRows * generatedColumns),
-              updated_at: "Saved in UI demo",
-            }
-          : template,
-      ),
-    );
-    setActivityMessage("Template draft saved locally. Contract preview shows axes, measures, cells, render elements, and validation refs.");
-    addOperation("Save draft", "Local UI state saved. No API call executed.");
+    saveTemplateDraftMutation.mutate();
   };
 
   const handlePublishTemplate = () => {
-    setDesignerStage("published");
-    setTemplates((current) =>
-      current.map((template) =>
-        template.template_code === selectedTemplate.template_code
-          ? {
-              ...template,
-              status: "ACTIVE",
-              is_active: true,
-              axis_count: Math.max(template.axis_count, boundObjects.filter((item) => item.type === "Dimension").length),
-              cell_count: Math.max(template.cell_count, generatedRows * generatedColumns),
-              updated_at: "Published in UI demo",
-            }
-          : template,
-      ),
-    );
-    setActivityMessage("Template marked ACTIVE locally. It is now ready to be assigned from Collection Request UI.");
-    addOperation("Publish active", "Template status changed to ACTIVE in local UI state.");
+    publishTemplateMutation.mutate();
   };
 
   const workflowSteps = [
@@ -3885,7 +4291,7 @@ export function TemplateManagementPage() {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview data entry</Button>
             <Button variant="outline" onClick={() => setActiveTab("contract")}><FileSpreadsheet aria-hidden="true" className="size-4" /> Contract</Button>
-            <Button onClick={() => setModal("create-template")}><Plus aria-hidden="true" className="size-4" /> New template draft</Button>
+            <Button onClick={() => setModal("create-template")} disabled={createTemplateDraftMutation.isPending}><Plus aria-hidden="true" className="size-4" /> New template draft</Button>
           </div>
         </div>
 
@@ -3933,6 +4339,25 @@ export function TemplateManagementPage() {
             ))}
           </div>
         </div>
+
+        {activeTab !== "list" ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs">
+            <span className="font-semibold">
+              API contract: {activeVersionCode || "no version selected"}
+            </span>
+            <div className="flex flex-wrap gap-2 text-muted-foreground">
+              {templateDetailQuery.isFetching ? <span>Loading template detail...</span> : null}
+              {templateVersionsQuery.data ? <span>{templateVersionsQuery.data.count} version(s)</span> : null}
+              {renderContractQuery.isFetching ? <span>Loading render-contract...</span> : null}
+              {renderContractQuery.data ? (
+                <span>
+                  {renderContractQuery.data.data.cells?.length ?? 0} cells / {renderContractQuery.data.data.binding_groups?.length ?? 0} groups
+                </span>
+              ) : null}
+              {renderContractQuery.error ? <span className="text-destructive">{apiErrorMessage(renderContractQuery.error)}</span> : null}
+            </div>
+          </div>
+        ) : null}
 
         {activeTab === "list" ? (
           <Card>
@@ -4064,15 +4489,15 @@ export function TemplateManagementPage() {
                       <Button size="sm" variant="outline" onClick={() => setModal("json-structure")}>
                         <Code2 aria-hidden="true" className="size-4" /> JSON
                       </Button>
-                      <Button size="sm" variant="outline" onClick={handleSaveDesigner}><Save aria-hidden="true" className="size-4" /> Save draft</Button>
+                      <Button size="sm" variant="outline" onClick={handleSaveDesigner} disabled={saveTemplateDraftMutation.isPending || !activeVersionCode}><Save aria-hidden="true" className="size-4" /> {saveTemplateDraftMutation.isPending ? "Saving..." : "Save draft"}</Button>
                       <Button size="sm" variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview</Button>
-                      <Button size="sm" onClick={handlePublishTemplate}><CheckCircle2 aria-hidden="true" className="size-4" /> Publish active</Button>
+                      <Button size="sm" onClick={handlePublishTemplate} disabled={publishTemplateMutation.isPending || !activeVersionCode}><CheckCircle2 aria-hidden="true" className="size-4" /> {publishTemplateMutation.isPending ? "Publishing..." : "Publish active"}</Button>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className="grid gap-3">
                   <CanvasTable
-                    cells={cells}
+                    cells={canvasDisplayCells}
                     selectedAnchor={selectedAnchor}
                     selectedFocus={selectedFocus}
                     editingCell={editingCell}
