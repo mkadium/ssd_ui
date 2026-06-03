@@ -29,7 +29,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  globalIndicatorOptions,
   indicatorMappingNodeOptions,
   type MasterRow,
 } from "@/data/mastersManagement.sample";
@@ -37,6 +36,7 @@ import { useLanguage } from "@/providers/language-context";
 import { mastersService } from "@/services/mastersService";
 import type {
   IndicatorDetail,
+  FrameworkEditionListItem,
   IndicatorListItem,
   IndicatorVersionDetail,
   OfficerListItem,
@@ -55,6 +55,15 @@ type DialogState = {
 } | null;
 
 const globalMappings: MasterRow[] = [];
+const globalIndicatorMappingOptions: MasterRow[] = [
+  {
+    id: "SDG_1_2_1",
+    global_indicator_code: "SDG_1_2_1",
+    indicator_number: "1.2.1",
+    name: "SDG global indicator 1.2.1",
+    status: "ACTIVE",
+  },
+];
 
 const activeVersionChanges: MasterRow[] = [
   {
@@ -91,7 +100,12 @@ function safeApiMessage(error: unknown) {
     if (error.status === 401) return "Sign in again to load indicator data.";
     if (error.status === 403) return "You do not have permission to view indicator data.";
     if (error.status === 0) return "Unable to reach the API.";
+    if (typeof error.detail === "object" && error.detail && "detail" in error.detail) {
+      return String(error.detail.detail);
+    }
   }
+
+  if (error instanceof Error) return error.message;
 
   return "Indicator data is temporarily unavailable.";
 }
@@ -124,6 +138,12 @@ function readInteger(formData: FormData, key: string, fallback?: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function buildVersionCode(indicatorCode: string, versionNumber = 1) {
+  const normalizedIndicatorCode = indicatorCode.trim().toUpperCase();
+  if (!normalizedIndicatorCode) return "";
+  return `${normalizedIndicatorCode}_V${versionNumber}`;
+}
+
 function indicatorToRow(indicator: IndicatorListItem): MasterRow {
   return {
     id: indicator.national_indicator_code,
@@ -140,6 +160,16 @@ function indicatorToRow(indicator: IndicatorListItem): MasterRow {
     status: indicator.status ?? "ACTIVE",
     color_value: indicator.color_value ?? undefined,
   };
+}
+
+function frameworkEditionToRows(items: FrameworkEditionListItem[]): MasterRow[] {
+  return items.map((item) => ({
+    id: `${item.framework_code}.${item.edition_code}`,
+    framework_code: item.framework_code,
+    edition_code: item.edition_code,
+    name: item.name,
+    status: item.status,
+  }));
 }
 
 function sourceToRow(source: SourceAssignmentListItem): MasterRow {
@@ -246,17 +276,21 @@ function RelatedTable({
   columns,
   onAction,
   onCreate,
+  createDisabled = false,
+  createTitle = "Add",
 }: {
   rows: MasterRow[];
   columns: { key: string; label: string }[];
   onAction: (mode: NonNullable<DialogState>["mode"], row?: MasterRow) => void;
   onCreate?: () => void;
+  createDisabled?: boolean;
+  createTitle?: string;
 }) {
   return (
     <div className="grid gap-2">
       {onCreate ? (
         <div className="flex justify-end">
-          <Button size="sm" onClick={onCreate}>
+          <Button size="sm" onClick={onCreate} disabled={createDisabled} title={createTitle}>
             <Plus aria-hidden="true" className="size-4" />
             Add
           </Button>
@@ -316,11 +350,68 @@ function SelectField({ label, value, options, name = label, required = false }: 
   );
 }
 
-function TextField({ label, value, name = label, required = false }: { label: string; value?: string; name?: string; required?: boolean }) {
+function TextField({
+  label,
+  value,
+  name = label,
+  required = false,
+  className = "",
+}: {
+  label: string;
+  value?: string;
+  name?: string;
+  required?: boolean;
+  className?: string;
+}) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
       {label}
       <Input name={name} defaultValue={value ?? ""} required={required} />
+    </label>
+  );
+}
+
+function ReadOnlyField({
+  label,
+  value,
+  name = label,
+  required = false,
+  className = "",
+}: {
+  label: string;
+  value?: string;
+  name?: string;
+  required?: boolean;
+  className?: string;
+}) {
+  return (
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+      {label}
+      <Input name={name} value={value ?? ""} readOnly required={required} className="bg-muted/60" />
+    </label>
+  );
+}
+
+function FrameworkEditionField({
+  value,
+  options,
+  className = "",
+}: {
+  value?: string;
+  options: MasterRow[];
+  className?: string;
+}) {
+  return (
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+      framework_edition
+      <select name="framework_edition_key" className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
+        <option value="">Select framework edition</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.framework_code} / {option.edition_code} / {option.name ?? option.status ?? ""}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -330,7 +421,7 @@ function IndicatorDialog({
   selectedIndicator,
   selectedVersion,
   selectedUnitCode,
-  editionCodeOptions,
+  frameworkEditionOptions,
   organizationRowsData,
   officerRowsData,
   periodicityRowsData,
@@ -343,7 +434,7 @@ function IndicatorDialog({
   selectedIndicator?: MasterRow;
   selectedVersion?: MasterRow;
   selectedUnitCode: string;
-  editionCodeOptions: MasterRow[];
+  frameworkEditionOptions: MasterRow[];
   organizationRowsData: MasterRow[];
   officerRowsData: MasterRow[];
   periodicityRowsData: MasterRow[];
@@ -365,8 +456,11 @@ function IndicatorDialog({
   const isSourceForm = isFormMode && entity === "source";
   const activeFrameworkCode = row?.framework_code ?? selectedIndicator?.framework_code ?? "SDG_NIF";
   const activeEditionCode = row?.edition_code ?? selectedIndicator?.edition_code ?? "SDG_NIF_2025";
+  const activeFrameworkEditionKey = `${activeFrameworkCode}.${activeEditionCode}`;
   const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
   const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
+  const defaultVersionNumber = row?.version_number ?? "1";
+  const defaultVersionCode = row?.version_code ?? buildVersionCode(activeIndicatorCode, Number.parseInt(defaultVersionNumber, 10) || 1);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="indicator-dialog-title">
@@ -404,11 +498,10 @@ function IndicatorDialog({
 
           {isIndicatorForm ? (
             <div className="grid gap-4">
-              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
-                <SelectField label="edition_code" value={row?.edition_code ?? activeEditionCode} options={editionCodeOptions} required />
-                <TextField label="national_indicator_code" value={row?.national_indicator_code} />
-                <TextField label="indicator_number" value={row?.indicator_number} />
+              <div className="grid grid-cols-6 gap-3 max-lg:grid-cols-2">
+                <FrameworkEditionField value={activeFrameworkEditionKey} options={frameworkEditionOptions} className="col-span-3 max-lg:col-span-2" />
+                <TextField label="national_indicator_code" value={row?.national_indicator_code} className="col-span-2 max-lg:col-span-1" />
+                <TextField label="indicator_number" value={row?.indicator_number} className="col-span-1 max-lg:col-span-1" />
               </div>
               <TextField label="name" value={row?.name} required />
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
@@ -429,9 +522,9 @@ function IndicatorDialog({
                 <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
                 <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
                 <TextField label="national_indicator_code" value={activeIndicatorCode} required />
-                <TextField label="version_code" value={row?.version_code} />
+                <TextField label="version_code" value={defaultVersionCode} />
                 <TextField label="name" value={row?.name ?? selectedIndicator?.name} required />
-                <TextField label="version_number" value={row?.version_number ?? "1"} />
+                <TextField label="version_number" value={defaultVersionNumber} />
                 <TextField label="data_type" value={row?.data_type ?? "NUMERIC"} />
                 <TextField label="unit_of_measure_code" value={row?.unit_of_measure_code ?? "PERCENT"} />
                 <TextField label="decimal_places" value={row?.decimal_places ?? "2"} />
@@ -444,7 +537,7 @@ function IndicatorDialog({
           {isMeasureForm ? (
             <div className="grid gap-4">
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <TextField label="version_code" value={activeVersionCode} required />
+                <ReadOnlyField label="version_code" value={activeVersionCode} required />
                 <TextField label="measure_code" value={row?.measure_code} />
                 <TextField label="name" value={row?.name ?? "Indicator value"} required />
                 <TextField label="value_type" value={row?.value_type ?? "NUMERIC"} />
@@ -462,10 +555,10 @@ function IndicatorDialog({
                 <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
                 <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
                 <TextField label="national_indicator_code" value={activeIndicatorCode} required />
-                <SelectField label="global_indicator_code" value={row?.global_indicator_code} options={globalIndicatorOptions} />
+                <SelectField label="global_indicator_code" value={row?.global_indicator_code} options={globalIndicatorMappingOptions} required />
                 <TextField label="mapping_type" value={row?.mapping_type ?? "DIRECT"} />
                 <TextField label="mapping_note" value={row?.mapping_note} />
-                <SelectField label="is_active" value={row?.is_active ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
+                <SelectField label="is_active" value={row?.global_indicator_code ? row?.is_active ?? "YES" : "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
               </div>
             </div>
           ) : null}
@@ -529,6 +622,11 @@ export function IndicatorManagementPage() {
     queryFn: () => mastersService.listIndicators({ locale: language, unitCode: selectedUnitCode || undefined }),
   });
 
+  const frameworkEditionsQuery = useQuery({
+    queryKey: ["masters", "framework-editions", language],
+    queryFn: () => mastersService.listFrameworkEditions({ locale: language, includeInactive: false }),
+  });
+
   const sourceAssignmentsQuery = useQuery({
     queryKey: ["masters", "source-assignments", language, selectedUnitCode],
     queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: selectedUnitCode || undefined }),
@@ -554,20 +652,27 @@ export function IndicatorManagementPage() {
     [indicatorsQuery.data],
   );
   const nationalIndicatorRows = liveNationalIndicatorRows;
-  const editionCodeOptions = useMemo(() => {
-    const editionCodes = new Set<string>();
+  const frameworkEditionOptions = useMemo(() => {
+    const options = frameworkEditionToRows(frameworkEditionsQuery.data?.data ?? []);
+    const optionKeys = new Set(options.map((option) => option.id));
 
     for (const indicator of nationalIndicatorRows) {
-      if (indicator.edition_code) {
-        editionCodes.add(indicator.edition_code);
+      if (indicator.framework_code && indicator.edition_code) {
+        const id = `${indicator.framework_code}.${indicator.edition_code}`;
+        if (!optionKeys.has(id)) {
+          options.push({
+            id,
+            framework_code: indicator.framework_code,
+            edition_code: indicator.edition_code,
+            name: id,
+          });
+          optionKeys.add(id);
+        }
       }
     }
 
-    return Array.from(editionCodes).map((editionCode) => ({
-      id: editionCode,
-      edition_code: editionCode,
-    }));
-  }, [nationalIndicatorRows]);
+    return options;
+  }, [frameworkEditionsQuery.data, nationalIndicatorRows]);
   const selectedIndicator = nationalIndicatorRows.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicatorRows[0];
 
   const selectedIndicatorDetailQuery = useQuery({
@@ -632,6 +737,7 @@ export function IndicatorManagementPage() {
   const selectedVersionChanges = activeVersionChanges.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
   const isLiveDataLoading =
     indicatorsQuery.isFetching ||
+    frameworkEditionsQuery.isFetching ||
     sourceAssignmentsQuery.isFetching ||
     organizationsQuery.isFetching ||
     officersQuery.isFetching ||
@@ -640,6 +746,7 @@ export function IndicatorManagementPage() {
     selectedVersionQuery.isFetching;
   const liveDataError =
     indicatorsQuery.error ||
+    frameworkEditionsQuery.error ||
     sourceAssignmentsQuery.error ||
     organizationsQuery.error ||
     officersQuery.error ||
@@ -683,11 +790,27 @@ export function IndicatorManagementPage() {
       const entity = currentDialog.entity ?? "indicator";
       const row = currentDialog.row;
       const isDeactivate = currentDialog.mode === "delete";
-      const frameworkCode = readString(formData, "framework_code") || selectedIndicator?.framework_code || "SDG_NIF";
-      const editionCode = readString(formData, "edition_code") || selectedIndicator?.edition_code || "SDG_NIF_2025";
-      const nationalIndicatorCode = readString(formData, "national_indicator_code") || selectedIndicator?.national_indicator_code || "";
+      const frameworkEditionKey = readString(formData, "framework_edition_key");
+      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.id === frameworkEditionKey);
+      const frameworkCode =
+        selectedFrameworkEdition?.framework_code ||
+        readString(formData, "framework_code") ||
+        row?.framework_code ||
+        selectedIndicator?.framework_code ||
+        "SDG_NIF";
+      const editionCode =
+        selectedFrameworkEdition?.edition_code ||
+        readString(formData, "edition_code") ||
+        row?.edition_code ||
+        selectedIndicator?.edition_code ||
+        "SDG_NIF_2025";
+      const nationalIndicatorCode = readString(formData, "national_indicator_code") || row?.national_indicator_code || selectedIndicator?.national_indicator_code || "";
 
       if (entity === "indicator") {
+        if (frameworkEditionKey && !selectedFrameworkEdition) {
+          throw new Error("Select a valid framework edition before saving the indicator.");
+        }
+
         const body = {
           framework_code: frameworkCode,
           edition_code: editionCode,
@@ -696,7 +819,7 @@ export function IndicatorManagementPage() {
           owning_unit_code: readOptionalString(formData, "owning_unit_code"),
           name: readString(formData, "name") || row?.name || "",
           color_value: readOptionalString(formData, "color_value"),
-          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          status: isDeactivate ? "RETIRED" : readString(formData, "status") || "ACTIVE",
           is_active: !isDeactivate,
         };
 
@@ -730,19 +853,24 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "version") {
-        const versionCode = readString(formData, "version_code") || row?.version_code || "";
+        const versionNumber = readInteger(formData, "version_number", 1) ?? 1;
+        const versionCode = readString(formData, "version_code") || row?.version_code || buildVersionCode(nationalIndicatorCode, versionNumber);
+        if (!versionCode) {
+          throw new Error("Create or select a national indicator before adding a version.");
+        }
+
         const body = {
           framework_code: frameworkCode,
           edition_code: editionCode,
           national_indicator_code: nationalIndicatorCode,
-          version_code: versionCode || null,
+          version_code: versionCode,
           name: readString(formData, "name") || selectedIndicator?.name || "",
-          version_number: readInteger(formData, "version_number", 1),
+          version_number: versionNumber,
           unit_of_measure_code: readOptionalString(formData, "unit_of_measure_code"),
           data_type: readString(formData, "data_type") || "NUMERIC",
           decimal_places: readInteger(formData, "decimal_places"),
           is_current: readBoolean(formData, "is_current", true),
-          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          status: isDeactivate ? "RETIRED" : readString(formData, "status") || "ACTIVE",
         };
 
         if (currentDialog.mode === "create") {
@@ -758,7 +886,11 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "metadata" || entity === "measure") {
-        const versionCode = readString(formData, "version_code") || currentVersion?.version_code || "";
+        const versionCode = row?.version_code || currentVersion?.version_code || selectedVersionCode || "";
+        if (!versionCode) {
+          throw new Error(entity === "metadata" ? "Create an indicator version before adding measure metadata." : "Create an indicator version before adding a measure.");
+        }
+
         const measureCode = readString(formData, "measure_code") || row?.measure_code || "";
         const body = {
           measure_code: measureCode || null,
@@ -784,16 +916,21 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "global-mapping") {
+        const globalIndicatorCode = readString(formData, "global_indicator_code") || row?.global_indicator_code || "";
+        if (!globalIndicatorCode) {
+          throw new Error("Select a global indicator before saving the mapping.");
+        }
+
         await mastersService.createNationalGlobalIndicatorMapping({
           locale: language,
           body: {
             framework_code: frameworkCode,
             edition_code: editionCode,
             national_indicator_code: nationalIndicatorCode,
-            global_indicator_code: readString(formData, "global_indicator_code") || row?.global_indicator_code || "",
+            global_indicator_code: globalIndicatorCode,
             mapping_type: readString(formData, "mapping_type") || "DIRECT",
             mapping_note: readOptionalString(formData, "mapping_note"),
-            is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+            is_active: currentDialog.mode === "map" ? true : !isDeactivate && readBoolean(formData, "is_active", true),
           },
         });
         return;
@@ -1052,7 +1189,11 @@ export function IndicatorManagementPage() {
             {activeTab === "measures" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
-                  <Button onClick={() => openDialog("create", "Add indicator measure", currentVersion, "measure")}>
+                  <Button
+                    disabled={!currentVersion?.version_code}
+                    title={currentVersion?.version_code ? "Add indicator measure" : "Create an indicator version before adding measures"}
+                    onClick={() => openDialog("create", "Add indicator measure", currentVersion, "measure")}
+                  >
                     <Plus aria-hidden="true" className="size-4" />
                     Add measure
                   </Button>
@@ -1086,22 +1227,29 @@ export function IndicatorManagementPage() {
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Metadata detail", row, "metadata")}
                 onCreate={() => openDialog("create", "Create measure metadata", undefined, "metadata")}
+                createDisabled={!currentVersion?.version_code}
+                createTitle={currentVersion?.version_code ? "Create measure metadata" : "Create an indicator version before adding measure metadata"}
               />
             ) : null}
 
             {activeTab === "global-mapping" ? (
-              <RelatedTable
-                rows={indicatorGlobalMappings}
-                columns={[
-                  { key: "national_indicator_code", label: "National" },
-                  { key: "global_indicator_code", label: "Global" },
-                  { key: "mapping_type", label: "Type" },
-                  { key: "mapping_note", label: "Note" },
-                  { key: "is_active", label: "Active" },
-                ]}
-                onAction={(mode, row) => openDialog(mode, "Global mapping", row, "global-mapping")}
-                onCreate={() => openDialog("create", "Create global mapping", undefined, "global-mapping")}
-              />
+              <div className="grid gap-3">
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-900">
+                  National/global mapping create is available, but no GET API is exposed yet for listing saved mappings.
+                </div>
+                <RelatedTable
+                  rows={indicatorGlobalMappings}
+                  columns={[
+                    { key: "national_indicator_code", label: "National" },
+                    { key: "global_indicator_code", label: "Global" },
+                    { key: "mapping_type", label: "Type" },
+                    { key: "mapping_note", label: "Note" },
+                    { key: "is_active", label: "Active" },
+                  ]}
+                  onAction={(mode, row) => openDialog(mode, "Global mapping", row, "global-mapping")}
+                  onCreate={() => openDialog("create", "Create global mapping", undefined, "global-mapping")}
+                />
+              </div>
             ) : null}
 
             {activeTab === "sources" ? (
@@ -1134,7 +1282,7 @@ export function IndicatorManagementPage() {
         selectedIndicator={selectedIndicator}
         selectedVersion={currentVersion}
         selectedUnitCode={selectedUnitCode}
-        editionCodeOptions={editionCodeOptions}
+        frameworkEditionOptions={frameworkEditionOptions}
         organizationRowsData={organizationRowsData}
         officerRowsData={officerRowsData}
         periodicityRowsData={periodicityRowsData}

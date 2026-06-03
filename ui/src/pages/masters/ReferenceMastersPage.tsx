@@ -53,6 +53,8 @@ const organizationTypeOptions = [
   "INSTITUTION",
   "OTHER",
 ];
+const measureValueTypeOptions = ["NUMERIC", "INTEGER", "TEXT", "BOOLEAN", "DATE"];
+const unsupportedMeasureFormFields = new Set(["decimal_places", "validation_rule_code"]);
 
 const statusVariant = (value?: string) => {
   if (["ACTIVE", "YES", "NUMERIC"].includes(value ?? "")) return "secondary";
@@ -66,7 +68,12 @@ function safeApiMessage(error: unknown) {
     if (error.status === 401) return "Sign in again to load reference masters.";
     if (error.status === 403) return "You do not have permission to view reference masters.";
     if (error.status === 0) return "Unable to reach the API.";
+    if (typeof error.detail === "object" && error.detail && "detail" in error.detail) {
+      return String(error.detail.detail);
+    }
   }
+
+  if (error instanceof Error) return error.message;
 
   return "Reference masters are temporarily unavailable.";
 }
@@ -191,6 +198,15 @@ function TextField({ label, value, required = false }: { label: string; value?: 
   );
 }
 
+function ReadOnlyField({ label, value, required = false }: { label: string; value?: string; required?: boolean }) {
+  return (
+    <label className="grid gap-1 text-xs font-semibold">
+      {label}
+      <Input name={label} value={value ?? ""} readOnly required={required} className="bg-muted/60" />
+    </label>
+  );
+}
+
 function ParentOrganizationField({
   value,
   options,
@@ -260,6 +276,19 @@ function UnitField({ value, options }: { value?: string; options: MasterRow[] })
   );
 }
 
+function MeasureValueTypeField({ value }: { value?: string }) {
+  return (
+    <label className="grid gap-1 text-xs font-semibold">
+      value_type
+      <select name="value_type" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value ?? "NUMERIC"} required>
+        {measureValueTypeOptions.map((type) => (
+          <option key={type} value={type}>{type}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function getReferenceStats(tab: MasterTab) {
   const activeRows = tab.rows.filter((row) => ["YES", "ACTIVE"].includes(row.is_active ?? row.status ?? ""));
 
@@ -322,6 +351,7 @@ function ReferenceDialog({
   dialog,
   organizationRows,
   unitRows,
+  activeMeasureVersionCode,
   isSubmitting,
   errorMessage,
   onSubmit,
@@ -330,6 +360,7 @@ function ReferenceDialog({
   dialog: DialogState;
   organizationRows: MasterRow[];
   unitRows: MasterRow[];
+  activeMeasureVersionCode?: string;
   isSubmitting: boolean;
   errorMessage?: string | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -381,7 +412,11 @@ function ReferenceDialog({
           {!isView && !isDelete ? (
             <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
               {tab.columns.map((column) =>
-                column.key === "parent_organization_code" ? (
+                tab.code === "measures" && unsupportedMeasureFormFields.has(column.key) ? null : column.key === "version_code" && tab.code === "measures" ? (
+                  <ReadOnlyField key={column.key} label={column.key} value={row?.version_code ?? activeMeasureVersionCode} required />
+                ) : column.key === "value_type" && tab.code === "measures" ? (
+                  <MeasureValueTypeField key={column.key} value={row?.[column.key]} />
+                ) : column.key === "parent_organization_code" ? (
                   <ParentOrganizationField
                     key={column.key}
                     value={row?.[column.key] === row?.organization_code ? "" : row?.[column.key]}
@@ -522,6 +557,8 @@ export function ReferenceMastersPage() {
     versionQuery.error;
   const filteredRows = activeTab.rows.filter((row) => Object.values(row).join(" ").toLowerCase().includes(query.toLowerCase()));
   const activeTabCanWrite = writableReferenceTabs.has(activeTab.code as ReferenceTab);
+  const activeMeasureVersionCode = versionQuery.data?.data.version_code ?? firstCurrentVersionCode ?? undefined;
+  const activeTabCanCreate = activeTabCanWrite && (activeTab.code !== "measures" || Boolean(activeMeasureVersionCode));
 
   const invalidateReferenceQueries = async () => {
     await Promise.all([
@@ -629,15 +666,17 @@ export function ReferenceMastersPage() {
       }
 
       if (tabCode === "measures") {
-        const versionCode = readString(formData, "version_code") || row?.version_code || firstCurrentVersionCode || "";
+        const versionCode = row?.version_code || activeMeasureVersionCode || "";
+        if (!versionCode) {
+          throw new Error("Create an indicator version before adding a measure.");
+        }
+
         const measureCode = readString(formData, "measure_code") || row?.measure_code || "";
         const body = {
           measure_code: measureCode || null,
           name: readString(formData, "name") || row?.name || measureCode || "Indicator value",
           value_type: readString(formData, "value_type") || row?.value_type || "NUMERIC",
           unit_code: readOptionalString(formData, "unit_code") ?? row?.unit_code ?? null,
-          decimal_places: readInteger(formData, "decimal_places"),
-          validation_rule_code: readOptionalString(formData, "validation_rule_code"),
           aggregation_type: readOptionalString(formData, "aggregation_type"),
           is_required: readBoolean(formData, "is_required", true),
           is_active: !isDeactivate && readBoolean(formData, "is_active", true),
@@ -696,8 +735,14 @@ export function ReferenceMastersPage() {
             <Button variant="outline" disabled title="Bulk reference upload API is not available yet"><Download aria-hidden="true" className="size-4" /> Format</Button>
             <Button variant="outline" disabled title="Bulk reference upload API is not available yet"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
             <Button
-              disabled={!activeTabCanWrite}
-              title={activeTabCanWrite ? "Create reference record" : "No standalone mutation API is available for this reference set"}
+              disabled={!activeTabCanCreate}
+              title={
+                activeTab.code === "measures" && !activeMeasureVersionCode
+                  ? "Create an indicator version before adding measures"
+                  : activeTabCanWrite
+                    ? "Create reference record"
+                    : "No standalone mutation API is available for this reference set"
+              }
               onClick={() => openDialog("create", activeTab)}
             >
               <Plus aria-hidden="true" className="size-4" /> New record
@@ -840,6 +885,7 @@ export function ReferenceMastersPage() {
         dialog={dialog}
         organizationRows={liveOrganizationRows}
         unitRows={liveUnitRows}
+        activeMeasureVersionCode={activeMeasureVersionCode}
         isSubmitting={referenceMutation.isPending}
         errorMessage={mutationError}
         onSubmit={handleDialogSubmit}
