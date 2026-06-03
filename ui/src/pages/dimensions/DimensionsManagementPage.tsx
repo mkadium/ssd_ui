@@ -588,6 +588,10 @@ export function DimensionsManagementPage() {
   const effectiveTimePeriodCode = selectedTimePeriodCode || timePeriods[0]?.time_period_code;
   const selectedGeography = geographies.find((geo) => geo.geography_code === effectiveGeographyCode) ?? geographies[0];
   const selectedTimePeriod = timePeriods.find((period) => period.time_period_code === effectiveTimePeriodCode) ?? timePeriods[0];
+  const selectedTimePeriodIsInList = Boolean(
+    effectiveTimePeriodCode &&
+    timePeriods.some((period) => period.time_period_code === effectiveTimePeriodCode),
+  );
 
   const selectedGeographyQuery = useQuery({
     queryKey: ["dimensions", "geography-detail", effectiveGeographyCode, locale],
@@ -598,7 +602,7 @@ export function DimensionsManagementPage() {
   const selectedTimePeriodQuery = useQuery({
     queryKey: ["dimensions", "time-period-detail", effectiveTimePeriodCode, locale],
     queryFn: () => dimensionsService.getTimePeriod({ timePeriodCode: effectiveTimePeriodCode ?? "", locale }),
-    enabled: Boolean(effectiveTimePeriodCode),
+    enabled: selectedTimePeriodIsInList,
   });
 
   const filteredDimensions = dimensionDefinitions.filter((dimension) =>
@@ -979,7 +983,7 @@ export function DimensionsManagementPage() {
         } else {
           await dimensionsService.updateTimePeriod({ timePeriodCode, locale, body });
         }
-        setSelectedTimePeriodCode(timePeriodCode);
+        setSelectedTimePeriodCode(body.is_active && body.status !== "RETIRED" ? timePeriodCode : "");
       }
     },
     onSuccess: async () => {
