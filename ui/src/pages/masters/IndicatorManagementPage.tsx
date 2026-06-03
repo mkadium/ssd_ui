@@ -754,14 +754,16 @@ export function IndicatorManagementPage() {
       const frameworkCode =
         selectedFrameworkEdition?.framework_code ||
         readString(formData, "framework_code") ||
+        row?.framework_code ||
         selectedIndicator?.framework_code ||
         "SDG_NIF";
       const editionCode =
         selectedFrameworkEdition?.edition_code ||
         readString(formData, "edition_code") ||
+        row?.edition_code ||
         selectedIndicator?.edition_code ||
         "SDG_NIF_2025";
-      const nationalIndicatorCode = readString(formData, "national_indicator_code") || selectedIndicator?.national_indicator_code || "";
+      const nationalIndicatorCode = readString(formData, "national_indicator_code") || row?.national_indicator_code || selectedIndicator?.national_indicator_code || "";
 
       if (entity === "indicator") {
         if (frameworkEditionKey && !selectedFrameworkEdition) {
@@ -776,7 +778,7 @@ export function IndicatorManagementPage() {
           owning_unit_code: readOptionalString(formData, "owning_unit_code"),
           name: readString(formData, "name") || row?.name || "",
           color_value: readOptionalString(formData, "color_value"),
-          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          status: isDeactivate ? "RETIRED" : readString(formData, "status") || "ACTIVE",
           is_active: !isDeactivate,
         };
 
@@ -822,7 +824,7 @@ export function IndicatorManagementPage() {
           data_type: readString(formData, "data_type") || "NUMERIC",
           decimal_places: readInteger(formData, "decimal_places"),
           is_current: readBoolean(formData, "is_current", true),
-          status: isDeactivate ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          status: isDeactivate ? "RETIRED" : readString(formData, "status") || "ACTIVE",
         };
 
         if (currentDialog.mode === "create") {
