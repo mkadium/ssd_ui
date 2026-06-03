@@ -33,6 +33,50 @@ export type FrameworkEditionListItem = {
   effective_from?: string | null;
 };
 
+export type FrameworkEditionRequest = {
+  framework_code?: string | null;
+  edition_code?: string | null;
+  name: string;
+  description?: string | null;
+  version_label?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  status?: string;
+  is_active?: boolean;
+};
+
+export type FrameworkHierarchyLevelRequest = {
+  level_code?: string | null;
+  level_number: number;
+  name: string;
+  description?: string | null;
+  allows_indicator_mapping?: boolean;
+  is_active?: boolean;
+};
+
+export type FrameworkNodeRequest = {
+  level_code: string;
+  node_code?: string | null;
+  name: string;
+  node_number?: string | null;
+  short_name?: string | null;
+  description?: string | null;
+  color_value?: string | null;
+  color_method?: string | null;
+  icon_path?: string | null;
+  sort_order?: number;
+  status?: string;
+  is_active?: boolean;
+};
+
+export type FrameworkNodeRelationshipRequest = {
+  parent_node_code: string;
+  child_node_code: string;
+  relationship_type?: string;
+  sort_order?: number;
+  is_active?: boolean;
+};
+
 export type FrameworkHierarchyLevel = {
   level_code: string;
   level_number: number;

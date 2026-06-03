@@ -9,8 +9,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
@@ -44,7 +44,6 @@ import { useLanguage } from "@/providers/language-context";
 import { mastersService } from "@/services/mastersService";
 import type {
   FrameworkHierarchyDetail,
-  FrameworkHierarchyNode,
   IndicatorListItem,
   SourceAssignmentListItem,
 } from "@/types/masters";
@@ -52,7 +51,10 @@ import type {
 type FrameworkModal =
   | "create-edition"
   | "edit-edition"
+  | "delete-edition"
+  | "restore-edition"
   | "create-level"
+  | "edit-level"
   | "add-root"
   | "add-child"
   | "edit-node"
@@ -81,6 +83,35 @@ function getSafeApiMessage(error: unknown) {
   return "Masters data is temporarily unavailable.";
 }
 
+function readString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readOptionalString(formData: FormData, key: string) {
+  const value = readString(formData, key);
+  return value ? value : null;
+}
+
+function readBoolean(formData: FormData, key: string) {
+  const value = readString(formData, key).toUpperCase();
+  return value === "YES" || value === "TRUE" || value === "ACTIVE";
+}
+
+function readPositiveInteger(formData: FormData, key: string, fallback: number) {
+  const parsed = Number.parseInt(readString(formData, key), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.toUpperCase();
+    return normalized === "TRUE" || normalized === "YES" || normalized === "ACTIVE";
+  }
+  return fallback;
+}
+
 function toFrameworkEdition(item: FrameworkEdition): FrameworkEdition;
 function toFrameworkEdition(item: Record<string, unknown>): FrameworkEdition;
 function toFrameworkEdition(item: Record<string, unknown>) {
@@ -89,7 +120,7 @@ function toFrameworkEdition(item: Record<string, unknown>) {
     edition_code: String(item.edition_code ?? ""),
     version_label: String(item.version_label ?? item.edition_code ?? ""),
     status: String(item.status ?? "ACTIVE") as FrameworkEdition["status"],
-    is_active: Boolean(item.is_active ?? item.status === "ACTIVE"),
+    is_active: normalizeBoolean(item.is_active, item.status === "ACTIVE"),
     name: String(item.name ?? item.framework_code ?? ""),
     description: String(item.description ?? ""),
     effective_from: String(item.effective_from ?? "-"),
@@ -107,7 +138,7 @@ function getParentByChild(relationships: FrameworkHierarchyDetail["relationships
   );
 }
 
-function getNodeIndicatorCount(_node: FrameworkHierarchyNode) {
+function getNodeIndicatorCount() {
   return 0;
 }
 
@@ -123,7 +154,7 @@ function toFrameworkNodes(hierarchy?: FrameworkHierarchyDetail): FrameworkNode[]
     name: node.name,
     parent_node_code: parentByChild.get(node.node_code),
     color_value: node.color_value ?? "#64748b",
-    mapped_indicator_count: getNodeIndicatorCount(node),
+    mapped_indicator_count: getNodeIndicatorCount(),
   }));
 }
 
@@ -179,17 +210,23 @@ function FormModal({
   selectedEdition,
   selectedNode,
   frameworkLevels,
+  isSubmitting,
+  errorMessage,
+  onSubmit,
   onClose,
 }: {
   modal: FrameworkModal;
   selectedEdition: FrameworkEdition;
   selectedNode: FrameworkNode;
   frameworkLevels: FrameworkLevel[];
+  isSubmitting: boolean;
+  errorMessage?: string | null;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
   if (!modal) return null;
 
-  const isLevelModal = modal === "create-level";
+  const isLevelModal = modal === "create-level" || modal === "edit-level";
   const isNodeModal = ["add-root", "add-child", "edit-node", "delete"].includes(modal);
   const currentLevel = frameworkLevels.find((level) => level.level_code === selectedNode.level_code);
   const childLevelOptions =
@@ -210,17 +247,20 @@ function FormModal({
   const titleMap: Record<Exclude<FrameworkModal, null>, string> = {
     "create-edition": "Create framework edition",
     "edit-edition": "Edit framework edition",
+    "delete-edition": "Deactivate framework edition",
+    "restore-edition": "Restore framework edition",
     "create-level": "Create hierarchy level",
+    "edit-level": "Edit hierarchy level",
     "add-root": "Create parent/root node",
     "add-child": "Add child node",
     "edit-node": "Edit node",
-    delete: "Delete confirmation",
+    delete: "Deactivate node",
     "bulk-upload": "Bulk upload hierarchy",
   };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="framework-modal-title">
-      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
+      <form onSubmit={onSubmit} className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between border-b border-border px-5 py-4">
           <div>
             <h2 id="framework-modal-title" className="text-xl font-bold">
@@ -238,7 +278,19 @@ function FormModal({
         <div className="overflow-y-auto p-5">
           {modal === "delete" ? (
             <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-              Confirm delete for <strong>{selectedNode.node_code}</strong>. Dependency checks include child nodes, indicator mappings, templates, requests, and audit history.
+              Confirm deactivate for <strong>{selectedNode.node_code}</strong>. Dependency checks include child nodes, indicator mappings, templates, requests, and audit history.
+              <input type="hidden" name="node_code" value={selectedNode.node_code} />
+              <input type="hidden" name="level_code" value={selectedNode.level_code} />
+              <input type="hidden" name="node_number" value={selectedNode.node_number} />
+              <input type="hidden" name="name" value={selectedNode.name} />
+              <input type="hidden" name="color_value" value={selectedNode.color_value} />
+            </div>
+          ) : modal === "delete-edition" || modal === "restore-edition" ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              Confirm {modal === "restore-edition" ? "restore" : "deactivate"} for{" "}
+              <strong>{selectedEdition.framework_code} / {selectedEdition.edition_code}</strong>.
+              <input type="hidden" name="framework_code" value={selectedEdition.framework_code} />
+              <input type="hidden" name="edition_code" value={selectedEdition.edition_code} />
             </div>
           ) : modal === "bulk-upload" ? (
             <div className="grid gap-4">
@@ -263,23 +315,23 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Level code
-                  <Input placeholder="LEVEL_03" />
+                  <Input name="level_code" defaultValue={isLevelModal && modal === "edit-level" ? selectedNode.level_code : ""} placeholder="LEVEL_03" required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Level number
-                  <Input defaultValue={String(frameworkLevels.length + 1)} />
+                  <Input name="level_number" defaultValue={String(frameworkLevels.length + 1)} required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Allows indicator mapping
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue="NO">
-                    <option>NO</option>
-                    <option>YES</option>
+                  <select name="allows_indicator_mapping" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue="NO">
+                    <option value="NO">NO</option>
+                    <option value="YES">YES</option>
                   </select>
                 </label>
               </div>
               <label className="grid gap-1 text-xs font-semibold">
                 Level name en-IN
-                <Input placeholder="Level display name" />
+                <Input name="name" placeholder="Level display name" required />
               </label>
               <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
                 Levels define the allowed hierarchy depth. Nodes are created under levels after this step.
@@ -306,11 +358,11 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Node code
-                  <Input defaultValue={modal === "add-child" ? "" : selectedNode.node_code} placeholder="NODE_CODE" />
+                  <Input name="node_code" defaultValue={modal === "add-child" ? "" : selectedNode.node_code} placeholder="NODE_CODE" required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   {modal === "add-child" ? "Child level" : "Level"}
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={defaultLevelCode}>
+                  <select name="level_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={defaultLevelCode} required>
                     {childLevelOptions.map((level) => (
                       <option key={level.level_code} value={level.level_code}>{levelDisplay(level.level_code)}</option>
                     ))}
@@ -319,9 +371,10 @@ function FormModal({
                 <label className="grid gap-1 text-xs font-semibold">
                   Parent node
                   <Input
+                    name="parent_node_code"
                     readOnly={modal === "add-child" || modal === "add-root"}
                     className={modal === "add-child" || modal === "add-root" ? "bg-muted/60" : undefined}
-                    defaultValue={modal === "add-child" ? selectedNode.node_code : modal === "add-root" ? "ROOT" : selectedNode.parent_node_code ?? ""}
+                    defaultValue={modal === "add-child" ? selectedNode.node_code : modal === "add-root" ? "" : selectedNode.parent_node_code ?? ""}
                     placeholder="Optional for root"
                   />
                 </label>
@@ -334,24 +387,24 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Node number
-                  <Input defaultValue={modal === "add-child" ? "" : selectedNode.node_number} placeholder="1.2" />
+                  <Input name="node_number" defaultValue={modal === "add-child" ? "" : selectedNode.node_number} placeholder="1.2" />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Color
-                  <Input defaultValue={selectedNode.color_value} />
+                  <Input name="color_value" defaultValue={selectedNode.color_value} />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Status
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue="ACTIVE">
-                    <option>ACTIVE</option>
-                    <option>DRAFT</option>
-                    <option>ARCHIVED</option>
+                  <select name="status" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue="ACTIVE">
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="DRAFT">DRAFT</option>
+                    <option value="ARCHIVED">ARCHIVED</option>
                   </select>
                 </label>
               </div>
               <label className="grid gap-1 text-xs font-semibold">
                 Name en-IN
-                <Input defaultValue={modal === "add-child" ? "" : selectedNode.name} placeholder="Node display name" />
+                <Input name="name" defaultValue={modal === "add-child" ? "" : selectedNode.name} placeholder="Node display name" required />
               </label>
             </div>
           ) : (
@@ -359,49 +412,62 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Framework code
-                  <Input defaultValue={selectedEdition.framework_code} />
+                  <Input name="framework_code" defaultValue={selectedEdition.framework_code} required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Edition code
-                  <Input defaultValue={modal === "create-edition" ? "" : selectedEdition.edition_code} />
+                  <Input name="edition_code" defaultValue={modal === "create-edition" ? "" : selectedEdition.edition_code} required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Status
-                  <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={modal === "create-edition" ? "DRAFT" : selectedEdition.status}>
-                    <option>DRAFT</option>
-                    <option>ACTIVE</option>
-                    <option>ARCHIVED</option>
+                  <select name="status" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={modal === "create-edition" ? "DRAFT" : selectedEdition.status}>
+                    <option value="DRAFT">DRAFT</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="ARCHIVED">ARCHIVED</option>
                   </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-1 text-xs font-semibold">
+                  Version label
+                  <Input name="version_label" defaultValue={modal === "create-edition" ? "" : selectedEdition.version_label} placeholder="2025" />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Effective from
+                  <Input name="effective_from" type="date" defaultValue={modal === "create-edition" || selectedEdition.effective_from === "-" ? "" : selectedEdition.effective_from} />
                 </label>
               </div>
               <label className="grid gap-1 text-xs font-semibold">
                 Name en-IN
-                <Input defaultValue={modal === "create-edition" ? "" : selectedEdition.name} />
+                <Input name="name" defaultValue={modal === "create-edition" ? "" : selectedEdition.name} required />
               </label>
               <label className="grid gap-1 text-xs font-semibold">
                 Description
-                <Textarea defaultValue={modal === "create-edition" ? "" : selectedEdition.description} />
+                <Textarea name="description" defaultValue={modal === "create-edition" ? "" : selectedEdition.description} />
               </label>
             </div>
           )}
         </div>
 
         <div className="flex items-center justify-between border-t border-border bg-muted/40 px-5 py-4">
-          <span className="text-xs text-muted-foreground">Dependency checks run before changes are published.</span>
+          <span className={errorMessage ? "text-xs font-semibold text-red-700" : "text-xs text-muted-foreground"}>
+            {errorMessage ?? "Dependency checks run before changes are published."}
+          </span>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="button" variant={modal === "delete" ? "destructive" : "default"} onClick={onClose}>
-              {modal === "delete" ? "Delete" : "Save/Submit"}
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+            <Button type="submit" variant={modal === "delete" || modal === "delete-edition" ? "destructive" : "default"} disabled={isSubmitting}>
+              {isSubmitting ? "Saving..." : modal === "delete" || modal === "delete-edition" ? "Deactivate" : modal === "restore-edition" ? "Restore" : "Save/Submit"}
             </Button>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
 export function FrameworkEditionSetupPage() {
   const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [selectedEditionCode, setSelectedEditionCode] = useState(sampleFrameworkEditions[0].edition_code);
@@ -413,10 +479,12 @@ export function FrameworkEditionSetupPage() {
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [treeSearch, setTreeSearch] = useState("");
   const [modal, setModal] = useState<FrameworkModal>(null);
+  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const frameworksQuery = useQuery({
-    queryKey: ["masters", "frameworks", language],
-    queryFn: () => mastersService.listFrameworks({ locale: language }),
+    queryKey: ["masters", "frameworks", language, selectedUnitCode],
+    queryFn: () => mastersService.listFrameworks({ locale: language, unitCode: selectedUnitCode }),
     placeholderData: {
       data: sampleFrameworkEditions,
       locale: language,
@@ -463,14 +531,180 @@ export function FrameworkEditionSetupPage() {
   });
 
   const sourceAssignmentsQuery = useQuery({
-    queryKey: ["masters", "source-assignments", language],
-    queryFn: () => mastersService.listSourceAssignments({ locale: language }),
+    queryKey: ["masters", "source-assignments", language, selectedUnitCode],
+    queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: selectedUnitCode }),
     placeholderData: {
       data: [],
       locale: language,
       count: 0,
     },
   });
+
+  const invalidateFrameworkQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["masters", "frameworks"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "framework-hierarchy"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "indicators"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "source-assignments"] }),
+    ]);
+  };
+
+  const frameworkMutation = useMutation({
+    mutationFn: async ({
+      currentModal,
+      formData,
+    }: {
+      currentModal: FrameworkModal;
+      formData: FormData;
+    }) => {
+      if (!currentModal) {
+        return;
+      }
+
+      const frameworkCode = readString(formData, "framework_code") || selectedEdition.framework_code;
+      const editionCode = readString(formData, "edition_code") || selectedEdition.edition_code;
+
+      if (currentModal === "create-edition" || currentModal === "edit-edition") {
+        const body = {
+          framework_code: frameworkCode,
+          edition_code: editionCode,
+          name: readString(formData, "name"),
+          description: readOptionalString(formData, "description"),
+          version_label: readOptionalString(formData, "version_label"),
+          effective_from: readOptionalString(formData, "effective_from"),
+          status: readString(formData, "status") || "DRAFT",
+          is_active: readString(formData, "status") !== "ARCHIVED",
+        };
+
+        if (currentModal === "create-edition") {
+          await mastersService.createFrameworkEdition({ locale: language, body });
+          setSelectedEditionCode(editionCode);
+          return;
+        }
+
+        await mastersService.updateFrameworkEdition({
+          frameworkCode: selectedEdition.framework_code,
+          editionCode: selectedEdition.edition_code,
+          locale: language,
+          body,
+        });
+        setSelectedEditionCode(editionCode);
+        return;
+      }
+
+      if (currentModal === "delete-edition" || currentModal === "restore-edition") {
+        await mastersService.setFrameworkEditionActive({
+          frameworkCode,
+          editionCode,
+          locale: language,
+          active: currentModal === "restore-edition",
+        });
+        return;
+      }
+
+      if (currentModal === "create-level") {
+        await mastersService.createFrameworkLevel({
+          frameworkCode: selectedEdition.framework_code,
+          editionCode: selectedEdition.edition_code,
+          locale: language,
+          body: {
+            level_code: readString(formData, "level_code"),
+            level_number: readPositiveInteger(formData, "level_number", frameworkLevels.length + 1),
+            name: readString(formData, "name"),
+            allows_indicator_mapping: readBoolean(formData, "allows_indicator_mapping"),
+            is_active: true,
+          },
+        });
+        return;
+      }
+
+      if (currentModal === "add-root" || currentModal === "add-child" || currentModal === "edit-node" || currentModal === "delete") {
+        const nodeCode = readString(formData, "node_code") || selectedNode.node_code;
+        const body = {
+          level_code: readString(formData, "level_code") || selectedNode.level_code,
+          node_code: nodeCode,
+          name: readString(formData, "name") || selectedNode.name,
+          node_number: readOptionalString(formData, "node_number"),
+          color_value: readOptionalString(formData, "color_value"),
+          color_method: "HEX",
+          status: currentModal === "delete" ? "ARCHIVED" : readString(formData, "status") || "ACTIVE",
+          is_active: currentModal !== "delete",
+        };
+
+        if (currentModal === "edit-node" || currentModal === "delete") {
+          await mastersService.updateFrameworkNode({
+            frameworkCode: selectedEdition.framework_code,
+            editionCode: selectedEdition.edition_code,
+            nodeCode: selectedNode.node_code,
+            locale: language,
+            body,
+          });
+          setSelectedNodeCode(nodeCode);
+          return;
+        }
+
+        await mastersService.createFrameworkNode({
+          frameworkCode: selectedEdition.framework_code,
+          editionCode: selectedEdition.edition_code,
+          locale: language,
+          body,
+        });
+
+        const parentNodeCode = readString(formData, "parent_node_code");
+
+        if (currentModal === "add-child" && parentNodeCode) {
+          await mastersService.createFrameworkNodeRelationship({
+            frameworkCode: selectedEdition.framework_code,
+            editionCode: selectedEdition.edition_code,
+            locale: language,
+            body: {
+              parent_node_code: parentNodeCode,
+              child_node_code: nodeCode,
+              relationship_type: "PARENT_CHILD",
+              is_active: true,
+            },
+          });
+        }
+
+        setSelectedNodeCode(nodeCode);
+      }
+    },
+    onSuccess: async (_, variables) => {
+      await invalidateFrameworkQueries();
+      setMutationError(null);
+      setMutationMessage("Framework setup saved. Latest data is being refreshed.");
+      setModal(null);
+
+      if (variables.currentModal !== "delete-edition") {
+        window.setTimeout(() => setMutationMessage(null), 5000);
+      }
+    },
+    onError: (error) => {
+      setMutationMessage(null);
+      setMutationError(getSafeApiMessage(error));
+    },
+  });
+
+  const handleModalSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!modal || modal === "bulk-upload") {
+      setModal(null);
+      return;
+    }
+
+    setMutationError(null);
+    frameworkMutation.mutate({
+      currentModal: modal,
+      formData: new FormData(event.currentTarget),
+    });
+  };
+
+  const openModal = (nextModal: FrameworkModal) => {
+    setMutationError(null);
+    setMutationMessage(null);
+    setModal(nextModal);
+  };
 
   const indicatorMappings = useMemo(
     () => {
@@ -503,30 +737,7 @@ export function FrameworkEditionSetupPage() {
     [indicatorsQuery.data, selectedEdition.framework_code, selectedUnitCode, sourceAssignmentsQuery.data],
   );
 
-  useEffect(() => {
-    if (frameworkEditions.length === 0) {
-      return;
-    }
-
-    if (!frameworkEditions.some((edition) => edition.edition_code === selectedEditionCode)) {
-      setSelectedEditionCode(frameworkEditions[0].edition_code);
-    }
-  }, [frameworkEditions, selectedEditionCode]);
-
-  useEffect(() => {
-    if (frameworkNodes.length === 0) {
-      return;
-    }
-
-    if (!frameworkNodes.some((node) => node.node_code === selectedNodeCode)) {
-      setSelectedNodeCode(frameworkNodes[0].node_code);
-    }
-  }, [frameworkNodes, selectedNodeCode]);
-
-  const selectedNode = useMemo(
-    () => frameworkNodes.find((node) => node.node_code === selectedNodeCode) ?? frameworkNodes[0] ?? sampleFrameworkNodes[0],
-    [frameworkNodes, selectedNodeCode],
-  );
+  const selectedNode = frameworkNodes.find((node) => node.node_code === selectedNodeCode) ?? frameworkNodes[0] ?? sampleFrameworkNodes[0];
 
   const childNodes = frameworkNodes.filter((node) => node.parent_node_code === selectedNode.node_code);
   const selectedLevel = frameworkLevels.find((level) => level.level_code === selectedNode.level_code);
@@ -643,7 +854,7 @@ export function FrameworkEditionSetupPage() {
             <p className="mt-1 text-sm text-muted-foreground">Manage framework editions, dynamic levels, nodes, relationships, and indicator mappings.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" disabled title="Masters mutation API not available yet">
+            <Button variant="outline" onClick={() => openModal("bulk-upload")} title="Bulk upload parsing is still UI-only until a file upload API is approved.">
               <Upload aria-hidden="true" className="size-4" />
               Bulk upload
             </Button>
@@ -651,7 +862,7 @@ export function FrameworkEditionSetupPage() {
               <Download aria-hidden="true" className="size-4" />
               Download format
             </Button>
-            <Button disabled title="Masters mutation API not available yet">
+            <Button onClick={() => openModal("create-edition")}>
               <Plus aria-hidden="true" className="size-4" />
               New edition
             </Button>
@@ -665,6 +876,12 @@ export function FrameworkEditionSetupPage() {
         {liveDataError ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
             {getSafeApiMessage(liveDataError)} Showing available fallback data where possible.
+          </div>
+        ) : null}
+
+        {mutationMessage ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-900" role="status">
+            {mutationMessage}
           </div>
         ) : null}
 
@@ -751,13 +968,20 @@ export function FrameworkEditionSetupPage() {
                       <TableCell><Badge variant={statusVariant(edition.status)}>{edition.status}</Badge></TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button size="xs" variant="outline" disabled title="Masters mutation API not available yet">
+                          <Button size="xs" variant="outline" onClick={() => { setSelectedEditionCode(edition.edition_code); openModal("edit-edition"); }}>
                             <Edit3 aria-hidden="true" className="size-3" />
                             Edit
                           </Button>
-                          <Button size="xs" variant="destructive" disabled title="Masters mutation API not available yet">
+                          <Button
+                            size="xs"
+                            variant={edition.is_active ? "destructive" : "outline"}
+                            onClick={() => {
+                              setSelectedEditionCode(edition.edition_code);
+                              openModal(edition.is_active ? "delete-edition" : "restore-edition");
+                            }}
+                          >
                             <Trash2 aria-hidden="true" className="size-3" />
-                            Delete
+                            {edition.is_active ? "Deactivate" : "Restore"}
                           </Button>
                         </div>
                       </TableCell>
@@ -788,8 +1012,8 @@ export function FrameworkEditionSetupPage() {
                 </div>
               </dl>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button variant="outline" disabled title="Masters mutation API not available yet">Edit</Button>
-                <Button variant="outline" disabled title="Masters mutation API not available yet">New parent</Button>
+                <Button variant="outline" onClick={() => openModal("edit-edition")}>Edit</Button>
+                <Button variant="outline" onClick={() => openModal("add-root")}>New parent</Button>
               </div>
             </CardContent>
           </Card>
@@ -801,11 +1025,11 @@ export function FrameworkEditionSetupPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Hierarchy tree</CardTitle>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled title="Masters mutation API not available yet">
+                  <Button size="sm" variant="outline" onClick={() => openModal("create-level")}>
                     <Plus aria-hidden="true" className="size-4" />
                     Create level
                   </Button>
-                  <Button size="sm" variant="outline" disabled title="Masters mutation API not available yet">
+                  <Button size="sm" variant="outline" onClick={() => openModal("add-root")}>
                     <Plus aria-hidden="true" className="size-4" />
                     New parent
                   </Button>
@@ -829,9 +1053,9 @@ export function FrameworkEditionSetupPage() {
               <div className="flex items-center justify-between gap-3">
                 <CardTitle>Selected node</CardTitle>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled title="Masters mutation API not available yet">Edit</Button>
-                  <Button size="sm" variant="outline" disabled title="Masters mutation API not available yet">Add child</Button>
-                  <Button size="sm" variant="destructive" disabled title="Masters mutation API not available yet">Delete</Button>
+                  <Button size="sm" variant="outline" onClick={() => openModal("edit-node")}>Edit</Button>
+                  <Button size="sm" variant="outline" onClick={() => openModal("add-child")}>Add child</Button>
+                  <Button size="sm" variant="destructive" onClick={() => openModal("delete")}>Deactivate</Button>
                 </div>
               </div>
             </CardHeader>
@@ -988,6 +1212,9 @@ export function FrameworkEditionSetupPage() {
         selectedEdition={selectedEdition}
         selectedNode={selectedNode}
         frameworkLevels={frameworkLevels}
+        isSubmitting={frameworkMutation.isPending}
+        errorMessage={mutationError}
+        onSubmit={handleModalSubmit}
         onClose={() => setModal(null)}
       />
       {indicatorDetail ? (
