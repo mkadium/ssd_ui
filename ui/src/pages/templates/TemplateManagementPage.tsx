@@ -16,13 +16,16 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -43,6 +46,9 @@ import {
   type TemplateDefinitionSample,
   type TemplateStatus,
 } from "@/data/templatesManagement.sample";
+import { useLanguage } from "@/providers/language-context";
+import { templatesService } from "@/services/templatesService";
+import type { TemplateDefinitionListItem } from "@/types/templates";
 
 type TemplateTab = "list" | "designer" | "contract";
 type TemplateModal = "create-template" | "view-values" | "template-detail" | "delete-template" | "data-entry-preview" | "json-structure" | null;
@@ -153,6 +159,7 @@ const initialVisibleRowCount = 16;
 const rowHeaderWidth = 36;
 const defaultColumnWidths = Object.fromEntries(canvasColumns.map((column) => [column, 112])) as Record<string, number>;
 const defaultRowHeights = Object.fromEntries(canvasRows.map((row) => [row, row === 1 ? 42 : 38])) as Record<number, number>;
+const templatesUnitCode = "SDG";
 
 const measureBindingOptions: Array<{
   code: MeasureCode;
@@ -258,6 +265,62 @@ const statusVariant = (status?: string) => {
   if (["RETIRED", "NO", "BLOCKER", "MISSING"].includes(status ?? "")) return "destructive";
   return "ghost";
 };
+
+const templateTypeFor = (value?: string | null): TemplateDefinitionSample["template_type"] => {
+  if (value === "REVIEW" || value === "REPORTING") return value;
+  return "DATA_ENTRY";
+};
+
+const templateStatusFor = (value?: string | null): TemplateStatus => {
+  if (value === "ACTIVE" || value === "RETIRED") return value;
+  return "DRAFT";
+};
+
+const booleanFor = (value: boolean | string | null | undefined, fallback: boolean) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return ["ACTIVE", "TRUE", "YES", "1"].includes(value.toUpperCase());
+  }
+  return fallback;
+};
+
+function templateListItemToDefinition(item: TemplateDefinitionListItem): TemplateDefinitionSample {
+  const status = templateStatusFor(item.status);
+
+  return {
+    template_code: item.template_code,
+    template_type: templateTypeFor(item.template_type),
+    owning_unit_code: item.owning_unit_code ?? templatesUnitCode,
+    status,
+    is_active: booleanFor(item.is_active, status === "ACTIVE"),
+    current_version_code: item.current_version_code ?? "",
+    name: item.name,
+    description: item.description ?? "",
+    mapped_indicator_code: "-",
+    mapped_indicator_number: "-",
+    mapped_indicator_name: "Not returned by template list API",
+    mapped_global_indicator_code: "-",
+    source_unit_code: item.owning_unit_code ?? templatesUnitCode,
+    version_count: item.current_version_code ? 1 : 0,
+    axis_count: 0,
+    cell_count: 0,
+    validation_rule_count: 0,
+    updated_at: "From Templates API",
+  };
+}
+
+function apiErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) {
+      return "You are not authorized to view templates. Please sign in again or check your access.";
+    }
+    if (error.status === 0) {
+      return "Unable to reach the Templates API.";
+    }
+    return `Templates API returned ${error.status}.`;
+  }
+  return "Unable to load templates.";
+}
 
 const optionFor = (code: BindingObjectCode) => bindingOptions.find((option) => option.code === code) ?? bindingOptions[0];
 
@@ -1472,7 +1535,8 @@ function BindingPanel({
 }
 
 export function TemplateManagementPage() {
-  const [templates, setTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
+  const { language } = useLanguage();
+  const [localTemplates, setTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
   const [activeTab, setActiveTab] = useState<TemplateTab>("list");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | "ALL">("ALL");
@@ -1518,7 +1582,18 @@ export function TemplateManagementPage() {
   ]);
   const [activityMessage, setActivityMessage] = useState("Click a cell to type. Suggestions appear while typing. Double-click any cell to open options.");
 
-  const selectedTemplate = templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0];
+  const templatesQuery = useQuery({
+    queryKey: ["templates", "list", templatesUnitCode, language],
+    queryFn: () => templatesService.listTemplates({ locale: language, unitCode: templatesUnitCode }),
+  });
+
+  const apiTemplates = useMemo(
+    () => templatesQuery.data?.data.map(templateListItemToDefinition),
+    [templatesQuery.data],
+  );
+  const templates = apiTemplates ?? localTemplates;
+
+  const selectedTemplate = templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? templateDefinitions[0];
   const selectedVersion = templateVersions.find((version) => version.version_code === selectedTemplate.current_version_code) ?? templateVersions[0];
   const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
   const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
@@ -3876,6 +3951,16 @@ export function TemplateManagementPage() {
                 </select>
               </div>
 
+              {templatesQuery.isFetching ? (
+                <Loader variant="inline" label="Loading templates from API" className="text-xs text-muted-foreground" />
+              ) : null}
+
+              {templatesQuery.error ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+                  {apiErrorMessage(templatesQuery.error)}
+                </div>
+              ) : null}
+
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -3888,7 +3973,7 @@ export function TemplateManagementPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredTemplates.map((template) => (
+                  {filteredTemplates.length ? filteredTemplates.map((template) => (
                     <TableRow key={template.template_code}>
                       <TableCell className="max-w-80 whitespace-normal">
                         <span className="block font-mono text-[11px]">{template.template_code}</span>
@@ -3909,7 +3994,13 @@ export function TemplateManagementPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                        No templates found for unit {templatesUnitCode}.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
