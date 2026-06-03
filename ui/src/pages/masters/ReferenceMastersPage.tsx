@@ -39,7 +39,20 @@ type DialogState = { mode: "view" | "create" | "edit" | "delete"; tab: MasterTab
 
 const referenceTabCodes: ReferenceTab[] = ["locales", "organizations", "officers", "periodicities", "units", "measures"];
 const referenceTabs = referenceTabCodes.map((code) => getMasterTab(code)).filter(Boolean) as MasterTab[];
-const organizationTypeOptions = ["MINISTRY", "DEPARTMENT", "DIVISION", "UNIT", "AGENCY"];
+const organizationTypeOptions = [
+  "MINISTRY",
+  "DEPARTMENT",
+  "DIVISION",
+  "DIRECTORATE",
+  "BUREAU",
+  "BOARD",
+  "COMMISSION",
+  "OFFICE",
+  "REGULATOR",
+  "AGENCY",
+  "INSTITUTION",
+  "OTHER",
+];
 
 const statusVariant = (value?: string) => {
   if (["ACTIVE", "YES", "NUMERIC"].includes(value ?? "")) return "secondary";
@@ -178,13 +191,23 @@ function TextField({ label, value, required = false }: { label: string; value?: 
   );
 }
 
-function ParentOrganizationField({ value, options }: { value?: string; options: MasterRow[] }) {
+function ParentOrganizationField({
+  value,
+  options,
+  currentOrganizationCode,
+}: {
+  value?: string;
+  options: MasterRow[];
+  currentOrganizationCode?: string;
+}) {
+  const parentOptions = options.filter((item) => item.organization_code !== currentOrganizationCode);
+
   return (
     <label className="grid gap-1 text-xs font-semibold">
       parent_organization_code
       <select name="parent_organization_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
         <option value="">No parent</option>
-        {options.map((item) => (
+        {parentOptions.map((item) => (
           <option key={item.id} value={item.organization_code}>{item.organization_code} / {item.name}</option>
         ))}
       </select>
@@ -359,7 +382,12 @@ function ReferenceDialog({
             <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
               {tab.columns.map((column) =>
                 column.key === "parent_organization_code" ? (
-                  <ParentOrganizationField key={column.key} value={row?.[column.key]} options={organizationRows} />
+                  <ParentOrganizationField
+                    key={column.key}
+                    value={row?.[column.key] === row?.organization_code ? "" : row?.[column.key]}
+                    options={organizationRows}
+                    currentOrganizationCode={row?.organization_code}
+                  />
                 ) : column.key === "organization_type" && tab.code === "organizations" ? (
                   <OrganizationTypeField key={column.key} value={row?.[column.key]} />
                 ) : column.key === "organization_code" && tab.code === "officers" ? (
@@ -518,11 +546,16 @@ export function ReferenceMastersPage() {
 
       if (tabCode === "organizations") {
         const organizationCode = readString(formData, "organization_code") || row?.organization_code || "";
-        const parentOrganizationCode = readOptionalString(formData, "parent_organization_code");
+        const organizationType = readString(formData, "organization_type") || row?.organization_type || "DEPARTMENT";
+        const submittedParentOrganizationCode = readOptionalString(formData, "parent_organization_code");
+        const parentOrganizationCode =
+          organizationType === "MINISTRY" || submittedParentOrganizationCode === organizationCode
+            ? null
+            : submittedParentOrganizationCode;
         const shortCode = readOptionalString(formData, "short_code") ?? row?.short_code;
         const body = {
           organization_code: organizationCode || null,
-          organization_type: readString(formData, "organization_type") || row?.organization_type || "DEPARTMENT",
+          organization_type: organizationType,
           name: readString(formData, "name") || row?.name || "",
           is_active: !isDeactivate && readBoolean(formData, "is_active", true),
         };
