@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
@@ -313,8 +312,6 @@ function DimensionModalView({
 
 export function DimensionsManagementPage() {
   const { language: locale } = useLanguage();
-  const [searchParams] = useSearchParams();
-  const activeUnitCode = searchParams.get("unit_code") ?? "SDG";
   const [selectedDimensionCode, setSelectedDimensionCode] = useState("GEOGRAPHY");
   const [selectedMemberCode, setSelectedMemberCode] = useState("IND");
   const [dimensionSearch, setDimensionSearch] = useState("");
@@ -446,18 +443,6 @@ export function DimensionsManagementPage() {
     memberSetsQuery.isPending ||
     geographiesQuery.isPending ||
     timePeriodsQuery.isPending;
-  const isRefreshing =
-    dimensionsQuery.isFetching ||
-    membersQuery.isFetching ||
-    memberSetsQuery.isFetching ||
-    geographiesQuery.isFetching ||
-    timePeriodsQuery.isFetching ||
-    healthQuery.isFetching ||
-    dimensionDetailQuery.isFetching ||
-    memberSetMembersQuery.isFetching ||
-    selectedGeographyQuery.isFetching ||
-    selectedTimePeriodQuery.isFetching;
-
   const memberChildren = (memberCode: string, members = membersForDimension) => members.filter((member) => member.parent_member_code === memberCode);
   const treeQuery = treeSearch.trim().toLowerCase();
   const memberMatchesSearch = (member: DimensionMember) =>
@@ -602,14 +587,6 @@ export function DimensionsManagementPage() {
           <div>
             <h1 id="dimensions-title" className="text-2xl font-bold">Dimension Management</h1>
             <p className="mt-1 text-sm text-muted-foreground">Manage dimension definitions, hierarchy members, member sets, geography, and time references for the selected unit.</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant="outline">Unit {activeUnitCode}</Badge>
-              <Badge variant="secondary">Read-only API</Badge>
-              <Badge variant={healthQuery.data?.status === "ok" ? "secondary" : "outline"}>
-                Health {healthQuery.data?.status ?? "checking"}
-              </Badge>
-              {isRefreshing ? <span>Refreshing live Dimensions data...</span> : <span>Loaded from Dimensions GET endpoints.</span>}
-            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" disabled title="Dimensions mutation APIs are not available yet."><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
