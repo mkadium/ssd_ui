@@ -1,6 +1,6 @@
 import { Download, Edit3, Eye, FileUp, Plus, Search, Trash2, X } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
@@ -41,6 +41,7 @@ type DialogState = { mode: "view" | "create" | "edit" | "delete"; tab: MasterTab
 
 const referenceTabCodes: ReferenceTab[] = ["locales", "organizations", "officers", "periodicities", "units", "measures"];
 const referenceTabs = referenceTabCodes.map((code) => getMasterTab(code)).filter(Boolean) as MasterTab[];
+const organizationTypeOptions = ["MINISTRY", "DEPARTMENT", "DIVISION", "UNIT", "AGENCY"];
 
 const statusVariant = (value?: string) => {
   if (["ACTIVE", "YES", "NUMERIC"].includes(value ?? "")) return "secondary";
@@ -63,6 +64,28 @@ function valueToString(value: unknown) {
   if (value === null || value === undefined) return undefined;
   if (typeof value === "boolean") return value ? "YES" : "NO";
   return String(value);
+}
+
+function readString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readOptionalString(formData: FormData, key: string) {
+  const value = readString(formData, key);
+  return value || null;
+}
+
+function readBoolean(formData: FormData, key: string, fallback = true) {
+  const value = readString(formData, key).toUpperCase();
+  if (!value) return fallback;
+  return value === "YES" || value === "TRUE" || value === "ACTIVE";
+}
+
+function readInteger(formData: FormData, key: string, fallback?: number) {
+  const value = readString(formData, key);
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function localesToRows(items: LocaleListItem[]): MasterRow[] {
@@ -148,22 +171,22 @@ function unitsFromMeasures(measures: MasterRow[]): MasterRow[] {
   return Array.from(uniqueUnits.values());
 }
 
-function TextField({ label, value }: { label: string; value?: string }) {
+function TextField({ label, value, required = false }: { label: string; value?: string; required?: boolean }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <Input defaultValue={value ?? ""} />
+      <Input name={label} defaultValue={value ?? ""} required={required} />
     </label>
   );
 }
 
-function ParentOrganizationField({ value }: { value?: string }) {
+function ParentOrganizationField({ value, options }: { value?: string; options: MasterRow[] }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       parent_organization_code
-      <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name="parent_organization_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
         <option value="">No parent</option>
-        {organizationOptions.map((item) => (
+        {options.map((item) => (
           <option key={item.id} value={item.organization_code}>{item.organization_code} / {item.name}</option>
         ))}
       </select>
@@ -171,13 +194,13 @@ function ParentOrganizationField({ value }: { value?: string }) {
   );
 }
 
-function OrganizationField({ label, value }: { label: string; value?: string }) {
+function OrganizationField({ label, value, options }: { label: string; value?: string; options: MasterRow[] }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name={label} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
         <option value="">Select organization</option>
-        {organizationOptions.map((item) => (
+        {options.map((item) => (
           <option key={item.id} value={item.organization_code}>
             {item.organization_type} / {item.organization_code} / {item.name}
           </option>
@@ -187,13 +210,26 @@ function OrganizationField({ label, value }: { label: string; value?: string }) 
   );
 }
 
-function UnitField({ value }: { value?: string }) {
+function OrganizationTypeField({ value }: { value?: string }) {
+  return (
+    <label className="grid gap-1 text-xs font-semibold">
+      organization_type
+      <select name="organization_type" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value ?? "DIVISION"} required>
+        {organizationTypeOptions.map((type) => (
+          <option key={type} value={type}>{type}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function UnitField({ value, options }: { value?: string; options: MasterRow[] }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       unit_code
-      <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name="unit_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
         <option value="">Select unit</option>
-        {unitOptions.map((item) => (
+        {options.map((item) => (
           <option key={item.id} value={item.unit_code}>
             {item.unit_code} / {item.name}
           </option>
@@ -259,16 +295,35 @@ function getReferenceStats(tab: MasterTab) {
   ];
 }
 
-function ReferenceDialog({ dialog, onClose }: { dialog: DialogState; onClose: () => void }) {
+const writableReferenceTabs = new Set<ReferenceTab>(["organizations", "officers", "periodicities", "measures"]);
+
+function ReferenceDialog({
+  dialog,
+  organizationRows,
+  unitRows,
+  isSubmitting,
+  errorMessage,
+  onSubmit,
+  onClose,
+}: {
+  dialog: DialogState;
+  organizationRows: MasterRow[];
+  unitRows: MasterRow[];
+  isSubmitting: boolean;
+  errorMessage?: string | null;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onClose: () => void;
+}) {
   if (!dialog) return null;
 
   const { tab, row, mode } = dialog;
   const isDelete = mode === "delete";
   const isView = mode === "view";
+  const canWrite = writableReferenceTabs.has(tab.code as ReferenceTab);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="reference-dialog-title">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+      <form onSubmit={onSubmit} className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
         <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
           <div>
             <p className="text-[11px] font-semibold uppercase text-muted-foreground">{tab.tableName}</p>
@@ -295,7 +350,10 @@ function ReferenceDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
 
           {isDelete && row ? (
             <div className="rounded-md bg-red-50 p-4 text-sm text-red-900">
-              Confirm delete for <strong>{row.organization_code ?? row.officer_code ?? row.periodicity_code ?? row.measure_code ?? row.locale_code ?? row.id}</strong>. Dependency checks are required.
+              Confirm deactivate for <strong>{row.organization_code ?? row.officer_code ?? row.periodicity_code ?? row.measure_code ?? row.locale_code ?? row.id}</strong>. Dependency checks are required.
+              {Object.entries(row).map(([key, value]) => (
+                <input key={key} type="hidden" name={key} value={value ?? ""} />
+              ))}
             </div>
           ) : null}
 
@@ -303,13 +361,15 @@ function ReferenceDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
             <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
               {tab.columns.map((column) =>
                 column.key === "parent_organization_code" ? (
-                  <ParentOrganizationField key={column.key} value={row?.[column.key]} />
+                  <ParentOrganizationField key={column.key} value={row?.[column.key]} options={organizationRows} />
+                ) : column.key === "organization_type" && tab.code === "organizations" ? (
+                  <OrganizationTypeField key={column.key} value={row?.[column.key]} />
                 ) : column.key === "organization_code" && tab.code === "officers" ? (
-                  <OrganizationField key={column.key} label={column.key} value={row?.[column.key]} />
+                  <OrganizationField key={column.key} label={column.key} value={row?.[column.key]} options={organizationRows} />
                 ) : column.key === "unit_code" && tab.code === "measures" ? (
-                  <UnitField key={column.key} value={row?.[column.key]} />
+                  <UnitField key={column.key} value={row?.[column.key]} options={unitRows} />
                 ) : (
-                  <TextField key={column.key} label={column.key} value={row?.[column.key]} />
+                  <TextField key={column.key} label={column.key} value={row?.[column.key]} required={["organization_code", "organization_type", "officer_code", "display_name", "periodicity_code", "name", "version_code", "measure_code"].includes(column.key)} />
                 ),
               )}
             </div>
@@ -317,28 +377,33 @@ function ReferenceDialog({ dialog, onClose }: { dialog: DialogState; onClose: ()
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-border/70 bg-muted/40 px-5 py-4">
-          <span className="text-xs text-muted-foreground">{tab.dependency}</span>
+          <span className={["text-xs", errorMessage ? "font-semibold text-red-700" : "text-muted-foreground"].join(" ")}>
+            {errorMessage ?? (canWrite ? tab.dependency : "This reference set has no standalone mutation API in the current contract.")}
+          </span>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            {!isView ? (
-              <Button variant={isDelete ? "destructive" : "default"} onClick={onClose}>
-                {isDelete ? "Delete" : "Save/Submit"}
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+            {!isView && canWrite ? (
+              <Button type="submit" variant={isDelete ? "destructive" : "default"} disabled={isSubmitting}>
+                {isSubmitting ? "Saving..." : isDelete ? "Deactivate" : "Save/Submit"}
               </Button>
             ) : null}
           </div>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
 export function ReferenceMastersPage() {
   const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [activeCode, setActiveCode] = useState<ReferenceTab>("organizations");
   const [query, setQuery] = useState("");
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const localesQuery = useQuery({
     queryKey: ["masters", "locales", language],
@@ -355,6 +420,10 @@ export function ReferenceMastersPage() {
   const periodicitiesQuery = useQuery({
     queryKey: ["masters", "periodicities", language],
     queryFn: () => mastersService.listPeriodicities({ locale: language }),
+  });
+  const sourceAssignmentsQuery = useQuery({
+    queryKey: ["masters", "reference-source-assignments", language, selectedUnitCode],
+    queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: selectedUnitCode || undefined }),
   });
   const indicatorsQuery = useQuery({
     queryKey: ["masters", "indicators", language],
@@ -373,16 +442,19 @@ export function ReferenceMastersPage() {
     enabled: Boolean(firstCurrentVersionCode),
   });
 
+  const unitScopedOrganizationCodes = new Set(
+    (sourceAssignmentsQuery.data?.data ?? []).map((assignment) => assignment.source_organization_code),
+  );
   const liveOrganizationRows = organizationsQuery.data?.data !== undefined
     ? organizationsToRows(organizationsQuery.data.data).filter((row) =>
       !selectedUnitCode ||
-      row.organization_code === selectedUnitCode ||
-      row.parent_organization_code === selectedUnitCode,
+      Boolean(row.organization_code && unitScopedOrganizationCodes.has(row.organization_code)) ||
+      Boolean(row.parent_organization_code && unitScopedOrganizationCodes.has(row.parent_organization_code)),
     )
     : organizationOptions;
   const liveOfficerRows = officersQuery.data?.data !== undefined
     ? officersToRows(officersQuery.data.data).filter((row) =>
-      !selectedUnitCode || row.organization_code === selectedUnitCode,
+      !selectedUnitCode || Boolean(row.organization_code && unitScopedOrganizationCodes.has(row.organization_code)),
     )
     : getMasterTab("officers")?.rows ?? [];
   const livePeriodicityRows = periodicitiesQuery.data?.data !== undefined
@@ -411,6 +483,7 @@ export function ReferenceMastersPage() {
     organizationsQuery.isFetching ||
     officersQuery.isFetching ||
     periodicitiesQuery.isFetching ||
+    sourceAssignmentsQuery.isFetching ||
     indicatorsQuery.isFetching ||
     versionQuery.isFetching;
   const liveDataError =
@@ -418,12 +491,167 @@ export function ReferenceMastersPage() {
     organizationsQuery.error ||
     officersQuery.error ||
     periodicitiesQuery.error ||
+    sourceAssignmentsQuery.error ||
     indicatorsQuery.error ||
     versionQuery.error;
-  const filteredRows = useMemo(
-    () => activeTab.rows.filter((row) => Object.values(row).join(" ").toLowerCase().includes(query.toLowerCase())),
-    [activeTab.rows, query],
-  );
+  const filteredRows = activeTab.rows.filter((row) => Object.values(row).join(" ").toLowerCase().includes(query.toLowerCase()));
+  const activeTabCanWrite = writableReferenceTabs.has(activeTab.code as ReferenceTab);
+
+  const invalidateReferenceQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["masters", "organizations"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "officers"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "periodicities"] }),
+      queryClient.invalidateQueries({ queryKey: ["masters", "reference-indicator-version"] }),
+    ]);
+  };
+
+  const referenceMutation = useMutation({
+    mutationFn: async ({
+      currentDialog,
+      formData,
+    }: {
+      currentDialog: NonNullable<DialogState>;
+      formData: FormData;
+    }) => {
+      const tabCode = currentDialog.tab.code as ReferenceTab;
+      const row = currentDialog.row;
+      const isDeactivate = currentDialog.mode === "delete";
+
+      if (tabCode === "organizations") {
+        const organizationCode = readString(formData, "organization_code") || row?.organization_code || "";
+        const parentOrganizationCode = readOptionalString(formData, "parent_organization_code");
+        const shortCode = readOptionalString(formData, "short_code") ?? row?.short_code;
+        const body = {
+          organization_code: organizationCode || null,
+          organization_type: readString(formData, "organization_type") || row?.organization_type || "DEPARTMENT",
+          name: readString(formData, "name") || row?.name || "",
+          is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+        };
+
+        if (parentOrganizationCode) {
+          Object.assign(body, { parent_organization_code: parentOrganizationCode });
+        }
+
+        if (shortCode) {
+          Object.assign(body, { short_code: shortCode });
+        }
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createOrganization({ locale: language, body });
+        } else {
+          await mastersService.updateOrganization({
+            organizationCode,
+            locale: language,
+            body,
+          });
+        }
+        return;
+      }
+
+      if (tabCode === "officers") {
+        const organizationCode = readString(formData, "organization_code") || row?.organization_code || "";
+        const officerCode = readString(formData, "officer_code") || row?.officer_code || "";
+        const body = {
+          officer_code: officerCode || null,
+          organization_code: organizationCode,
+          display_name: readString(formData, "display_name") || row?.display_name || "",
+          designation: readOptionalString(formData, "designation"),
+          email: readOptionalString(formData, "email"),
+          mobile_number: readOptionalString(formData, "mobile_number"),
+          is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createOfficer({ locale: language, body });
+        } else {
+          await mastersService.updateOfficer({
+            organizationCode,
+            officerCode,
+            locale: language,
+            body,
+          });
+        }
+        return;
+      }
+
+      if (tabCode === "periodicities") {
+        const periodicityCode = readString(formData, "periodicity_code") || row?.periodicity_code || "";
+        const body = {
+          periodicity_code: periodicityCode || null,
+          name: readString(formData, "name") || row?.name || "",
+          months_interval: readInteger(formData, "months_interval"),
+          sort_order: readInteger(formData, "sort_order"),
+          is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createPeriodicity({ locale: language, body });
+        } else {
+          await mastersService.updatePeriodicity({
+            periodicityCode,
+            locale: language,
+            body,
+          });
+        }
+        return;
+      }
+
+      if (tabCode === "measures") {
+        const versionCode = readString(formData, "version_code") || row?.version_code || firstCurrentVersionCode || "";
+        const measureCode = readString(formData, "measure_code") || row?.measure_code || "";
+        const body = {
+          measure_code: measureCode || null,
+          name: readString(formData, "name") || row?.name || measureCode || "Indicator value",
+          value_type: readString(formData, "value_type") || row?.value_type || "NUMERIC",
+          unit_code: readOptionalString(formData, "unit_code") ?? row?.unit_code ?? null,
+          decimal_places: readInteger(formData, "decimal_places"),
+          validation_rule_code: readOptionalString(formData, "validation_rule_code"),
+          aggregation_type: readOptionalString(formData, "aggregation_type"),
+          is_required: readBoolean(formData, "is_required", true),
+          is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+        };
+
+        if (currentDialog.mode === "create") {
+          await mastersService.createIndicatorMeasure({ versionCode, locale: language, body });
+        } else {
+          await mastersService.updateIndicatorMeasure({
+            versionCode,
+            measureCode,
+            locale: language,
+            body,
+          });
+        }
+      }
+    },
+    onSuccess: async () => {
+      await invalidateReferenceQueries();
+      setMutationError(null);
+      setMutationMessage("Reference master saved. Latest API data is being refreshed.");
+      setDialog(null);
+      window.setTimeout(() => setMutationMessage(null), 5000);
+    },
+    onError: (error) => {
+      setMutationMessage(null);
+      setMutationError(safeApiMessage(error));
+    },
+  });
+
+  const openDialog = (mode: NonNullable<DialogState>["mode"], tab: MasterTab, row?: MasterRow) => {
+    setMutationError(null);
+    setMutationMessage(null);
+    setDialog({ mode, tab, row });
+  };
+
+  const handleDialogSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!dialog) return;
+    setMutationError(null);
+    referenceMutation.mutate({
+      currentDialog: dialog,
+      formData: new FormData(event.currentTarget),
+    });
+  };
 
   return (
     <AppShell persona="Super Admin" activeDashboard="/dashboard/super-admin">
@@ -434,9 +662,15 @@ export function ReferenceMastersPage() {
             <p className="mt-1 text-sm text-muted-foreground">Manage reusable reference masters used by indicators, requests, and source assignment.</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" disabled title="Masters mutation API not available yet"><Download aria-hidden="true" className="size-4" /> Format</Button>
-            <Button variant="outline" disabled title="Masters mutation API not available yet"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
-            <Button disabled title="Masters mutation API not available yet"><Plus aria-hidden="true" className="size-4" /> New record</Button>
+            <Button variant="outline" disabled title="Bulk reference upload API is not available yet"><Download aria-hidden="true" className="size-4" /> Format</Button>
+            <Button variant="outline" disabled title="Bulk reference upload API is not available yet"><FileUp aria-hidden="true" className="size-4" /> Bulk upload</Button>
+            <Button
+              disabled={!activeTabCanWrite}
+              title={activeTabCanWrite ? "Create reference record" : "No standalone mutation API is available for this reference set"}
+              onClick={() => openDialog("create", activeTab)}
+            >
+              <Plus aria-hidden="true" className="size-4" /> New record
+            </Button>
           </div>
         </div>
 
@@ -450,11 +684,17 @@ export function ReferenceMastersPage() {
           </div>
         ) : null}
 
+        {mutationMessage ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-900" role="status">
+            {mutationMessage}
+          </div>
+        ) : null}
+
         <div className="rounded-md border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">Active unit:</span>{" "}
           <span className="font-mono">{selectedUnitCode || "ALL"}</span>
           <span className="mx-2">/</span>
-          Unit scope filters organizations and officers where those records expose organization codes.
+          Organization and officer rows are filtered through unit-scoped source assignments.
         </div>
 
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Reference master tabs">
@@ -520,9 +760,27 @@ export function ReferenceMastersPage() {
                     ))}
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => setDialog({ mode: "view", tab: activeTab, row })}><Eye aria-hidden="true" className="size-3" /></Button>
-                        <Button size="icon-xs" variant="outline" aria-label="Edit" disabled title="Masters mutation API not available yet"><Edit3 aria-hidden="true" className="size-3" /></Button>
-                        <Button size="icon-xs" variant="destructive" aria-label="Delete" disabled title="Masters mutation API not available yet"><Trash2 aria-hidden="true" className="size-3" /></Button>
+                        <Button size="icon-xs" variant="outline" aria-label="View" onClick={() => openDialog("view", activeTab, row)}><Eye aria-hidden="true" className="size-3" /></Button>
+                        <Button
+                          size="icon-xs"
+                          variant="outline"
+                          aria-label="Edit"
+                          disabled={!activeTabCanWrite}
+                          title={activeTabCanWrite ? "Edit reference record" : "No standalone mutation API is available for this reference set"}
+                          onClick={() => openDialog("edit", activeTab, row)}
+                        >
+                          <Edit3 aria-hidden="true" className="size-3" />
+                        </Button>
+                        <Button
+                          size="icon-xs"
+                          variant="destructive"
+                          aria-label="Deactivate"
+                          disabled={!activeTabCanWrite}
+                          title={activeTabCanWrite ? "Deactivate reference record" : "No standalone mutation API is available for this reference set"}
+                          onClick={() => openDialog("delete", activeTab, row)}
+                        >
+                          <Trash2 aria-hidden="true" className="size-3" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -540,7 +798,15 @@ export function ReferenceMastersPage() {
         </Card>
       </section>
 
-      <ReferenceDialog dialog={dialog} onClose={() => setDialog(null)} />
+      <ReferenceDialog
+        dialog={dialog}
+        organizationRows={liveOrganizationRows}
+        unitRows={liveUnitRows}
+        isSubmitting={referenceMutation.isPending}
+        errorMessage={mutationError}
+        onSubmit={handleDialogSubmit}
+        onClose={() => setDialog(null)}
+      />
     </AppShell>
   );
 }
