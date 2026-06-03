@@ -29,7 +29,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  globalIndicatorOptions,
   indicatorMappingNodeOptions,
   type MasterRow,
 } from "@/data/mastersManagement.sample";
@@ -56,6 +55,15 @@ type DialogState = {
 } | null;
 
 const globalMappings: MasterRow[] = [];
+const globalIndicatorMappingOptions: MasterRow[] = [
+  {
+    id: "SDG_1_2_1",
+    global_indicator_code: "SDG_1_2_1",
+    indicator_number: "1.2.1",
+    name: "SDG global indicator 1.2.1",
+    status: "ACTIVE",
+  },
+];
 
 const activeVersionChanges: MasterRow[] = [
   {
@@ -514,10 +522,10 @@ function IndicatorDialog({
                 <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
                 <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
                 <TextField label="national_indicator_code" value={activeIndicatorCode} required />
-                <SelectField label="global_indicator_code" value={row?.global_indicator_code} options={globalIndicatorOptions} />
+                <SelectField label="global_indicator_code" value={row?.global_indicator_code} options={globalIndicatorMappingOptions} required />
                 <TextField label="mapping_type" value={row?.mapping_type ?? "DIRECT"} />
                 <TextField label="mapping_note" value={row?.mapping_note} />
-                <SelectField label="is_active" value={row?.is_active ?? "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
+                <SelectField label="is_active" value={row?.global_indicator_code ? row?.is_active ?? "YES" : "YES"} options={[{ id: "YES" }, { id: "NO" }]} />
               </div>
             </div>
           ) : null}
@@ -866,16 +874,21 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "global-mapping") {
+        const globalIndicatorCode = readString(formData, "global_indicator_code") || row?.global_indicator_code || "";
+        if (!globalIndicatorCode) {
+          throw new Error("Select a global indicator before saving the mapping.");
+        }
+
         await mastersService.createNationalGlobalIndicatorMapping({
           locale: language,
           body: {
             framework_code: frameworkCode,
             edition_code: editionCode,
             national_indicator_code: nationalIndicatorCode,
-            global_indicator_code: readString(formData, "global_indicator_code") || row?.global_indicator_code || "",
+            global_indicator_code: globalIndicatorCode,
             mapping_type: readString(formData, "mapping_type") || "DIRECT",
             mapping_note: readOptionalString(formData, "mapping_note"),
-            is_active: !isDeactivate && readBoolean(formData, "is_active", true),
+            is_active: currentDialog.mode === "map" ? true : !isDeactivate && readBoolean(formData, "is_active", true),
           },
         });
         return;
