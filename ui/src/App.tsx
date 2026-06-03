@@ -1,9 +1,11 @@
 
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { Loader } from "@/components/ui/loader";
 import { useAuth } from "@/hooks/useAuth";
+import { getDefaultDashboardPath } from "@/lib/authRedirect";
 
 const LoginPage = lazy(() => import("@/pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
 const SuperAdminDashboardPage = lazy(() =>
@@ -83,22 +85,21 @@ const NotificationsPage = lazy(() =>
 );
 
 function RouteFallback() {
-  return (
-    <div className="grid min-h-screen place-items-center bg-background text-sm font-semibold text-muted-foreground">
-      Loading workspace...
-    </div>
-  );
+  return <Loader variant="page" label="Loading workspace" />;
 }
 
 function App() {
-  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  const { isAuthenticated, roles, pages } = useAuth();
+  const defaultDashboardPath = getDefaultDashboardPath({ roles, pages });
+  const defaultDashboardWithSearch = `${defaultDashboardPath}${location.search}`;
 
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route
           path="/"
-          element={<Navigate to={isAuthenticated ? "/dashboard/super-admin" : "/login"} replace />}
+          element={<Navigate to={isAuthenticated ? defaultDashboardWithSearch : "/login"} replace />}
         />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/invitation-setup" element={<TemporaryContributorSetupPage />} />
@@ -294,7 +295,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard/super-admin" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated ? defaultDashboardWithSearch : "/login"} replace />} />
       </Routes>
     </Suspense>
   );

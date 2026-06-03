@@ -62,3 +62,19 @@ export interface PasswordUpdateResponse {
 export interface LogoutResponse {
   logged_out: boolean;
 }
+
+export interface AuthListResponse<T = Record<string, unknown>> {
+  data: T[];
+  count: number;
+}
+
+export interface AuthAdminUnit {
+  unit_code: string;
+  unit_name?: string | null;
+  name?: string | null;
+  unit_type?: string | null;
+  parent_unit_code?: string | null;
+  jurisdiction?: string | null;
+  is_active?: boolean | null;
+  status?: string | null;
+}

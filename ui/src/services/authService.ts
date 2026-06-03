@@ -6,6 +6,8 @@ import type {
   RefreshResponse,
   ChangePasswordRequest,
   AdminSetPasswordRequest,
+  AuthAdminUnit,
+  AuthListResponse,
   PermissionCheckRequest,
   PermissionCheckResponse,
   CurrentProfileResponse,
@@ -65,5 +67,19 @@ export const authService = {
       method: "POST",
       json: body,
     });
+  },
+
+  listAdminUnits: async ({
+    includeInactive = false,
+  }: {
+    includeInactive?: boolean;
+  } = {}): Promise<AuthListResponse<AuthAdminUnit>> => {
+    const params = new URLSearchParams({
+      include_inactive: String(includeInactive),
+    });
+
+    return apiRequest<AuthListResponse<AuthAdminUnit>>(
+      `/auth/admin/units?${params.toString()}`,
+    );
   },
 };

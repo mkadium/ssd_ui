@@ -8,6 +8,8 @@ export type AuthContextValue = {
   accessToken: string | null;
   refreshToken: string | null;
   user: AuthUser | null;
+  roles: LoginResponse["roles"];
+  pages: LoginResponse["pages"];
   isAuthenticated: boolean;
   setAuth: (data: LoginResponse) => void;
   setAccessToken: (token: string) => void;
