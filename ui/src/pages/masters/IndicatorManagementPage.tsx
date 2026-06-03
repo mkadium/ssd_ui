@@ -138,6 +138,12 @@ function readInteger(formData: FormData, key: string, fallback?: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function buildVersionCode(indicatorCode: string, versionNumber = 1) {
+  const normalizedIndicatorCode = indicatorCode.trim().toUpperCase();
+  if (!normalizedIndicatorCode) return "";
+  return `${normalizedIndicatorCode}_V${versionNumber}`;
+}
+
 function indicatorToRow(indicator: IndicatorListItem): MasterRow {
   return {
     id: indicator.national_indicator_code,
@@ -270,17 +276,21 @@ function RelatedTable({
   columns,
   onAction,
   onCreate,
+  createDisabled = false,
+  createTitle = "Add",
 }: {
   rows: MasterRow[];
   columns: { key: string; label: string }[];
   onAction: (mode: NonNullable<DialogState>["mode"], row?: MasterRow) => void;
   onCreate?: () => void;
+  createDisabled?: boolean;
+  createTitle?: string;
 }) {
   return (
     <div className="grid gap-2">
       {onCreate ? (
         <div className="flex justify-end">
-          <Button size="sm" onClick={onCreate}>
+          <Button size="sm" onClick={onCreate} disabled={createDisabled} title={createTitle}>
             <Plus aria-hidden="true" className="size-4" />
             Add
           </Button>
@@ -361,6 +371,27 @@ function TextField({
   );
 }
 
+function ReadOnlyField({
+  label,
+  value,
+  name = label,
+  required = false,
+  className = "",
+}: {
+  label: string;
+  value?: string;
+  name?: string;
+  required?: boolean;
+  className?: string;
+}) {
+  return (
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+      {label}
+      <Input name={name} value={value ?? ""} readOnly required={required} className="bg-muted/60" />
+    </label>
+  );
+}
+
 function FrameworkEditionField({
   value,
   options,
@@ -428,6 +459,8 @@ function IndicatorDialog({
   const activeFrameworkEditionKey = `${activeFrameworkCode}.${activeEditionCode}`;
   const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
   const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
+  const defaultVersionNumber = row?.version_number ?? "1";
+  const defaultVersionCode = row?.version_code ?? buildVersionCode(activeIndicatorCode, Number.parseInt(defaultVersionNumber, 10) || 1);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="indicator-dialog-title">
@@ -489,9 +522,9 @@ function IndicatorDialog({
                 <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
                 <TextField label="edition_code" value={row?.edition_code ?? activeEditionCode} required />
                 <TextField label="national_indicator_code" value={activeIndicatorCode} required />
-                <TextField label="version_code" value={row?.version_code} />
+                <TextField label="version_code" value={defaultVersionCode} />
                 <TextField label="name" value={row?.name ?? selectedIndicator?.name} required />
-                <TextField label="version_number" value={row?.version_number ?? "1"} />
+                <TextField label="version_number" value={defaultVersionNumber} />
                 <TextField label="data_type" value={row?.data_type ?? "NUMERIC"} />
                 <TextField label="unit_of_measure_code" value={row?.unit_of_measure_code ?? "PERCENT"} />
                 <TextField label="decimal_places" value={row?.decimal_places ?? "2"} />
@@ -504,7 +537,7 @@ function IndicatorDialog({
           {isMeasureForm ? (
             <div className="grid gap-4">
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <TextField label="version_code" value={activeVersionCode} required />
+                <ReadOnlyField label="version_code" value={activeVersionCode} required />
                 <TextField label="measure_code" value={row?.measure_code} />
                 <TextField label="name" value={row?.name ?? "Indicator value"} required />
                 <TextField label="value_type" value={row?.value_type ?? "NUMERIC"} />
@@ -820,14 +853,19 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "version") {
-        const versionCode = readString(formData, "version_code") || row?.version_code || "";
+        const versionNumber = readInteger(formData, "version_number", 1) ?? 1;
+        const versionCode = readString(formData, "version_code") || row?.version_code || buildVersionCode(nationalIndicatorCode, versionNumber);
+        if (!versionCode) {
+          throw new Error("Create or select a national indicator before adding a version.");
+        }
+
         const body = {
           framework_code: frameworkCode,
           edition_code: editionCode,
           national_indicator_code: nationalIndicatorCode,
-          version_code: versionCode || null,
+          version_code: versionCode,
           name: readString(formData, "name") || selectedIndicator?.name || "",
-          version_number: readInteger(formData, "version_number", 1),
+          version_number: versionNumber,
           unit_of_measure_code: readOptionalString(formData, "unit_of_measure_code"),
           data_type: readString(formData, "data_type") || "NUMERIC",
           decimal_places: readInteger(formData, "decimal_places"),
@@ -848,7 +886,11 @@ export function IndicatorManagementPage() {
       }
 
       if (entity === "metadata" || entity === "measure") {
-        const versionCode = readString(formData, "version_code") || currentVersion?.version_code || "";
+        const versionCode = row?.version_code || currentVersion?.version_code || selectedVersionCode || "";
+        if (!versionCode) {
+          throw new Error(entity === "metadata" ? "Create an indicator version before adding measure metadata." : "Create an indicator version before adding a measure.");
+        }
+
         const measureCode = readString(formData, "measure_code") || row?.measure_code || "";
         const body = {
           measure_code: measureCode || null,
@@ -1147,7 +1189,11 @@ export function IndicatorManagementPage() {
             {activeTab === "measures" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
-                  <Button onClick={() => openDialog("create", "Add indicator measure", currentVersion, "measure")}>
+                  <Button
+                    disabled={!currentVersion?.version_code}
+                    title={currentVersion?.version_code ? "Add indicator measure" : "Create an indicator version before adding measures"}
+                    onClick={() => openDialog("create", "Add indicator measure", currentVersion, "measure")}
+                  >
                     <Plus aria-hidden="true" className="size-4" />
                     Add measure
                   </Button>
@@ -1181,22 +1227,29 @@ export function IndicatorManagementPage() {
                 ]}
                 onAction={(mode, row) => openDialog(mode, "Metadata detail", row, "metadata")}
                 onCreate={() => openDialog("create", "Create measure metadata", undefined, "metadata")}
+                createDisabled={!currentVersion?.version_code}
+                createTitle={currentVersion?.version_code ? "Create measure metadata" : "Create an indicator version before adding measure metadata"}
               />
             ) : null}
 
             {activeTab === "global-mapping" ? (
-              <RelatedTable
-                rows={indicatorGlobalMappings}
-                columns={[
-                  { key: "national_indicator_code", label: "National" },
-                  { key: "global_indicator_code", label: "Global" },
-                  { key: "mapping_type", label: "Type" },
-                  { key: "mapping_note", label: "Note" },
-                  { key: "is_active", label: "Active" },
-                ]}
-                onAction={(mode, row) => openDialog(mode, "Global mapping", row, "global-mapping")}
-                onCreate={() => openDialog("create", "Create global mapping", undefined, "global-mapping")}
-              />
+              <div className="grid gap-3">
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-900">
+                  National/global mapping create is available, but no GET API is exposed yet for listing saved mappings.
+                </div>
+                <RelatedTable
+                  rows={indicatorGlobalMappings}
+                  columns={[
+                    { key: "national_indicator_code", label: "National" },
+                    { key: "global_indicator_code", label: "Global" },
+                    { key: "mapping_type", label: "Type" },
+                    { key: "mapping_note", label: "Note" },
+                    { key: "is_active", label: "Active" },
+                  ]}
+                  onAction={(mode, row) => openDialog(mode, "Global mapping", row, "global-mapping")}
+                  onCreate={() => openDialog("create", "Create global mapping", undefined, "global-mapping")}
+                />
+              </div>
             ) : null}
 
             {activeTab === "sources" ? (
