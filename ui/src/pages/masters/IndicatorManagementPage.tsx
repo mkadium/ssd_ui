@@ -37,6 +37,7 @@ import { useLanguage } from "@/providers/language-context";
 import { mastersService } from "@/services/mastersService";
 import type {
   IndicatorDetail,
+  FrameworkEditionListItem,
   IndicatorListItem,
   IndicatorVersionDetail,
   OfficerListItem,
@@ -91,7 +92,12 @@ function safeApiMessage(error: unknown) {
     if (error.status === 401) return "Sign in again to load indicator data.";
     if (error.status === 403) return "You do not have permission to view indicator data.";
     if (error.status === 0) return "Unable to reach the API.";
+    if (typeof error.detail === "object" && error.detail && "detail" in error.detail) {
+      return String(error.detail.detail);
+    }
   }
+
+  if (error instanceof Error) return error.message;
 
   return "Indicator data is temporarily unavailable.";
 }
@@ -140,6 +146,16 @@ function indicatorToRow(indicator: IndicatorListItem): MasterRow {
     status: indicator.status ?? "ACTIVE",
     color_value: indicator.color_value ?? undefined,
   };
+}
+
+function frameworkEditionToRows(items: FrameworkEditionListItem[]): MasterRow[] {
+  return items.map((item) => ({
+    id: `${item.framework_code}.${item.edition_code}`,
+    framework_code: item.framework_code,
+    edition_code: item.edition_code,
+    name: item.name,
+    status: item.status,
+  }));
 }
 
 function sourceToRow(source: SourceAssignmentListItem): MasterRow {
@@ -316,11 +332,47 @@ function SelectField({ label, value, options, name = label, required = false }: 
   );
 }
 
-function TextField({ label, value, name = label, required = false }: { label: string; value?: string; name?: string; required?: boolean }) {
+function TextField({
+  label,
+  value,
+  name = label,
+  required = false,
+  className = "",
+}: {
+  label: string;
+  value?: string;
+  name?: string;
+  required?: boolean;
+  className?: string;
+}) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
       {label}
       <Input name={name} defaultValue={value ?? ""} required={required} />
+    </label>
+  );
+}
+
+function FrameworkEditionField({
+  value,
+  options,
+  className = "",
+}: {
+  value?: string;
+  options: MasterRow[];
+  className?: string;
+}) {
+  return (
+    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+      framework_edition
+      <select name="framework_edition_key" className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
+        <option value="">Select framework edition</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.framework_code} / {option.edition_code} / {option.name ?? option.status ?? ""}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -330,7 +382,7 @@ function IndicatorDialog({
   selectedIndicator,
   selectedVersion,
   selectedUnitCode,
-  editionCodeOptions,
+  frameworkEditionOptions,
   organizationRowsData,
   officerRowsData,
   periodicityRowsData,
@@ -343,7 +395,7 @@ function IndicatorDialog({
   selectedIndicator?: MasterRow;
   selectedVersion?: MasterRow;
   selectedUnitCode: string;
-  editionCodeOptions: MasterRow[];
+  frameworkEditionOptions: MasterRow[];
   organizationRowsData: MasterRow[];
   officerRowsData: MasterRow[];
   periodicityRowsData: MasterRow[];
@@ -365,6 +417,7 @@ function IndicatorDialog({
   const isSourceForm = isFormMode && entity === "source";
   const activeFrameworkCode = row?.framework_code ?? selectedIndicator?.framework_code ?? "SDG_NIF";
   const activeEditionCode = row?.edition_code ?? selectedIndicator?.edition_code ?? "SDG_NIF_2025";
+  const activeFrameworkEditionKey = `${activeFrameworkCode}.${activeEditionCode}`;
   const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
   const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
 
@@ -404,11 +457,10 @@ function IndicatorDialog({
 
           {isIndicatorForm ? (
             <div className="grid gap-4">
-              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <TextField label="framework_code" value={row?.framework_code ?? activeFrameworkCode} required />
-                <SelectField label="edition_code" value={row?.edition_code ?? activeEditionCode} options={editionCodeOptions} required />
-                <TextField label="national_indicator_code" value={row?.national_indicator_code} />
-                <TextField label="indicator_number" value={row?.indicator_number} />
+              <div className="grid grid-cols-6 gap-3 max-lg:grid-cols-2">
+                <FrameworkEditionField value={activeFrameworkEditionKey} options={frameworkEditionOptions} className="col-span-3 max-lg:col-span-2" />
+                <TextField label="national_indicator_code" value={row?.national_indicator_code} className="col-span-2 max-lg:col-span-1" />
+                <TextField label="indicator_number" value={row?.indicator_number} className="col-span-1 max-lg:col-span-1" />
               </div>
               <TextField label="name" value={row?.name} required />
               <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
@@ -529,6 +581,11 @@ export function IndicatorManagementPage() {
     queryFn: () => mastersService.listIndicators({ locale: language, unitCode: selectedUnitCode || undefined }),
   });
 
+  const frameworkEditionsQuery = useQuery({
+    queryKey: ["masters", "framework-editions", language],
+    queryFn: () => mastersService.listFrameworkEditions({ locale: language, includeInactive: false }),
+  });
+
   const sourceAssignmentsQuery = useQuery({
     queryKey: ["masters", "source-assignments", language, selectedUnitCode],
     queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: selectedUnitCode || undefined }),
@@ -554,20 +611,27 @@ export function IndicatorManagementPage() {
     [indicatorsQuery.data],
   );
   const nationalIndicatorRows = liveNationalIndicatorRows;
-  const editionCodeOptions = useMemo(() => {
-    const editionCodes = new Set<string>();
+  const frameworkEditionOptions = useMemo(() => {
+    const options = frameworkEditionToRows(frameworkEditionsQuery.data?.data ?? []);
+    const optionKeys = new Set(options.map((option) => option.id));
 
     for (const indicator of nationalIndicatorRows) {
-      if (indicator.edition_code) {
-        editionCodes.add(indicator.edition_code);
+      if (indicator.framework_code && indicator.edition_code) {
+        const id = `${indicator.framework_code}.${indicator.edition_code}`;
+        if (!optionKeys.has(id)) {
+          options.push({
+            id,
+            framework_code: indicator.framework_code,
+            edition_code: indicator.edition_code,
+            name: id,
+          });
+          optionKeys.add(id);
+        }
       }
     }
 
-    return Array.from(editionCodes).map((editionCode) => ({
-      id: editionCode,
-      edition_code: editionCode,
-    }));
-  }, [nationalIndicatorRows]);
+    return options;
+  }, [frameworkEditionsQuery.data, nationalIndicatorRows]);
   const selectedIndicator = nationalIndicatorRows.find((indicator) => indicator.national_indicator_code === selectedIndicatorCode) ?? nationalIndicatorRows[0];
 
   const selectedIndicatorDetailQuery = useQuery({
@@ -632,6 +696,7 @@ export function IndicatorManagementPage() {
   const selectedVersionChanges = activeVersionChanges.filter((item) => item.national_indicator_code === selectedIndicator?.national_indicator_code);
   const isLiveDataLoading =
     indicatorsQuery.isFetching ||
+    frameworkEditionsQuery.isFetching ||
     sourceAssignmentsQuery.isFetching ||
     organizationsQuery.isFetching ||
     officersQuery.isFetching ||
@@ -640,6 +705,7 @@ export function IndicatorManagementPage() {
     selectedVersionQuery.isFetching;
   const liveDataError =
     indicatorsQuery.error ||
+    frameworkEditionsQuery.error ||
     sourceAssignmentsQuery.error ||
     organizationsQuery.error ||
     officersQuery.error ||
@@ -683,11 +749,25 @@ export function IndicatorManagementPage() {
       const entity = currentDialog.entity ?? "indicator";
       const row = currentDialog.row;
       const isDeactivate = currentDialog.mode === "delete";
-      const frameworkCode = readString(formData, "framework_code") || selectedIndicator?.framework_code || "SDG_NIF";
-      const editionCode = readString(formData, "edition_code") || selectedIndicator?.edition_code || "SDG_NIF_2025";
+      const frameworkEditionKey = readString(formData, "framework_edition_key");
+      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.id === frameworkEditionKey);
+      const frameworkCode =
+        selectedFrameworkEdition?.framework_code ||
+        readString(formData, "framework_code") ||
+        selectedIndicator?.framework_code ||
+        "SDG_NIF";
+      const editionCode =
+        selectedFrameworkEdition?.edition_code ||
+        readString(formData, "edition_code") ||
+        selectedIndicator?.edition_code ||
+        "SDG_NIF_2025";
       const nationalIndicatorCode = readString(formData, "national_indicator_code") || selectedIndicator?.national_indicator_code || "";
 
       if (entity === "indicator") {
+        if (frameworkEditionKey && !selectedFrameworkEdition) {
+          throw new Error("Select a valid framework edition before saving the indicator.");
+        }
+
         const body = {
           framework_code: frameworkCode,
           edition_code: editionCode,
@@ -1134,7 +1214,7 @@ export function IndicatorManagementPage() {
         selectedIndicator={selectedIndicator}
         selectedVersion={currentVersion}
         selectedUnitCode={selectedUnitCode}
-        editionCodeOptions={editionCodeOptions}
+        frameworkEditionOptions={frameworkEditionOptions}
         organizationRowsData={organizationRowsData}
         officerRowsData={officerRowsData}
         periodicityRowsData={periodicityRowsData}
