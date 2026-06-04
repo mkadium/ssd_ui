@@ -899,8 +899,6 @@ export function FrameworkEditionSetupPage() {
         <div className="rounded-md border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">Active unit:</span>{" "}
           <span className="font-mono">{selectedUnitCode || "ALL"}</span>
-          <span className="mx-2">/</span>
-          {frameworkFallbackNotice}
         </div>
 
         <div className="grid grid-cols-5 gap-3 max-xl:grid-cols-3 max-md:grid-cols-2">
