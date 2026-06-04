@@ -383,10 +383,10 @@ function FormModal({
                   Parent node
                   <Input
                     name="parent_node_code"
-                    readOnly={modal === "add-child" || modal === "add-root"}
+                    disabled={modal === "add-child" || modal === "add-root"}
                     className={modal === "add-child" || modal === "add-root" ? "bg-muted/60" : undefined}
                     defaultValue={modal === "add-child" ? selectedNode.node_code : modal === "add-root" ? "" : selectedNode.parent_node_code ?? ""}
-                    placeholder="Optional for root"
+                    placeholder={modal === "add-root" ? "Root node has no parent" : modal === "add-child" ? "Parent is selected node" : "Optional for root"}
                   />
                 </label>
               </div>
