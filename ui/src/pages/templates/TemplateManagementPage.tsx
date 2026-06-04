@@ -1,6 +1,7 @@
 import {
   CheckCircle2,
   Code2,
+  Copy,
   Edit3,
   Eye,
   FileSpreadsheet,
@@ -56,8 +57,10 @@ import type {
   TemplateCellRequest,
   TemplateDefinitionListItem,
   TemplateMeasureRequest,
+  TemplateRenderContract,
   TemplateRenderElementRequest,
   TemplateValidationRuleRefRequest,
+  TemplateVersionListItem,
 } from "@/types/templates";
 
 type TemplateTab = "list" | "designer" | "contract";
@@ -170,6 +173,7 @@ const rowHeaderWidth = 36;
 const defaultColumnWidths = Object.fromEntries(canvasColumns.map((column) => [column, 112])) as Record<string, number>;
 const defaultRowHeights = Object.fromEntries(canvasRows.map((row) => [row, row === 1 ? 42 : 38])) as Record<number, number>;
 const templatesUnitCode = "SDG";
+const bindingObjectCodeSet = new Set<BindingObjectCode>(["NIF_1_2_1", "GEOGRAPHY", "TIME_PERIOD", "AREA_TYPE", "GENDER", "INDICATOR_VALUE"]);
 
 const measureBindingOptions: Array<{
   code: MeasureCode;
@@ -294,6 +298,12 @@ const booleanFor = (value: boolean | string | null | undefined, fallback: boolea
   return fallback;
 };
 
+const isCurrentVersion = (value: boolean | string | null | undefined) => booleanFor(value, false);
+
+const isBindingObjectCode = (value: unknown): value is BindingObjectCode => (
+  typeof value === "string" && bindingObjectCodeSet.has(value as BindingObjectCode)
+);
+
 function templateListItemToDefinition(item: TemplateDefinitionListItem): TemplateDefinitionSample {
   const status = templateStatusFor(item.status);
 
@@ -382,6 +392,85 @@ function canvasCellsFromRenderContract(contract?: { render_elements?: Array<Reco
   });
 
   return Object.keys(next).length ? next : null;
+}
+
+function indicatorVersionCodeFromRenderContract(contract?: TemplateRenderContract) {
+  const measureCode = contract?.measures
+    ?.map((measure) => stringFromRecord(measure, "indicator_version_code"))
+    .find(Boolean);
+  if (measureCode) return measureCode;
+
+  return contract?.cells
+    ?.map((cell) => stringFromRecord(cell, "indicator_version_code"))
+    .find(Boolean) ?? "";
+}
+
+function canvasBoundsFor(cells: Record<string, CanvasCell>) {
+  return Object.keys(cells).reduce(
+    (bounds, address) => {
+      const { row, col } = addressToCoord(address);
+      return {
+        rows: Math.max(bounds.rows, row),
+        columns: Math.max(bounds.columns, col),
+      };
+    },
+    { rows: initialVisibleRowCount, columns: initialVisibleColumnCount },
+  );
+}
+
+function axesFromRenderContract(contract?: TemplateRenderContract) {
+  const rows: BindingObjectCode[] = [];
+  const columns: BindingObjectCode[] = [];
+
+  contract?.axes?.forEach((axis) => {
+    const dimensionCode = axis.dimension_code;
+    if (!isBindingObjectCode(dimensionCode)) return;
+    const role = typeof axis.axis_role === "string" ? axis.axis_role.toUpperCase() : "";
+    if (role === "ROW" && !rows.includes(dimensionCode)) {
+      rows.push(dimensionCode);
+    }
+    if (role === "COLUMN" && !columns.includes(dimensionCode)) {
+      columns.push(dimensionCode);
+    }
+  });
+
+  return { rows, columns };
+}
+
+function boundObjectsFromRenderContract(contract: TemplateRenderContract | undefined, cells: Record<string, CanvasCell>) {
+  const { rows, columns } = axesFromRenderContract(contract);
+  const objects: BoundObject[] = [
+    ...rows.map((code): BoundObject => ({
+      code,
+      label: optionFor(code).label,
+      type: "Dimension",
+      alignment: "row",
+      range: "",
+      memberCount: 0,
+    })),
+    ...columns.map((code): BoundObject => ({
+      code,
+      label: optionFor(code).label,
+      type: "Dimension",
+      alignment: "column",
+      range: "",
+      memberCount: 0,
+    })),
+  ];
+
+  const hasEditableCells = Object.values(cells).some((cell) => cell.editable || cell.role === "INPUT");
+  if (hasEditableCells) {
+    objects.push({
+      code: "INDICATOR_VALUE",
+      label: optionFor("INDICATOR_VALUE").label,
+      type: "Measure",
+      alignment: "context",
+      range: "From render-contract",
+      memberCount: contract?.measures?.length ?? 1,
+    });
+  }
+
+  return objects;
 }
 
 const optionFor = (code: BindingObjectCode) => bindingOptions.find((option) => option.code === code) ?? bindingOptions[0];
@@ -1622,6 +1711,8 @@ export function TemplateManagementPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | "ALL">("ALL");
   const [selectedTemplateCode, setSelectedTemplateCode] = useState("TPL_NIF_1_2_1_AREA_GENDER_TIME_DRAFT");
+  const [editingVersionCodeOverride, setEditingVersionCodeOverride] = useState<string | null>(null);
+  const [designerIndicatorVersionCode, setDesignerIndicatorVersionCode] = useState("");
   const [modal, setModal] = useState<TemplateModal>(null);
   const [designerStage, setDesignerStage] = useState<DesignerStage>("basics");
   const [selectedAnchor, setSelectedAnchor] = useState("B2");
@@ -1663,19 +1754,29 @@ export function TemplateManagementPage() {
   ]);
   const [activityMessage, setActivityMessage] = useState("Click a cell to type. Suggestions appear while typing. Double-click any cell to open options.");
 
-  const templatesQuery = useQuery({
-    queryKey: ["templates", "list", templatesUnitCode, language],
-    queryFn: () => templatesService.listTemplates({ locale: language, unitCode: templatesUnitCode }),
+  const draftTemplatesQuery = useQuery({
+    queryKey: ["templates", "list", templatesUnitCode, language, "DRAFT"],
+    queryFn: () => templatesService.listTemplates({ locale: language, unitCode: templatesUnitCode, status: "DRAFT" }),
+  });
+  const activeTemplatesQuery = useQuery({
+    queryKey: ["templates", "list", templatesUnitCode, language, "ACTIVE"],
+    queryFn: () => templatesService.listTemplates({ locale: language, unitCode: templatesUnitCode, status: "ACTIVE" }),
   });
 
-  const apiTemplates = useMemo(
-    () => templatesQuery.data?.data.map(templateListItemToDefinition),
-    [templatesQuery.data],
-  );
+  const apiTemplates = useMemo(() => {
+    if (!draftTemplatesQuery.data && !activeTemplatesQuery.data) return undefined;
+    const byCode = new Map<string, TemplateDefinitionListItem>();
+    [...(draftTemplatesQuery.data?.data ?? []), ...(activeTemplatesQuery.data?.data ?? [])].forEach((template) => {
+      byCode.set(template.template_code, template);
+    });
+    return [...byCode.values()].map(templateListItemToDefinition);
+  }, [activeTemplatesQuery.data, draftTemplatesQuery.data]);
   const templates = apiTemplates ?? localTemplates;
 
   const selectedTemplate = templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? templateDefinitions[0];
-  const activeVersionCode = selectedTemplate.current_version_code;
+  const activeVersionCode = editingVersionCodeOverride ?? selectedTemplate.current_version_code;
+  const isEditingDraftVersion = selectedTemplate.status === "DRAFT" || Boolean(editingVersionCodeOverride);
+  const saveIndicatorVersionCode = designerIndicatorVersionCode || selectedTemplate.mapped_indicator_code;
   const templateDetailQuery = useQuery({
     queryKey: ["templates", "detail", selectedTemplate.template_code, templatesUnitCode, language],
     queryFn: () => templatesService.getTemplate({ templateCode: selectedTemplate.template_code, locale: language, unitCode: templatesUnitCode }),
@@ -1691,11 +1792,7 @@ export function TemplateManagementPage() {
     queryFn: () => templatesService.getRenderContract({ versionCode: activeVersionCode, locale: language, unitCode: templatesUnitCode }),
     enabled: Boolean(activeVersionCode),
   });
-  const renderContractCells = useMemo(
-    () => canvasCellsFromRenderContract(renderContractQuery.data?.data),
-    [renderContractQuery.data],
-  );
-  const canvasDisplayCells = renderContractCells && designerStage === "basics" ? renderContractCells : cells;
+  const canvasDisplayCells = cells;
   const selectedVersion = templateVersions.find((version) => version.version_code === selectedTemplate.current_version_code) ?? templateVersions[0];
   const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
   const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
@@ -1896,7 +1993,7 @@ export function TemplateManagementPage() {
       null,
       2,
     );
-  }, [aggregationMethod, cells, columnAxes, combineMeasureBelowDimension, datatype, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, validationRule, verticalAlign]);
+  }, [aggregationMethod, cells, columnAxes, combineMeasureBelowDimension, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedTemplate, showHeader, verticalAlign]);
 
   const templateSavePayload = useMemo(() => {
     const allAxes = [
@@ -1938,7 +2035,7 @@ export function TemplateManagementPage() {
       .filter((measure) => measure.code === selectedMeasure.code || boundMeasureCodes.includes(measure.code))
       .map((measure, index) => ({
         measure_code: measure.code,
-        indicator_version_code: selectedTemplate.mapped_indicator_code,
+        indicator_version_code: saveIndicatorVersionCode,
         source_measure_code: measure.code,
         label: measure.label,
         unit_code: templatesUnitCode,
@@ -2053,7 +2150,7 @@ export function TemplateManagementPage() {
         cell_code: cellCode,
         measure_code: cellMeasure.code,
         unit_code: templatesUnitCode,
-        indicator_version_code: selectedTemplate.mapped_indicator_code,
+        indicator_version_code: saveIndicatorVersionCode,
         row_axis_code: rowAxes[0] ? axisApiCode(rowAxes[0], "ROW") : null,
         column_axis_code: columnAxes.find((code) => code !== "INDICATOR_VALUE") ? axisApiCode(columnAxes.find((code) => code !== "INDICATOR_VALUE") ?? "TIME_PERIOD", "COLUMN") : null,
         context_axis_code: null,
@@ -2114,7 +2211,7 @@ export function TemplateManagementPage() {
     }));
 
     return { axes, axisMembers, measures, bindingGroups, templateCells, renderElements, validationRuleRefs };
-  }, [aggregationMethod, boundMeasureCodes, cells, columnAxes, combineMeasureBelowDimension, datatype, decimalPlaces, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, selectedMeasure, selectedRange, selectedTemplate, showHeader, validationRule, verticalAlign]);
+  }, [aggregationMethod, boundMeasureCodes, cells, columnAxes, combineMeasureBelowDimension, datatype, decimalPlaces, geographyScope, horizontalAlign, required, rollupEntryMode, rowAxes, saveIndicatorVersionCode, selectedMeasure, selectedRange, selectedTemplate, showHeader, validationRule, verticalAlign]);
 
   const addOperation = (label: string, detail: string) => {
     setOperations((current) => [...current, { id: `${Date.now()}-${label}`, label, detail }]);
@@ -2160,6 +2257,8 @@ export function TemplateManagementPage() {
     onSuccess: async ({ templateCode, versionCode }) => {
       await queryClient.invalidateQueries({ queryKey: ["templates", "list", templatesUnitCode] });
       setSelectedTemplateCode(templateCode);
+      setEditingVersionCodeOverride(versionCode);
+      setDesignerIndicatorVersionCode(templateDefinitions[0].mapped_indicator_code);
       setCells(buildHeaderCells({
         ...templateDefinitions[0],
         template_code: templateCode,
@@ -2189,12 +2288,60 @@ export function TemplateManagementPage() {
     },
   });
 
+  const createDraftFromActiveMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTemplate.template_code || selectedTemplate.status !== "ACTIVE") {
+        throw new Error("Open an active template before creating a draft version.");
+      }
+      const stamp = Date.now();
+      const versionCode = `${selectedTemplate.template_code}_DRAFT_${stamp}`;
+      const nextVersionNumber = Math.max(
+        1,
+        ...(templateVersionsQuery.data?.data ?? []).map((version) => Number(version.version_number) || 0),
+      ) + 1;
+
+      await templatesService.upsertTemplateVersion({
+        locale: language,
+        templateCode: selectedTemplate.template_code,
+        payload: {
+          template_code: selectedTemplate.template_code,
+          version_code: versionCode,
+          title: `${selectedTemplate.name} draft`,
+          unit_code: templatesUnitCode,
+          version_number: nextVersionNumber,
+          render_contract_version: "v1",
+          is_current: false,
+          status: "DRAFT",
+          instructions: "Draft version created from an active template. Save draft to persist canvas changes to this version.",
+        },
+      });
+
+      return versionCode;
+    },
+    onSuccess: async (versionCode) => {
+      setEditingVersionCodeOverride(versionCode);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["templates", "list", templatesUnitCode] }),
+        queryClient.invalidateQueries({ queryKey: ["templates", "versions", selectedTemplate.template_code, templatesUnitCode, language] }),
+      ]);
+      setDesignerStage("basics");
+      setActivityMessage("Draft version created. Save draft will write your canvas changes to the new draft version.");
+      addOperation("Draft version created", `${versionCode} created for ${selectedTemplate.template_code}.`);
+    },
+    onError: (error) => {
+      setActivityMessage(error instanceof Error && !(error instanceof ApiError) ? error.message : apiErrorMessage(error));
+    },
+  });
+
   const saveTemplateDraftMutation = useMutation({
     mutationFn: async () => {
       if (!activeVersionCode) {
         throw new Error("Create a template version before saving the designer contract.");
       }
-      if (!selectedTemplate.mapped_indicator_code || selectedTemplate.mapped_indicator_code === "-") {
+      if (!isEditingDraftVersion) {
+        throw new Error("Active templates are read-only. Create a draft version before saving changes.");
+      }
+      if (!saveIndicatorVersionCode || saveIndicatorVersionCode === "-") {
         throw new Error("This template row does not include an indicator_version_code. Open a template detail that provides it before saving measures.");
       }
 
@@ -2246,6 +2393,9 @@ export function TemplateManagementPage() {
     mutationFn: async () => {
       if (!activeVersionCode) {
         throw new Error("Create a template version before publishing.");
+      }
+      if (!isEditingDraftVersion) {
+        throw new Error("Active templates are already published. Create a draft version before publishing new changes.");
       }
 
       return templatesService.publishTemplateVersion({
@@ -4238,6 +4388,62 @@ export function TemplateManagementPage() {
     addOperation("Canvas reset", "Removed local bindings and kept frozen indicator context row.");
   };
 
+  const openTemplateInDesigner = async (template: TemplateDefinitionSample) => {
+    setSelectedTemplateCode(template.template_code);
+    setEditingVersionCodeOverride(null);
+    setActiveTab("designer");
+    setDesignerStage("basics");
+    setOptionsOpen(false);
+    setActivityMessage("Loading saved template canvas from render-contract...");
+
+    try {
+      let versionCode = template.current_version_code;
+      if (!versionCode) {
+        const versionsResponse = await queryClient.fetchQuery({
+          queryKey: ["templates", "versions", template.template_code, templatesUnitCode, language],
+          queryFn: () => templatesService.listTemplateVersions({ templateCode: template.template_code, locale: language, unitCode: templatesUnitCode }),
+        });
+        const version = versionsResponse.data.find((item: TemplateVersionListItem) => isCurrentVersion(item.is_current)) ?? versionsResponse.data[0];
+        versionCode = version?.version_code ?? "";
+      }
+
+      if (!versionCode) {
+        throw new Error("This template does not have a saved version to open.");
+      }
+
+      const contractResponse = await queryClient.fetchQuery({
+        queryKey: ["templates", "render-contract", versionCode, templatesUnitCode, language],
+        queryFn: () => templatesService.getRenderContract({ versionCode, locale: language, unitCode: templatesUnitCode }),
+      });
+      const hydratedCells = canvasCellsFromRenderContract(contractResponse.data);
+      const nextCells = hydratedCells ?? buildHeaderCells({ ...template, current_version_code: versionCode });
+      const bounds = canvasBoundsFor(nextCells);
+      const axes = axesFromRenderContract(contractResponse.data);
+      const indicatorVersionCode = indicatorVersionCodeFromRenderContract(contractResponse.data);
+
+      setCells(nextCells);
+      setDesignerIndicatorVersionCode(indicatorVersionCode || template.mapped_indicator_code);
+      setRowAxes(axes.rows);
+      setColumnAxes(axes.columns);
+      setBoundObjects(boundObjectsFromRenderContract(contractResponse.data, nextCells));
+      setBoundMeasureCodes([]);
+      setVisibleColumnCount(Math.min(canvasColumns.length, Math.max(initialVisibleColumnCount, bounds.columns)));
+      setVisibleRowCount(Math.min(canvasRows.length, Math.max(initialVisibleRowCount, bounds.rows)));
+      setSelectedAnchor("B2");
+      setSelectedFocus("B2");
+      setEditingCell(null);
+      setCellText("");
+      setUndoStack([]);
+      setRedoStack([]);
+
+      const templateMode = template.status === "ACTIVE" ? "ACTIVE template opened read-only" : "DRAFT template opened";
+      setActivityMessage(`${templateMode} from render-contract ${versionCode}.`);
+      addOperation("Open render-contract", `${versionCode} loaded from Templates API.`);
+    } catch (error) {
+      setActivityMessage(error instanceof Error && !(error instanceof ApiError) ? error.message : apiErrorMessage(error));
+    }
+  };
+
   const handleCreateDraft = () => {
     createTemplateDraftMutation.mutate();
   };
@@ -4376,13 +4582,13 @@ export function TemplateManagementPage() {
                 </select>
               </div>
 
-              {templatesQuery.isFetching ? (
+              {draftTemplatesQuery.isFetching || activeTemplatesQuery.isFetching ? (
                 <Loader variant="inline" label="Loading templates from API" className="text-xs text-muted-foreground" />
               ) : null}
 
-              {templatesQuery.error ? (
+              {draftTemplatesQuery.error || activeTemplatesQuery.error ? (
                 <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
-                  {apiErrorMessage(templatesQuery.error)}
+                  {apiErrorMessage(draftTemplatesQuery.error ?? activeTemplatesQuery.error)}
                 </div>
               ) : null}
 
@@ -4414,7 +4620,7 @@ export function TemplateManagementPage() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button size="icon-xs" variant="outline" aria-label="View template" onClick={() => { setSelectedTemplateCode(template.template_code); setModal("template-detail"); }}><Eye aria-hidden="true" className="size-3" /></Button>
-                          <Button size="icon-xs" variant="outline" aria-label="Open designer" onClick={() => { setSelectedTemplateCode(template.template_code); setActiveTab("designer"); }}><Edit3 aria-hidden="true" className="size-3" /></Button>
+                          <Button size="icon-xs" variant="outline" aria-label="Open designer" onClick={() => void openTemplateInDesigner(template)}><Edit3 aria-hidden="true" className="size-3" /></Button>
                           <Button size="icon-xs" variant="destructive" aria-label="Delete draft" onClick={() => { setSelectedTemplateCode(template.template_code); setModal("delete-template"); }}><Trash2 aria-hidden="true" className="size-3" /></Button>
                         </div>
                       </TableCell>
@@ -4461,12 +4667,21 @@ export function TemplateManagementPage() {
                     </span>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={() => setOptionsOpen(true)}>Open options</Button>
-                      <Button size="sm" variant="outline" onClick={handleResetCanvas}><RotateCcw aria-hidden="true" className="size-4" /> Reset to header</Button>
-                      <Button size="sm" onClick={handleAutoBuild}><Wand2 aria-hidden="true" className="size-4" /> Auto-build reference</Button>
+                      <Button size="sm" variant="outline" onClick={handleResetCanvas} disabled={!isEditingDraftVersion}><RotateCcw aria-hidden="true" className="size-4" /> Reset to header</Button>
+                      <Button size="sm" onClick={handleAutoBuild} disabled={!isEditingDraftVersion}><Wand2 aria-hidden="true" className="size-4" /> Auto-build reference</Button>
                     </div>
                   </div>
                 </CardContent>
               </Card>
+
+              {selectedTemplate.status === "ACTIVE" && !editingVersionCodeOverride ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  <span className="font-semibold">Active template opened from render-contract. Create a draft version before saving design changes.</span>
+                  <Button size="sm" variant="outline" onClick={() => createDraftFromActiveMutation.mutate()} disabled={createDraftFromActiveMutation.isPending}>
+                    <Copy aria-hidden="true" className="size-4" /> {createDraftFromActiveMutation.isPending ? "Creating..." : "Create draft version"}
+                  </Button>
+                </div>
+              ) : null}
 
               <Card>
                 <CardHeader>
@@ -4489,9 +4704,9 @@ export function TemplateManagementPage() {
                       <Button size="sm" variant="outline" onClick={() => setModal("json-structure")}>
                         <Code2 aria-hidden="true" className="size-4" /> JSON
                       </Button>
-                      <Button size="sm" variant="outline" onClick={handleSaveDesigner} disabled={saveTemplateDraftMutation.isPending || !activeVersionCode}><Save aria-hidden="true" className="size-4" /> {saveTemplateDraftMutation.isPending ? "Saving..." : "Save draft"}</Button>
+                      <Button size="sm" variant="outline" onClick={handleSaveDesigner} disabled={saveTemplateDraftMutation.isPending || !activeVersionCode || !isEditingDraftVersion}><Save aria-hidden="true" className="size-4" /> {saveTemplateDraftMutation.isPending ? "Saving..." : "Save draft"}</Button>
                       <Button size="sm" variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview</Button>
-                      <Button size="sm" onClick={handlePublishTemplate} disabled={publishTemplateMutation.isPending || !activeVersionCode}><CheckCircle2 aria-hidden="true" className="size-4" /> {publishTemplateMutation.isPending ? "Publishing..." : "Publish active"}</Button>
+                      <Button size="sm" onClick={handlePublishTemplate} disabled={publishTemplateMutation.isPending || !activeVersionCode || !isEditingDraftVersion}><CheckCircle2 aria-hidden="true" className="size-4" /> {publishTemplateMutation.isPending ? "Publishing..." : "Publish active"}</Button>
                     </div>
                   </div>
                 </CardHeader>
