@@ -14,7 +14,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
-import { EChart } from "@/components/charts/EChart";
+// import { EChart } from "@/components/charts/EChart";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,6 +109,11 @@ function normalizeBoolean(value: unknown, fallback = false) {
     return normalized === "TRUE" || normalized === "YES" || normalized === "ACTIVE";
   }
   return fallback;
+}
+
+function editionTimestamp(edition: FrameworkEdition) {
+  const timestamp = Date.parse(edition.effective_from);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function toFrameworkEdition(item: FrameworkEdition): FrameworkEdition;
@@ -376,7 +381,7 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Node code
-                  <Input name="node_code" defaultValue={modal === "add-child" ? "" : selectedNode.node_code} placeholder="NODE_CODE" required />
+                  <Input name="node_code" defaultValue={modal === "add-child" || modal === "add-root" ? "" : selectedNode.node_code} placeholder="NODE_CODE" required />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   {modal === "add-child" ? "Child level" : "Level"}
@@ -405,7 +410,7 @@ function FormModal({
               <div className="grid grid-cols-3 gap-3">
                 <label className="grid gap-1 text-xs font-semibold">
                   Node number
-                  <Input name="node_number" defaultValue={modal === "add-child" ? "" : selectedNode.node_number} placeholder="1.2" />
+                  <Input name="node_number" defaultValue={modal === "add-child" || modal === "add-root" ? "" : selectedNode.node_number} placeholder="1.2" />
                 </label>
                 <label className="grid gap-1 text-xs font-semibold">
                   Color
@@ -422,7 +427,7 @@ function FormModal({
               </div>
               <label className="grid gap-1 text-xs font-semibold">
                 Name en-IN
-                <Input name="name" defaultValue={modal === "add-child" ? "" : selectedNode.name} placeholder="Node display name" required />
+                <Input name="name" defaultValue={modal === "add-child" || modal === "add-root" ? "" : selectedNode.name} placeholder="Node display name" required />
               </label>
             </div>
           ) : (
@@ -518,11 +523,11 @@ export function FrameworkEditionSetupPage() {
   const [searchParams] = useSearchParams();
   const selectedUnitCode = searchParams.get("unit_code") ?? "";
   const [selectedEditionCode, setSelectedEditionCode] = useState(sampleFrameworkEditions[0].edition_code);
-  const [selectedNodeCode, setSelectedNodeCode] = useState(sampleFrameworkNodes[0]?.node_code ?? "");
-  const [coverageNodeCode, setCoverageNodeCode] = useState<string | null>(null);
-  const [indicatorSearch, setIndicatorSearch] = useState("");
+  const [selectedNodeCode, setSelectedNodeCode] = useState("");
+  // const [coverageNodeCode, setCoverageNodeCode] = useState<string | null>(null);
+  // const [indicatorSearch, setIndicatorSearch] = useState("");
   const [editionSearch, setEditionSearch] = useState("");
-  const [indicatorDetail, setIndicatorDetail] = useState<IndicatorMapping | null>(null);
+  // const [indicatorDetail, setIndicatorDetail] = useState<IndicatorMapping | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [treeSearch, setTreeSearch] = useState("");
   const [modal, setModal] = useState<FrameworkModal>(null);
@@ -666,11 +671,12 @@ export function FrameworkEditionSetupPage() {
       }
 
       if (currentModal === "add-root" || currentModal === "add-child" || currentModal === "edit-node" || currentModal === "delete") {
-        const nodeCode = readString(formData, "node_code") || selectedNode.node_code;
+        const existingNode = selectedNode ?? modalSelectedNode;
+        const nodeCode = readString(formData, "node_code") || existingNode.node_code;
         const body = {
-          level_code: readString(formData, "level_code") || selectedNode.level_code,
+          level_code: readString(formData, "level_code") || existingNode.level_code,
           node_code: nodeCode,
-          name: readString(formData, "name") || selectedNode.name,
+          name: readString(formData, "name") || existingNode.name,
           node_number: readOptionalString(formData, "node_number"),
           color_value: readOptionalString(formData, "color_value"),
           color_method: "HEX",
@@ -682,7 +688,7 @@ export function FrameworkEditionSetupPage() {
           await mastersService.updateFrameworkNode({
             frameworkCode: selectedEdition.framework_code,
             editionCode: selectedEdition.edition_code,
-            nodeCode: selectedNode.node_code,
+            nodeCode: existingNode.node_code,
             locale: language,
             body,
           });
@@ -748,6 +754,12 @@ export function FrameworkEditionSetupPage() {
   };
 
   const openModal = (nextModal: FrameworkModal) => {
+    if ((nextModal === "add-child" || nextModal === "edit-node" || nextModal === "delete") && !selectedNode) {
+      setMutationError("Select a hierarchy node first.");
+      setMutationMessage(null);
+      return;
+    }
+
     setMutationError(null);
     setMutationMessage(null);
     setModal(nextModal);
@@ -784,10 +796,11 @@ export function FrameworkEditionSetupPage() {
     [indicatorsQuery.data, selectedEdition.framework_code, selectedUnitCode, sourceAssignmentsQuery.data],
   );
 
-  const selectedNode = frameworkNodes.find((node) => node.node_code === selectedNodeCode) ?? frameworkNodes[0] ?? sampleFrameworkNodes[0];
+  const selectedNode = frameworkNodes.find((node) => node.node_code === selectedNodeCode);
+  const modalSelectedNode = selectedNode ?? frameworkNodes[0] ?? sampleFrameworkNodes[0];
 
-  const childNodes = frameworkNodes.filter((node) => node.parent_node_code === selectedNode.node_code);
-  const selectedLevel = frameworkLevels.find((level) => level.level_code === selectedNode.level_code);
+  const childNodes = selectedNode ? frameworkNodes.filter((node) => node.parent_node_code === selectedNode.node_code) : [];
+  const selectedLevel = selectedNode ? frameworkLevels.find((level) => level.level_code === selectedNode.level_code) : undefined;
   const needsActionCount = indicatorMappings.filter((item) => item.readiness_status !== "READY").length;
   const treeQuery = treeSearch.trim().toLowerCase();
   const nodeMatchesSearch = (node: FrameworkNode) =>
@@ -803,41 +816,47 @@ export function FrameworkEditionSetupPage() {
     ? frameworkNodes.filter((node) => nodeMatchesSearch(node) || hasMatchingDescendant(node) || hasMatchingAncestor(node))
     : frameworkNodes;
   const rootNodes = searchableNodes.filter((node) => !node.parent_node_code);
-  const allRootNodes = frameworkNodes.filter((node) => !node.parent_node_code);
+  // const allRootNodes = frameworkNodes.filter((node) => !node.parent_node_code);
   const getNodeDepth = (node: FrameworkNode): number => {
     const parent = frameworkNodes.find((candidate) => candidate.node_code === node.parent_node_code);
     return parent ? getNodeDepth(parent) + 1 : 1;
   };
-  const descendantsOf = (nodeCode: string): string[] =>
-    nodeChildren(nodeCode).flatMap((child) => [child.node_code, ...descendantsOf(child.node_code)]);
-  const indicatorsForNode = (nodeCode: string) => {
-    const nodeCodes = new Set([nodeCode, ...descendantsOf(nodeCode)]);
-    return indicatorMappings.filter((mapping) => nodeCodes.has(mapping.mapped_node_code));
-  };
-  const coverageNode = coverageNodeCode ? frameworkNodes.find((node) => node.node_code === coverageNodeCode) : undefined;
-  const coverageBaseNodes = coverageNode ? nodeChildren(coverageNode.node_code) : allRootNodes;
-  const coverageNodes = coverageBaseNodes.length > 0 ? coverageBaseNodes : coverageNode ? [coverageNode] : allRootNodes;
-  const coverageChartOption = {
-    tooltip: { trigger: "item" },
-    series: [
-      {
-        type: "pie",
-        radius: ["48%", "72%"],
-        label: { formatter: "{b}: {c}", fontSize: 10 },
-        data: coverageNodes.map((node) => ({
-          name: `${node.node_number} ${node.name}`,
-          value: Math.max(indicatorsForNode(node.node_code).length, 1),
-          itemStyle: { color: node.color_value },
-        })),
-      },
-    ],
-  };
-  const filteredIndicatorMappings = indicatorMappings.filter((mapping) =>
-    `${mapping.national_indicator_code} ${mapping.indicator_number} ${mapping.indicator_name} ${mapping.mapped_node_path} ${mapping.readiness_status}`
-      .toLowerCase()
-      .includes(indicatorSearch.toLowerCase()),
+  // const descendantsOf = (nodeCode: string): string[] =>
+  //   nodeChildren(nodeCode).flatMap((child) => [child.node_code, ...descendantsOf(child.node_code)]);
+  // const indicatorsForNode = (nodeCode: string) => {
+  //   const nodeCodes = new Set([nodeCode, ...descendantsOf(nodeCode)]);
+  //   return indicatorMappings.filter((mapping) => nodeCodes.has(mapping.mapped_node_code));
+  // };
+  // const coverageNode = coverageNodeCode ? frameworkNodes.find((node) => node.node_code === coverageNodeCode) : undefined;
+  // const coverageBaseNodes = coverageNode ? nodeChildren(coverageNode.node_code) : allRootNodes;
+  // const coverageNodes = coverageBaseNodes.length > 0 ? coverageBaseNodes : coverageNode ? [coverageNode] : allRootNodes;
+  // const coverageChartOption = {
+  //   tooltip: { trigger: "item" },
+  //   series: [
+  //     {
+  //       type: "pie",
+  //       radius: ["48%", "72%"],
+  //       label: { formatter: "{b}: {c}", fontSize: 10 },
+  //       data: coverageNodes.map((node) => ({
+  //         name: `${node.node_number} ${node.name}`,
+  //         value: Math.max(indicatorsForNode(node.node_code).length, 1),
+  //         itemStyle: { color: node.color_value },
+  //       })),
+  //     },
+  //   ],
+  // };
+  // const filteredIndicatorMappings = indicatorMappings.filter((mapping) =>
+  //   `${mapping.national_indicator_code} ${mapping.indicator_number} ${mapping.indicator_name} ${mapping.mapped_node_path} ${mapping.readiness_status}`
+  //     .toLowerCase()
+  //     .includes(indicatorSearch.toLowerCase()),
+  // );
+  const latestActiveEdition = frameworkEditions
+    .filter((edition) => edition.status === "ACTIVE")
+    .toSorted((left, right) => editionTimestamp(right) - editionTimestamp(left))[0];
+  const displayFrameworkEditions = frameworkEditions.filter((edition) =>
+    edition.status === "DRAFT" || edition.edition_code === latestActiveEdition?.edition_code,
   );
-  const filteredFrameworkEditions = frameworkEditions.filter((edition) =>
+  const filteredFrameworkEditions = displayFrameworkEditions.filter((edition) =>
     `${edition.framework_code} ${edition.edition_code} ${edition.version_label} ${edition.name} ${edition.status}`
       .toLowerCase()
       .includes(editionSearch.toLowerCase()),
@@ -1070,10 +1089,10 @@ export function FrameworkEditionSetupPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Hierarchy tree</CardTitle>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openModal("create-level")}>
+                  {/* <Button size="sm" variant="outline" onClick={() => openModal("create-level")}>
                     <Plus aria-hidden="true" className="size-4" />
                     Create level
-                  </Button>
+                  </Button> */}
                   <Button size="sm" variant="outline" onClick={() => openModal("add-root")}>
                     <Plus aria-hidden="true" className="size-4" />
                     New parent
@@ -1098,43 +1117,51 @@ export function FrameworkEditionSetupPage() {
               <div className="flex items-center justify-between gap-3">
                 <CardTitle>Selected node</CardTitle>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openModal("edit-node")}>Edit</Button>
-                  <Button size="sm" variant="outline" onClick={() => openModal("add-child")}>Add child</Button>
-                  <Button size="sm" variant="destructive" onClick={() => openModal("delete")}>Deactivate</Button>
+                  <Button size="sm" variant="outline" disabled={!selectedNode} onClick={() => openModal("edit-node")}>Edit</Button>
+                  <Button size="sm" variant="outline" disabled={!selectedNode} onClick={() => openModal("add-child")}>Add child</Button>
+                  <Button size="sm" variant="destructive" disabled={!selectedNode} onClick={() => openModal("delete")}>Deactivate</Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-4 gap-3 text-xs max-lg:grid-cols-2">
-                {[
-                  ["Node code", selectedNode.node_code],
-                  ["Depth", `Level ${getNodeDepth(selectedNode)}`],
-                  ["Level", selectedNode.level_code],
-                  ["Number", selectedNode.node_number],
-                  ["Parent", selectedNode.parent_node_code ?? "ROOT"],
-                  ["Mapped indicators", String(selectedNode.mapped_indicator_count)],
-                  ["Children", String(childNodes.length)],
-                  ["Color", selectedNode.color_value],
-                  ["Allows mapping", selectedLevel?.allows_indicator_mapping ? "YES" : "NO"],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-md border border-border bg-muted/40 p-3">
-                    <p className="text-muted-foreground">{label}</p>
-                    <p className="mt-1 font-bold">{value}</p>
+              {selectedNode ? (
+                <>
+                  <div className="grid grid-cols-4 gap-3 text-xs max-lg:grid-cols-2">
+                    {[
+                      ["Node code", selectedNode.node_code],
+                      ["Depth", `Level ${getNodeDepth(selectedNode)}`],
+                      ["Level", selectedNode.level_code],
+                      ["Number", selectedNode.node_number],
+                      ["Parent", selectedNode.parent_node_code ?? "ROOT"],
+                      ["Mapped indicators", String(selectedNode.mapped_indicator_count)],
+                      ["Children", String(childNodes.length)],
+                      ["Color", selectedNode.color_value],
+                      ["Allows mapping", selectedLevel?.allows_indicator_mapping ? "YES" : "NO"],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-md border border-border bg-muted/40 p-3">
+                        <p className="text-muted-foreground">{label}</p>
+                        <p className="mt-1 font-bold">{value}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
 
-              <div className="mt-4 rounded-md border border-border p-3">
-                <p className="text-sm font-bold">{selectedNode.name}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Use the tree to select a level or node. Add/edit/delete opens modal forms with dependency checks.
-                </p>
-              </div>
+                  <div className="mt-4 rounded-md border border-border p-3">
+                    <p className="text-sm font-bold">{selectedNode.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Add/edit/delete opens modal forms with dependency checks.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-md border border-dashed border-border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+                  Select a node from the hierarchy tree to view its details.
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        <Card>
+        {/* <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle>Indicator mappings for selected framework</CardTitle>
@@ -1249,20 +1276,20 @@ export function FrameworkEditionSetupPage() {
               </TableBody>
             </Table>
           </CardContent>
-        </Card>
+        </Card> */}
       </section>
 
       <FormModal
         modal={modal}
         selectedEdition={selectedEdition}
-        selectedNode={selectedNode}
+        selectedNode={modalSelectedNode}
         frameworkLevels={frameworkLevels}
         isSubmitting={frameworkMutation.isPending}
         errorMessage={mutationError}
         onSubmit={handleModalSubmit}
         onClose={() => setModal(null)}
       />
-      {indicatorDetail ? (
+      {/* {indicatorDetail ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="framework-indicator-detail-title">
           <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
             <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
@@ -1296,7 +1323,7 @@ export function FrameworkEditionSetupPage() {
             </div>
           </div>
         </div>
-      ) : null}
+      ) : null} */}
     </AppShell>
   );
 }
