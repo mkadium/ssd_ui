@@ -62,8 +62,7 @@ type FrameworkModal =
   | "bulk-upload"
   | null;
 
-const frameworkFallbackNotice =
-  "Live mapping-to-node data is not exposed by the current Masters API. Indicator/source rows use available read endpoints.";
+
 
 const statusVariant = (status: string) => {
   if (status === "ACTIVE" || status === "READY") return "secondary";
