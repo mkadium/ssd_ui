@@ -352,7 +352,7 @@ export function IngestionReadbackPage() {
     { label: "Submissions", value: submissions.length, note: "Readback records", icon: Database },
     { label: "Received", value: submissions.filter((item) => item.status === "RECEIVED").length, note: "Awaiting worker", icon: FileJson },
     { label: "Ingested", value: submissions.filter((item) => item.status === "INGESTED").length, note: "Ready for validation", icon: ServerCog },
-    { label: "Staged records", value: stagedRecords.length, note: "Safe staged summary", icon: FileJson },
+    // { label: "Staged records", value: stagedRecords.length, note: "Safe staged summary", icon: FileJson },
   ];
 
   return (

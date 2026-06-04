@@ -18,6 +18,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1303,14 +1304,7 @@ export function DepartmentDataEntryPage() {
   };
 
   return (
-    <div className="bg-background text-foreground">
-      <a
-        href="#data-entry-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
-      >
-        Skip to data entry content
-      </a>
-      <main id="data-entry-content">
+    <AppShell persona="Data Entry Operator" activeDashboard="/dashboard/unit-admin">
       {selectedAssignment ? (
         <div className="mx-auto mb-3 flex max-w-[1180px] flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs">
           <span className="font-semibold">API context: {selectedAssignment.assignment_code}</span>
@@ -1403,7 +1397,6 @@ export function DepartmentDataEntryPage() {
           onClose={() => setModal(null)}
         />
       ) : null}
-      </main>
-    </div>
+    </AppShell>
   );
 }

@@ -205,6 +205,16 @@ function toIndicatorMappings(
     });
 }
 
+function getFallbackIndicatorMappings(unitCode: string) {
+  if (unitCode.toUpperCase() === "SDG") {
+    return sampleIndicatorMappings
+      .filter((mapping) => mapping.readiness_status === "READY")
+      .slice(0, 2);
+  }
+
+  return sampleIndicatorMappings;
+}
+
 function FormModal({
   modal,
   selectedEdition,
@@ -521,8 +531,8 @@ export function FrameworkEditionSetupPage() {
   );
 
   const indicatorsQuery = useQuery({
-    queryKey: ["masters", "indicators", language],
-    queryFn: () => mastersService.listIndicators({ locale: language }),
+    queryKey: ["masters", "indicators", language, selectedUnitCode],
+    queryFn: () => mastersService.listIndicators({ locale: language, unitCode: selectedUnitCode }),
     placeholderData: {
       data: [],
       locale: language,
@@ -732,7 +742,7 @@ export function FrameworkEditionSetupPage() {
       );
       const hasLiveIndicatorData = (indicatorsQuery.data?.data ?? []).length > 0;
 
-      return hasLiveIndicatorData ? liveMappings : sampleIndicatorMappings;
+      return hasLiveIndicatorData ? liveMappings : getFallbackIndicatorMappings(selectedUnitCode);
     },
     [indicatorsQuery.data, selectedEdition.framework_code, selectedUnitCode, sourceAssignmentsQuery.data],
   );
@@ -805,6 +815,7 @@ export function FrameworkEditionSetupPage() {
     (!indicator.framework_code || indicator.framework_code === selectedEdition.framework_code) &&
     (!selectedUnitCode || indicator.owning_unit_code === selectedUnitCode),
   ).length ?? 0;
+  const indicatorSummaryCount = liveIndicatorCount || indicatorMappings.length;
 
   const renderTreeNode = (node: FrameworkNode, depth = 0) => {
     const children = searchableNodes.filter((candidate) => candidate.parent_node_code === node.node_code);
@@ -897,7 +908,7 @@ export function FrameworkEditionSetupPage() {
             ["Editions", frameworkEditions.length, "Live frameworks"],
             ["Levels", frameworkLevels.length, "Configured"],
             ["Nodes", frameworkNodes.length, "Hierarchy"],
-            ["Indicators", liveIndicatorCount || indicatorMappings.length, "Available"],
+            ["Indicators", indicatorSummaryCount, "Available"],
             ["Needs action", needsActionCount, "Source/mapping"],
           ].map(([label, value, helper]) => (
             <div key={label} className="rounded-md border border-border bg-card p-3">
@@ -1012,8 +1023,7 @@ export function FrameworkEditionSetupPage() {
                 </div>
               </dl>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button variant="outline" onClick={() => openModal("edit-edition")}>Edit</Button>
-                <Button variant="outline" onClick={() => openModal("add-root")}>New parent</Button>
+                <Button variant="outline" onClick={() => openModal("add-root")}>Create Label</Button>
               </div>
             </CardContent>
           </Card>
