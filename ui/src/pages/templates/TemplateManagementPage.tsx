@@ -1725,6 +1725,7 @@ export function TemplateManagementPage() {
   const queryClient = useQueryClient();
   const [localTemplates] = useState<TemplateDefinitionSample[]>(templateDefinitions);
   const [activeTab, setActiveTab] = useState<TemplateTab>("list");
+  const [isTemplateWorkspaceOpen, setIsTemplateWorkspaceOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | "ALL">("ALL");
   const [selectedTemplateCode, setSelectedTemplateCode] = useState("TPL_NIF_1_2_1_AREA_GENDER_TIME_DRAFT");
@@ -1855,6 +1856,13 @@ export function TemplateManagementPage() {
       return matchesStatus && matchesQuery;
     });
   }, [query, statusFilter, templates]);
+  const visibleTabs: Array<[TemplateTab, string]> = isTemplateWorkspaceOpen
+    ? [
+        ["list", "Template list"],
+        ["designer", "Designer in action"],
+        ["contract", "Contract"],
+      ]
+    : [["list", "Template list"]];
 
   const statCards = [
     { label: "Templates", value: templates.length, helper: `${templates.filter((item) => item.status === "ACTIVE").length} active`, detail: "Definitions by selected unit" },
@@ -2313,6 +2321,7 @@ export function TemplateManagementPage() {
       setSelectedFocus("B2");
       setEditingCell("B2");
       setCellText("");
+      setIsTemplateWorkspaceOpen(true);
       setActiveTab("designer");
       setActivityMessage("Template draft and version were created through the Templates API.");
       addOperation("Draft created", `${templateCode} and ${versionCode} created through Templates API.`);
@@ -4426,6 +4435,7 @@ export function TemplateManagementPage() {
   const openTemplateInDesigner = async (template: TemplateDefinitionSample) => {
     setSelectedTemplateCode(template.template_code);
     setEditingVersionCodeOverride(null);
+    setIsTemplateWorkspaceOpen(true);
     setActiveTab("designer");
     setDesignerStage("basics");
     setOptionsOpen(false);
@@ -4505,6 +4515,12 @@ export function TemplateManagementPage() {
   ];
 
   useEffect(() => {
+    if (!isTemplateWorkspaceOpen && activeTab !== "list") {
+      setActiveTab("list");
+    }
+  }, [activeTab, isTemplateWorkspaceOpen]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey) return;
       const key = event.key.toLowerCase();
@@ -4530,8 +4546,12 @@ export function TemplateManagementPage() {
             <p className="mt-1 text-sm text-muted-foreground">Create a draft, edit the canvas, bind dimensions/measures, preview data entry, then publish.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview data entry</Button>
-            <Button variant="outline" onClick={() => setActiveTab("contract")}><FileSpreadsheet aria-hidden="true" className="size-4" /> Contract</Button>
+            {isTemplateWorkspaceOpen ? (
+              <>
+                <Button variant="outline" onClick={() => setModal("data-entry-preview")}><Eye aria-hidden="true" className="size-4" /> Preview data entry</Button>
+                <Button variant="outline" onClick={() => setActiveTab("contract")}><FileSpreadsheet aria-hidden="true" className="size-4" /> Contract</Button>
+              </>
+            ) : null}
             <Button onClick={() => setModal("create-template")} disabled={createTemplateDraftMutation.isPending}><Plus aria-hidden="true" className="size-4" /> New template draft</Button>
           </div>
         </div>
@@ -4549,17 +4569,13 @@ export function TemplateManagementPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border">
           <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Template workspace tabs">
-            {[
-              ["list", "Template list"],
-              ["designer", "Designer in action"],
-              ["contract", "Contract"],
-            ].map(([code, label]) => (
+            {visibleTabs.map(([code, label]) => (
               <button
                 key={code}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === code}
-                onClick={() => setActiveTab(code as TemplateTab)}
+                onClick={() => setActiveTab(code)}
                 className={[
                   "border-b-2 px-3 py-2 text-xs font-semibold",
                   activeTab === code ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
