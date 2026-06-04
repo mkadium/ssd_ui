@@ -769,8 +769,7 @@ export function ReferenceMastersPage() {
         <div className="rounded-md border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">Active unit:</span>{" "}
           <span className="font-mono">{selectedUnitCode || "ALL"}</span>
-          <span className="mx-2">/</span>
-          Organization and officer rows are filtered through unit-scoped source assignments.
+          
         </div>
 
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Reference master tabs">

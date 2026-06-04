@@ -1019,8 +1019,6 @@ export function IndicatorManagementPage() {
         <div className="rounded-md border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">Active unit:</span>{" "}
           <span className="font-mono">{selectedUnitCode || "ALL"}</span>
-          <span className="mx-2">/</span>
-          Unit filter is applied to indicator owning unit and source organization from available GET APIs.
         </div>
 
         <div className="grid grid-cols-7 gap-3 max-xl:grid-cols-4 max-lg:grid-cols-2">
