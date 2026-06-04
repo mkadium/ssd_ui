@@ -162,16 +162,6 @@ function indicatorToRow(indicator: IndicatorListItem): MasterRow {
   };
 }
 
-function frameworkEditionToRows(items: FrameworkEditionListItem[]): MasterRow[] {
-  return items.map((item) => ({
-    id: `${item.framework_code}.${item.edition_code}`,
-    framework_code: item.framework_code,
-    edition_code: item.edition_code,
-    name: item.name,
-    status: item.status,
-  }));
-}
-
 function sourceToRow(source: SourceAssignmentListItem): MasterRow {
   return {
     id: `${source.national_indicator_code}-${source.source_organization_code}-${source.assignment_role ?? "SOURCE"}`,
@@ -392,27 +382,109 @@ function ReadOnlyField({
   );
 }
 
+type FrameworkEditionOption = {
+  label: string;
+  value: string;
+  framework_code: string;
+  edition_code: string;
+  status: string;
+  is_active?: boolean;
+};
+
 function FrameworkEditionField({
   value,
   options,
+  isLoading = false,
+  error,
+  onRetry,
   className = "",
 }: {
   value?: string;
-  options: MasterRow[];
+  options: FrameworkEditionOption[];
+  isLoading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   className?: string;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const isSearchable = options.length > 10;
+  
+  const filteredOptions = useMemo(() => {
+    if (!isSearchable || !searchTerm) return options;
+    return options.filter((opt) => 
+      opt.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      opt.edition_code.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [options, searchTerm, isSearchable]);
+
+  if (error) {
+    return (
+      <div className={["grid min-w-0 gap-2 text-xs font-semibold", className].join(" ")}>
+        <label>framework_edition</label>
+        <div className="rounded-md bg-red-50 border border-red-200 p-3">
+          <p className="text-red-700 text-xs font-medium mb-2">{error}</p>
+          {onRetry && (
+            <Button size="sm" variant="outline" onClick={onRetry} type="button">
+              Retry
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+        <label>framework_edition</label>
+        <div className="h-9 rounded-md border border-input bg-input/20 flex items-center px-2">
+          <Loader className="size-3" />
+          <span className="ml-2 text-xs text-muted-foreground">Loading framework editions...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (options.length === 0) {
+    return (
+      <div className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+        <label>framework_edition</label>
+        <div className="h-9 rounded-md border border-input bg-input/20 flex items-center px-2 text-muted-foreground">
+          No active framework editions available
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
-      framework_edition
-      <select name="framework_edition_key" className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
+    <div className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
+      <label>framework_edition</label>
+      {isSearchable && (
+        <input
+          type="text"
+          placeholder="Search framework editions..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
+        />
+      )}
+      <select 
+        name="framework_edition_key" 
+        className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs" 
+        defaultValue={value} 
+        required
+      >
         <option value="">Select framework edition</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.framework_code} / {option.edition_code} / {option.name ?? option.status ?? ""}
+        {filteredOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label} ({option.edition_code})
           </option>
         ))}
       </select>
-    </label>
+      {isSearchable && filteredOptions.length === 0 && (
+        <p className="text-xs text-muted-foreground">No matches found</p>
+      )}
+    </div>
   );
 }
 
@@ -422,6 +494,9 @@ function IndicatorDialog({
   selectedVersion,
   selectedUnitCode,
   frameworkEditionOptions,
+  frameworkEditionsLoading,
+  frameworkEditionsError,
+  onRetryFrameworkEditions,
   organizationRowsData,
   officerRowsData,
   periodicityRowsData,
@@ -434,7 +509,10 @@ function IndicatorDialog({
   selectedIndicator?: MasterRow;
   selectedVersion?: MasterRow;
   selectedUnitCode: string;
-  frameworkEditionOptions: MasterRow[];
+  frameworkEditionOptions: FrameworkEditionOption[];
+  frameworkEditionsLoading?: boolean;
+  frameworkEditionsError?: string | null;
+  onRetryFrameworkEditions?: () => void;
   organizationRowsData: MasterRow[];
   officerRowsData: MasterRow[];
   periodicityRowsData: MasterRow[];
@@ -456,7 +534,7 @@ function IndicatorDialog({
   const isSourceForm = isFormMode && entity === "source";
   const activeFrameworkCode = row?.framework_code ?? selectedIndicator?.framework_code ?? "SDG_NIF";
   const activeEditionCode = row?.edition_code ?? selectedIndicator?.edition_code ?? "SDG_NIF_2025";
-  const activeFrameworkEditionKey = `${activeFrameworkCode}.${activeEditionCode}`;
+  const activeFrameworkEditionKey = activeEditionCode;
   const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
   const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
   const defaultVersionNumber = row?.version_number ?? "1";
@@ -499,7 +577,14 @@ function IndicatorDialog({
           {isIndicatorForm ? (
             <div className="grid gap-4">
               <div className="grid grid-cols-6 gap-3 max-lg:grid-cols-2">
-                <FrameworkEditionField value={activeFrameworkEditionKey} options={frameworkEditionOptions} className="col-span-3 max-lg:col-span-2" />
+                <FrameworkEditionField 
+                  value={activeFrameworkEditionKey} 
+                  options={frameworkEditionOptions} 
+                  isLoading={frameworkEditionsLoading}
+                  error={frameworkEditionsError}
+                  onRetry={onRetryFrameworkEditions}
+                  className="col-span-3 max-lg:col-span-2" 
+                />
                 <TextField label="national_indicator_code" value={row?.national_indicator_code} className="col-span-2 max-lg:col-span-1" />
                 <TextField label="indicator_number" value={row?.indicator_number} className="col-span-1 max-lg:col-span-1" />
               </div>
@@ -652,21 +737,39 @@ export function IndicatorManagementPage() {
     [indicatorsQuery.data],
   );
   const nationalIndicatorRows = liveNationalIndicatorRows;
-  const frameworkEditionOptions = useMemo(() => {
-    const options = frameworkEditionToRows(frameworkEditionsQuery.data?.data ?? []);
-    const optionKeys = new Set(options.map((option) => option.id));
+  
+  const frameworkEditionOptions = useMemo((): FrameworkEditionOption[] => {
+    // Filter active framework editions from API response
+    const activeFrameworkEditions = (frameworkEditionsQuery.data?.data ?? []).filter(
+      (item) => item.status === "ACTIVE" && (item.is_active !== false)
+    );
+    
+    // Convert to FrameworkEditionOption format
+    const options: FrameworkEditionOption[] = activeFrameworkEditions.map((item) => ({
+      label: item.name,
+      value: item.edition_code,
+      framework_code: item.framework_code,
+      edition_code: item.edition_code,
+      status: item.status,
+      is_active: item.is_active,
+    }));
+    
+    // Keep track of existing options to avoid duplicates
+    const existingValues = new Set(options.map((opt) => opt.value));
 
+    // Add fallback framework editions from indicators if not already present
     for (const indicator of nationalIndicatorRows) {
       if (indicator.framework_code && indicator.edition_code) {
-        const id = `${indicator.framework_code}.${indicator.edition_code}`;
-        if (!optionKeys.has(id)) {
+        if (!existingValues.has(indicator.edition_code)) {
           options.push({
-            id,
+            label: `${indicator.framework_code} / ${indicator.edition_code}`,
+            value: indicator.edition_code,
             framework_code: indicator.framework_code,
             edition_code: indicator.edition_code,
-            name: id,
+            status: "ACTIVE",
+            is_active: true,
           });
-          optionKeys.add(id);
+          existingValues.add(indicator.edition_code);
         }
       }
     }
@@ -791,7 +894,7 @@ export function IndicatorManagementPage() {
       const row = currentDialog.row;
       const isDeactivate = currentDialog.mode === "delete";
       const frameworkEditionKey = readString(formData, "framework_edition_key");
-      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.id === frameworkEditionKey);
+      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.value === frameworkEditionKey);
       const frameworkCode =
         selectedFrameworkEdition?.framework_code ||
         readString(formData, "framework_code") ||
@@ -1283,6 +1386,9 @@ export function IndicatorManagementPage() {
         selectedVersion={currentVersion}
         selectedUnitCode={selectedUnitCode}
         frameworkEditionOptions={frameworkEditionOptions}
+        frameworkEditionsLoading={frameworkEditionsQuery.isFetching}
+        frameworkEditionsError={frameworkEditionsQuery.error ? safeApiMessage(frameworkEditionsQuery.error) : null}
+        onRetryFrameworkEditions={() => frameworkEditionsQuery.refetch()}
         organizationRowsData={organizationRowsData}
         officerRowsData={officerRowsData}
         periodicityRowsData={periodicityRowsData}
