@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   Gauge,
   GitBranch,
-  Home,
   Languages,
   LayoutDashboard,
   ListChecks,
@@ -46,7 +45,6 @@ const navigationGroups = [
   {
     labelKey: "nav.groupOverview",
     items: [
-      { labelKey: "nav.home", path: "/", icon: Home },
       { labelKey: "nav.dashboard", path: "/dashboard/super-admin", icon: LayoutDashboard },
     ],
   },
