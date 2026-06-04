@@ -1076,8 +1076,11 @@ export function FrameworkEditionSetupPage() {
                   <dd className="mt-1 leading-5">{selectedEdition.description}</dd>
                 </div>
               </dl>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button variant="outline" onClick={() => openModal("add-root")}>Create Level</Button>
+              <div className="mt-4">
+                <Button className="w-full justify-center font-semibold" onClick={() => openModal("add-root")}>
+                  <Plus aria-hidden="true" className="size-4" />
+                  Create Level
+                </Button>
               </div>
             </CardContent>
           </Card>

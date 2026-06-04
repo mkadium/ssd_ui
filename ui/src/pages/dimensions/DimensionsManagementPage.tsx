@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
@@ -474,9 +473,6 @@ function DimensionModalView({
 export function DimensionsManagementPage() {
   const { language: locale } = useLanguage();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
-  const selectedUnitCode = searchParams.get("unit_code") ?? "";
-  const hideReferenceTabs = selectedUnitCode.toUpperCase() === "SDG";
   const [selectedDimensionCode, setSelectedDimensionCode] = useState("GEOGRAPHY");
   const [selectedMemberCode, setSelectedMemberCode] = useState("IND");
   const [selectedMemberSetCode, setSelectedMemberSetCode] = useState("");
@@ -708,9 +704,6 @@ export function DimensionsManagementPage() {
     { code: "geography", label: "Geography" },
     { code: "time", label: "Time periods" },
   ];
-  const visibleTabs = hideReferenceTabs
-    ? tabs.filter((tab) => tab.code !== "geography" && tab.code !== "time")
-    : tabs;
 
   const rootMemberCount = membersForDimension.filter((member) => !member.parent_member_code).length;
   const childMemberCount = membersForDimension.length - rootMemberCount;
@@ -1219,7 +1212,7 @@ export function DimensionsManagementPage() {
           <CardContent className="grid gap-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Dimension detail tabs">
-                {visibleTabs.map((tab) => (
+                {tabs.map((tab) => (
                   <button
                     key={tab.code}
                     type="button"
@@ -1386,7 +1379,7 @@ export function DimensionsManagementPage() {
               </div>
             ) : null}
 
-            {activeTab === "geography" && !hideReferenceTabs ? (
+            {activeTab === "geography" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
                   <Button onClick={() => setModal("create-geography")}><Plus aria-hidden="true" className="size-4" /> Add geography</Button>
@@ -1445,7 +1438,7 @@ export function DimensionsManagementPage() {
               </div>
             ) : null}
 
-            {activeTab === "time" && !hideReferenceTabs ? (
+            {activeTab === "time" ? (
               <div className="grid gap-3">
                 <div className="flex justify-end">
                   <Button onClick={() => setModal("create-time-period")}><Plus aria-hidden="true" className="size-4" /> Add time period</Button>
