@@ -437,7 +437,7 @@ function FormModal({
                   Framework code
                   <Input
                     name="framework_code"
-                    defaultValue={selectedEdition.framework_code}
+                    defaultValue={modal === "create-edition" ? "" : selectedEdition.framework_code}
                     required
                     className={modalInputClass}
                   />
