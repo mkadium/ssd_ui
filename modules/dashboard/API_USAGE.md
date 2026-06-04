@@ -25,3 +25,13 @@ Dashboard UI
 - Current Super Admin Dashboard uses local sample data only; live API integration is pending.
 - Current Unit Admin Dashboard uses local sample data only; live API integration is pending.
 - Current Submitted Snapshot Dashboard uses local sample data only; live API integration is pending.
+## 2026-06-04 UI Integration Update
+
+- `UnitAdminDashboardPage` now reads dashboard summary/list APIs with `unit_code=SDG&locale=en-IN`:
+  - `GET /dashboard/overall-summary`
+  - `GET /dashboard/goals`
+  - `GET /dashboard/targets`
+  - `GET /dashboard/national-indicators`
+- `dashboardService` also exposes source-organization, drilldown, pipeline-status, approved-observations, and approved-summary endpoints for the next dashboard drilldown pass.
+- `publishedDataService` exposes snapshot, latest-approved observation, and previous-approved staged-record lookup endpoints.
+- Dashboard pages must show approved observations and summaries only through stable codes, never internal IDs, raw payloads, hashes, tokens, or metadata JSON.

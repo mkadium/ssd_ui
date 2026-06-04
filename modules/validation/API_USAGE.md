@@ -23,3 +23,10 @@ Validation UI
 - Use `VALIDATION:list` and `VALIDATION:view` behavior from API.
 - GET endpoints have no request body.
 - Validation execution trigger is not available.
+## 2026-06-04 UI Integration Update
+
+- `ValidationQueuePage` now reads validation runs from `GET /validation/runs?unit_code=SDG&status={status}&locale=en-IN`.
+- Opening a run reads results from `GET /validation/runs/{run_code}/results?unit_code=SDG&locale=en-IN`.
+- Execute validation calls `POST /validation/submission-versions/{version_code}/execute` when a submission version is present, otherwise `POST /validation/runs/{run_code}/execute`.
+- Empty `data=[]` responses are treated as valid empty states. Existing sample rows remain only as a UI fallback when DEV has no readable records or an API call fails.
+- Raw payload bodies, token values, token hashes, source hashes, and internal IDs must not be shown in validation views.

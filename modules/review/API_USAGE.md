@@ -22,3 +22,13 @@ Review UI
 - API currently uses `VALIDATION:list` and `VALIDATION:view` because `REVIEW:*` permissions are not seeded.
 - GET endpoints have no request body.
 - Review action mutations are not implemented.
+## 2026-06-04 UI Integration Update
+
+- `ReviewApprovalPage` now reads reviewer tasks from `GET /review/tasks?unit_code=SDG&status={status}&locale=en-IN`.
+- Opening a task reads actions and approvals from:
+  - `GET /review/tasks/{task_code}/actions?unit_code=SDG&locale=en-IN`
+  - `GET /review/tasks/{task_code}/approvals?unit_code=SDG&locale=en-IN`
+- Reviewer actions call `POST /review/tasks/{task_code}/actions`.
+- Approve calls `POST /review/tasks/{task_code}/approvals`; `is_final_approval=true` is sent when the current review level is the max level.
+- Comment is required in the UI before submitting a review action/approval.
+- Previous-approved comparison and template/data preview remain the next wiring target for richer review context; do not expose raw payload or metadata JSON.
