@@ -3,10 +3,12 @@ import {
   CheckCircle2,
   Eye,
   Plus,
+  RefreshCw,
   Search,
   Send,
   X,
 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { AppShell } from "@/components/layout/AppShell";
@@ -14,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -38,8 +41,102 @@ import {
   type RequestStatus,
 } from "@/data/requestsManagement.sample";
 import { templateDefinitions } from "@/data/templatesManagement.sample";
+import { useLanguage } from "@/providers/language-context";
+import { dimensionsService } from "@/services/dimensionsService";
+import { mastersService } from "@/services/mastersService";
+import { requestsService } from "@/services/requestsService";
+import { templatesService } from "@/services/templatesService";
+import type { DimensionMemberItem } from "@/types/dimensions";
+import type { IndicatorListItem, SourceAssignmentListItem } from "@/types/masters";
+import type { CollectionCycleItem, CollectionRequestItem } from "@/types/requests";
+import type { TemplateDefinitionListItem } from "@/types/templates";
 
 type RequestModal = "request-detail" | "create-request" | "template-canvas" | "scope-preview" | "scope-json" | "follow-up" | "send-confirm" | null;
+const requestsUnitCode = "SDG";
+
+type CreateRequestForm = {
+  request_code: string;
+  due_date: string;
+  request_type: CollectionRequestSample["request_type"];
+  priority: CollectionRequestSample["priority"];
+  status: "DRAFT" | "READY";
+  national_indicator_code: string;
+  template_code: string;
+  time_period_member_code: string;
+  geography_member_code: string;
+  source_organization_code: string;
+  officer_code: string;
+  assignment_role: "DATA_PROVIDER" | "REQUEST_OWNER" | "OBSERVER";
+  note: string;
+  send_now: boolean;
+};
+
+const createCodeSuffix = () => new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+const normalizeRequestCodePart = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "ITEM";
+
+const isCurrentFlag = (value: unknown) => value === true || String(value).toUpperCase() === "TRUE" || String(value).toUpperCase() === "YES";
+const recordValue = (record: Record<string, unknown>, key: string) => {
+  const value = record[key];
+  return typeof value === "string" && value ? value : "";
+};
+const activeMembers = (members: DimensionMemberItem[]) => members.filter((member) => !member.status || member.status === "ACTIVE");
+const memberOptions = (members: DimensionMemberItem[], fallbackDimensionCode: string) => {
+  const apiMembers = activeMembers(members);
+  const source = apiMembers.length ? apiMembers : dimensionMembers.filter((member) => member.dimension_code === fallbackDimensionCode && member.status === "ACTIVE");
+  return source.map((member) => ({
+    value: member.member_code,
+    label: `${member.member_code} - ${member.name}`,
+  }));
+};
+const resolveMemberCode = (members: DimensionMemberItem[], preferredCode: string, fallbackCode: string) => {
+  const apiMembers = activeMembers(members);
+  if (!apiMembers.length) return preferredCode || fallbackCode;
+  return apiMembers.find((member) => member.member_code === preferredCode)?.member_code ?? apiMembers[0]?.member_code ?? fallbackCode;
+};
+const memberForTemplateAxis = ({
+  axis,
+  axisMembers,
+  geographyMemberCode,
+  timePeriodMemberCode,
+}: {
+  axis: Record<string, unknown>;
+  axisMembers: Array<Record<string, unknown>>;
+  geographyMemberCode: string;
+  timePeriodMemberCode: string;
+}) => {
+  const axisCode = recordValue(axis, "axis_code");
+  const dimensionCode = recordValue(axis, "dimension_code");
+
+  if (dimensionCode === "GEOGRAPHY") return geographyMemberCode;
+  if (dimensionCode === "TIME_PERIOD") return timePeriodMemberCode;
+
+  return axisMembers.find((member) =>
+    recordValue(member, "axis_code") === axisCode &&
+    recordValue(member, "dimension_code") === dimensionCode &&
+    recordValue(member, "member_code")
+  ) ? recordValue(axisMembers.find((member) =>
+      recordValue(member, "axis_code") === axisCode &&
+      recordValue(member, "dimension_code") === dimensionCode &&
+      recordValue(member, "member_code")
+    ) ?? {}, "member_code") : "";
+};
+
+const defaultCreateRequestForm = (): CreateRequestForm => ({
+  request_code: `REQ_SDG_NIF_${createCodeSuffix()}`,
+  due_date: "2025-09-30",
+  request_type: "NEW_DATA",
+  priority: "NORMAL",
+  status: "DRAFT",
+  national_indicator_code: "NIF_1_2_1",
+  template_code: "TPL_SDG_NIF_1_2_1_STATE_SUBGROUP",
+  time_period_member_code: "TIME_2025",
+  geography_member_code: "KA",
+  source_organization_code: "SSD_DEMO_SOURCE",
+  officer_code: "SSD_DEMO_OFFICER",
+  assignment_role: "DATA_PROVIDER",
+  note: "Request generated from active template and selected dimension scope.",
+  send_now: false,
+});
 
 const statusVariant = (status?: string) => {
   if (["ACTIVE", "READY", "SENT", "SUBMITTED", "CLOSED", "ASSIGNED", "ACCEPTED", "COMPLETED"].includes(status ?? "")) return "secondary";
@@ -48,11 +145,68 @@ const statusVariant = (status?: string) => {
   return "ghost";
 };
 
-function Field({ label, value, readOnly = false }: { label: string; value?: string | number; readOnly?: boolean }) {
+const stringValue = (value: unknown, fallback = "") => typeof value === "string" && value ? value : fallback;
+const numberValue = (value: unknown, fallback = 0) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) return Number(value) || fallback;
+  return fallback;
+};
+
+function apiCycleToSample(cycle: CollectionCycleItem) {
+  return {
+    cycle_code: cycle.cycle_code,
+    name: stringValue(cycle.name, cycle.cycle_code),
+    framework_code: stringValue(cycle.framework_code, "SDG_NIF"),
+    edition_code: stringValue(cycle.edition_code, "SDG_NIF_2025"),
+    reporting_year: numberValue(cycle.reporting_year, 2025),
+    start_date: stringValue(cycle.start_date, ""),
+    end_date: stringValue(cycle.end_date, ""),
+    cycle_type: stringValue(cycle.cycle_type, "REGULAR") as (typeof collectionCycles)[number]["cycle_type"],
+    status: stringValue(cycle.status, "ACTIVE") as (typeof collectionCycles)[number]["status"],
+    request_count: numberValue(cycle.request_count, 0),
+    submitted_count: numberValue(cycle.submitted_count, 0),
+  };
+}
+
+function apiRequestToSample(request: CollectionRequestItem): CollectionRequestSample {
+  return {
+    request_code: request.request_code,
+    cycle_code: stringValue(request.cycle_code, collectionCycles[0].cycle_code),
+    request_type: stringValue(request.request_type, "NEW_DATA") as CollectionRequestSample["request_type"],
+    priority: stringValue(request.priority, "NORMAL") as CollectionRequestSample["priority"],
+    status: stringValue(request.status, "DRAFT") as RequestStatus,
+    source_organization_code: stringValue(request.source_organization_code, "-"),
+    source_organization_name: stringValue(request.source_organization_name, stringValue(request.source_organization_code, "Not returned")),
+    officer_code: stringValue(request.officer_code, "-"),
+    officer_name: stringValue(request.officer_name, stringValue(request.officer_code, "Not returned")),
+    assigned_unit_code: stringValue(request.unit_code, requestsUnitCode),
+    due_date: stringValue(request.due_date, ""),
+    sent_at: request.sent_at ?? undefined,
+    item_count: numberValue(request.item_count, 0),
+    assignment_count: numberValue(request.assignment_count, 0),
+  };
+}
+
+function Field({
+  label,
+  value,
+  readOnly = false,
+  onChange,
+}: {
+  label: string;
+  value?: string | number;
+  readOnly?: boolean;
+  onChange?: (value: string) => void;
+}) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <Input defaultValue={value ?? ""} readOnly={readOnly} className={readOnly ? "bg-muted/60" : undefined} />
+      <Input
+        value={value ?? ""}
+        readOnly={readOnly}
+        className={readOnly ? "bg-muted/60" : undefined}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
     </label>
   );
 }
@@ -61,15 +215,21 @@ function SelectField({
   label,
   value,
   options,
+  onChange,
 }: {
   label: string;
   value?: string;
   options: { value: string; label: string }[];
+  onChange?: (value: string) => void;
 }) {
   return (
     <label className="grid gap-1 text-xs font-semibold">
       {label}
-      <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select
+        className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs"
+        value={value}
+        onChange={(event) => onChange?.(event.target.value)}
+      >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -127,13 +287,41 @@ function RequestModalView({
   modal,
   selectedRequest,
   selectedCycleCode,
+  cycles,
+  createForm,
+  indicatorOptions,
+  templateOptions,
+  sourceAssignments,
+  isCreatingRequest,
+  createRequestError,
+  geographyMembers,
+  timePeriodMembers,
+  areaTypeMembers,
+  genderMembers,
   onOpenModal,
+  onCycleChange,
+  onCreateFormChange,
+  onSubmitCreateRequest,
   onClose,
 }: {
   modal: RequestModal;
   selectedRequest: CollectionRequestSample;
   selectedCycleCode: string;
+  cycles: Array<{ cycle_code: string; name: string }>;
+  createForm: CreateRequestForm;
+  indicatorOptions: IndicatorListItem[];
+  templateOptions: TemplateDefinitionListItem[];
+  sourceAssignments: SourceAssignmentListItem[];
+  isCreatingRequest: boolean;
+  createRequestError?: string;
+  geographyMembers: DimensionMemberItem[];
+  timePeriodMembers: DimensionMemberItem[];
+  areaTypeMembers: DimensionMemberItem[];
+  genderMembers: DimensionMemberItem[];
   onOpenModal: (modal: RequestModal) => void;
+  onCycleChange: (cycleCode: string) => void;
+  onCreateFormChange: (patch: Partial<CreateRequestForm>) => void;
+  onSubmitCreateRequest: () => void;
   onClose: () => void;
 }) {
   if (!modal) return null;
@@ -163,6 +351,41 @@ function RequestModalView({
     "follow-up": "Follow-up reminder",
     "send-confirm": "Send request confirmation",
   };
+  const indicatorSelectOptions = indicatorOptions.length
+    ? indicatorOptions.map((indicator) => ({
+        value: indicator.national_indicator_code,
+        label: `${indicator.national_indicator_code} - ${indicator.name}`,
+      }))
+    : nationalIndicatorOptions.map((indicator) => {
+        const code = indicator.national_indicator_code ?? indicator.id;
+        return { value: code, label: `${code} - ${indicator.name ?? ""}` };
+      });
+  const templateSelectOptions = (templateOptions.length ? templateOptions : templateDefinitions).map((template) => ({
+    value: template.template_code,
+    label: `${template.template_code} - ${template.status}`,
+  }));
+  const sourceOrganizationOptions = sourceAssignments.length
+    ? sourceAssignments.map((assignment) => ({
+        value: assignment.source_organization_code,
+        label: `${assignment.source_organization_code} - ${assignment.source_organization_name ?? assignment.source_organization_code}`,
+      }))
+    : organizationOptions.map((organization) => {
+        const code = organization.organization_code ?? organization.id;
+        return { value: code, label: `${code} - ${organization.name ?? ""}` };
+      });
+  const sourceOfficerOptions = sourceAssignments.length
+    ? sourceAssignments
+        .filter((assignment) => assignment.officer_code)
+        .map((assignment) => ({
+          value: assignment.officer_code ?? "",
+          label: `${assignment.officer_code ?? ""} - ${assignment.officer_display_name ?? assignment.officer_code ?? ""}`,
+        }))
+    : officerOptions.map((officer) => {
+        const code = officer.officer_code ?? officer.id;
+        return { value: code, label: `${code} - ${officer.display_name ?? officer.name ?? ""}` };
+      });
+  const geographyOptions = memberOptions(geographyMembers, "GEOGRAPHY").filter((option) => option.value !== "IND");
+  const timePeriodOptions = memberOptions(timePeriodMembers, "TIME_PERIOD");
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="request-modal-title">
@@ -196,23 +419,38 @@ function RequestModalView({
                   <SelectField
                     label="Collection cycle"
                     value={selectedCycleCode}
-                    options={collectionCycles.map((cycle) => ({ value: cycle.cycle_code, label: cycle.name }))}
+                    onChange={onCycleChange}
+                    options={cycles.map((cycle) => ({ value: cycle.cycle_code, label: cycle.name }))}
                   />
-                  <Field label="Request code" value="REQ_SDG_NIF_2025_0004" />
-                  <Field label="Due date" value="2025-09-30" />
-                  <SelectField label="Request type" value="NEW_DATA" options={["NEW_DATA", "BACKFILL", "CORRECTION", "REVISION"].map((value) => ({ value, label: value }))} />
-                  <SelectField label="Priority" value="NORMAL" options={["LOW", "NORMAL", "HIGH", "URGENT"].map((value) => ({ value, label: value }))} />
-                  <SelectField label="Request status" value="DRAFT" options={["DRAFT", "READY"].map((value) => ({ value, label: value }))} />
+                  <Field label="Request code" value={createForm.request_code} onChange={(value) => onCreateFormChange({ request_code: value })} />
+                  <Field label="Due date" value={createForm.due_date} onChange={(value) => onCreateFormChange({ due_date: value })} />
+                  <SelectField label="Request type" value={createForm.request_type} onChange={(value) => onCreateFormChange({ request_type: value as CreateRequestForm["request_type"] })} options={["NEW_DATA", "BACKFILL", "CORRECTION", "REVISION"].map((value) => ({ value, label: value }))} />
+                  <SelectField label="Priority" value={createForm.priority} onChange={(value) => onCreateFormChange({ priority: value as CreateRequestForm["priority"] })} options={["LOW", "NORMAL", "HIGH", "URGENT"].map((value) => ({ value, label: value }))} />
+                  <SelectField label="Request status" value={createForm.status} onChange={(value) => onCreateFormChange({ status: value as CreateRequestForm["status"] })} options={["DRAFT", "READY"].map((value) => ({ value, label: value }))} />
                 </div>
               </section>
 
               <section className="grid gap-3">
                 <h3 className="text-sm font-bold">Indicator, template, and scope</h3>
                 <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-                  <SelectField label="Indicator" value="NIF_1_2_1" options={nationalIndicatorOptions.map((indicator) => ({ value: indicator.national_indicator_code ?? indicator.id, label: `${indicator.national_indicator_code ?? indicator.id} - ${indicator.name ?? ""}` }))} />
-                  <SelectField label="Template" value="TPL_SDG_NIF_1_2_1_STATE_SUBGROUP" options={templateDefinitions.map((template) => ({ value: template.template_code, label: `${template.template_code} - ${template.status}` }))} />
-                  <SelectField label="Time period" value="TIME_2025" options={dimensionMembers.filter((member) => member.dimension_code === "TIME_PERIOD").map((member) => ({ value: member.member_code, label: member.name }))} />
+                  <SelectField
+                    label="Indicator"
+                    value={createForm.national_indicator_code}
+                    onChange={(value) => onCreateFormChange({ national_indicator_code: value })}
+                    options={indicatorSelectOptions}
+                  />
+                  <SelectField
+                    label="Template"
+                    value={createForm.template_code}
+                    onChange={(value) => onCreateFormChange({ template_code: value })}
+                    options={templateSelectOptions}
+                  />
+                  <SelectField label="Time period" value={createForm.time_period_member_code} onChange={(value) => onCreateFormChange({ time_period_member_code: value })} options={timePeriodOptions} />
+                  <SelectField label="Geography" value={createForm.geography_member_code} onChange={(value) => onCreateFormChange({ geography_member_code: value })} options={geographyOptions} />
                 </div>
+                {(geographyMembers.length || timePeriodMembers.length || areaTypeMembers.length || genderMembers.length) ? (
+                  <p className="text-xs text-muted-foreground">Scope members are loaded from Dimensions API, so submitted member codes match backend governance.</p>
+                ) : null}
                 <div className="rounded-md bg-muted/30 p-3">
                   <TemplateCanvasPreview dense />
                 </div>
@@ -221,16 +459,29 @@ function RequestModalView({
               <section className="grid gap-3">
                 <h3 className="text-sm font-bold">Source assignment</h3>
                 <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-                  <SelectField label="Source organization" value="SSD_DEMO_SOURCE" options={organizationOptions.map((organization) => ({ value: organization.organization_code ?? organization.id, label: `${organization.organization_code ?? organization.id} - ${organization.name ?? ""}` }))} />
-                  <SelectField label="Source officer" value="SSD_DEMO_OFFICER" options={officerOptions.map((officer) => ({ value: officer.officer_code ?? officer.id, label: `${officer.officer_code ?? officer.id} - ${officer.display_name ?? officer.name ?? ""}` }))} />
-                  <SelectField label="Assignment role" value="DATA_PROVIDER" options={["DATA_PROVIDER", "REQUEST_OWNER", "OBSERVER"].map((value) => ({ value, label: value }))} />
+                  <SelectField
+                    label="Source organization"
+                    value={createForm.source_organization_code}
+                    onChange={(value) => {
+                      const assignment = sourceAssignments.find((item) => item.source_organization_code === value);
+                      onCreateFormChange({ source_organization_code: value, officer_code: assignment?.officer_code ?? createForm.officer_code });
+                    }}
+                    options={sourceOrganizationOptions}
+                  />
+                  <SelectField
+                    label="Source officer"
+                    value={createForm.officer_code}
+                    onChange={(value) => onCreateFormChange({ officer_code: value })}
+                    options={sourceOfficerOptions}
+                  />
+                  <SelectField label="Assignment role" value={createForm.assignment_role} onChange={(value) => onCreateFormChange({ assignment_role: value as CreateRequestForm["assignment_role"] })} options={["DATA_PROVIDER", "REQUEST_OWNER", "OBSERVER"].map((value) => ({ value, label: value }))} />
                 </div>
               </section>
 
               <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-3 max-lg:grid-cols-1">
                 <label className="grid gap-1 text-xs font-semibold">
                   Request note
-                  <Textarea defaultValue="Request generated from active template and selected dimension scope. Raw token will not be displayed." />
+                  <Textarea value={createForm.note} onChange={(event) => onCreateFormChange({ note: event.target.value })} />
                 </label>
                 <div className="rounded-md bg-muted/40 p-3 text-xs">
                   <p className="font-bold">Readiness checklist</p>
@@ -240,8 +491,21 @@ function RequestModalView({
                       <span>{item}</span>
                     </div>
                   ))}
+                  <label className="mt-3 flex items-center gap-2 border-t border-border pt-3 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={createForm.send_now}
+                      onChange={(event) => onCreateFormChange({ send_now: event.target.checked })}
+                    />
+                    Send request after creating records
+                  </label>
                 </div>
               </div>
+              {createRequestError ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+                  {createRequestError}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -483,7 +747,9 @@ function RequestModalView({
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             {["create-request", "follow-up", "send-confirm"].includes(modal) ? (
-              <Button type="button" onClick={onClose}>Save/Submit</Button>
+              <Button type="button" onClick={modal === "create-request" ? onSubmitCreateRequest : onClose} disabled={modal === "create-request" && isCreatingRequest}>
+                {isCreatingRequest ? "Saving..." : "Save/Submit"}
+              </Button>
             ) : null}
           </div>
         </div>
@@ -493,29 +759,73 @@ function RequestModalView({
 }
 
 export function CollectionRequestPage() {
+  const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "ALL">("ALL");
   const [selectedCycleCode, setSelectedCycleCode] = useState(collectionCycles[0].cycle_code);
   const [selectedRequestCode, setSelectedRequestCode] = useState(collectionRequests[0].request_code);
   const [modal, setModal] = useState<RequestModal>(null);
+  const [createForm, setCreateForm] = useState<CreateRequestForm>(defaultCreateRequestForm);
+  const [requestNotice, setRequestNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  const selectedCycle = collectionCycles.find((cycle) => cycle.cycle_code === selectedCycleCode) ?? collectionCycles[0];
-  const selectedRequest = collectionRequests.find((request) => request.request_code === selectedRequestCode) ?? collectionRequests[0];
+  const cyclesQuery = useQuery({
+    queryKey: ["requests", "cycles", requestsUnitCode, language],
+    queryFn: () => requestsService.listCycles({ locale: language, unitCode: requestsUnitCode, status: "ACTIVE" }),
+  });
+  const requestListQuery = useQuery({
+    queryKey: ["requests", "list", selectedCycleCode, requestsUnitCode, language],
+    queryFn: () => requestsService.listRequests({ locale: language, unitCode: requestsUnitCode, cycleCode: selectedCycleCode }),
+  });
+  const indicatorsQuery = useQuery({
+    queryKey: ["masters", "indicators", language, requestsUnitCode],
+    queryFn: () => mastersService.listIndicators({ locale: language, unitCode: requestsUnitCode }),
+  });
+  const templatesQuery = useQuery({
+    queryKey: ["templates", "list", requestsUnitCode, language, "active"],
+    queryFn: () => templatesService.listTemplates({ locale: language, unitCode: requestsUnitCode, status: "ACTIVE" }),
+  });
+  const sourceAssignmentsQuery = useQuery({
+    queryKey: ["masters", "source-assignments", language, requestsUnitCode, createForm.national_indicator_code],
+    queryFn: () => mastersService.listSourceAssignments({ locale: language, unitCode: requestsUnitCode, indicatorCode: createForm.national_indicator_code }),
+    enabled: Boolean(createForm.national_indicator_code),
+  });
+  const geographyMembersQuery = useQuery({
+    queryKey: ["dimensions", "members", "GEOGRAPHY", language],
+    queryFn: () => dimensionsService.listMembers({ dimensionCode: "GEOGRAPHY", locale: language }),
+  });
+  const timePeriodMembersQuery = useQuery({
+    queryKey: ["dimensions", "members", "TIME_PERIOD", language],
+    queryFn: () => dimensionsService.listMembers({ dimensionCode: "TIME_PERIOD", locale: language }),
+  });
+  const areaTypeMembersQuery = useQuery({
+    queryKey: ["dimensions", "members", "AREA_TYPE", language],
+    queryFn: () => dimensionsService.listMembers({ dimensionCode: "AREA_TYPE", locale: language }),
+  });
+  const genderMembersQuery = useQuery({
+    queryKey: ["dimensions", "members", "GENDER", language],
+    queryFn: () => dimensionsService.listMembers({ dimensionCode: "GENDER", locale: language }),
+  });
+
+  const cycles = useMemo(() => cyclesQuery.data?.data.map(apiCycleToSample) ?? collectionCycles, [cyclesQuery.data]);
+  const requests = useMemo(() => requestListQuery.data?.data.map(apiRequestToSample) ?? collectionRequests, [requestListQuery.data]);
+  const selectedCycle = cycles.find((cycle) => cycle.cycle_code === selectedCycleCode) ?? cycles[0] ?? collectionCycles[0];
+  const selectedRequest = requests.find((request) => request.request_code === selectedRequestCode) ?? requests[0] ?? collectionRequests[0];
   const filteredRequests = useMemo(() => {
     const normalized = query.toLowerCase();
-    return collectionRequests.filter((request) => {
+    return requests.filter((request) => {
       const matchesCycle = request.cycle_code === selectedCycleCode;
       const matchesStatus = statusFilter === "ALL" || request.status === statusFilter;
       const matchesQuery = Object.values(request).join(" ").toLowerCase().includes(normalized);
       return matchesCycle && matchesStatus && matchesQuery;
     });
-  }, [query, selectedCycleCode, statusFilter]);
+  }, [query, requests, selectedCycleCode, statusFilter]);
 
-  const statusCounts = collectionRequests.reduce<Record<string, number>>((accumulator, request) => {
+  const statusCounts = requests.reduce<Record<string, number>>((accumulator, request) => {
     accumulator[request.status] = (accumulator[request.status] ?? 0) + 1;
     return accumulator;
   }, {});
-  const dueSoonCount = collectionRequests.filter((request) => ["READY", "SENT", "OPEN", "IN_PROGRESS"].includes(request.status)).length;
+  const dueSoonCount = requests.filter((request) => ["READY", "SENT", "OPEN", "IN_PROGRESS"].includes(request.status)).length;
   const assignmentStatusCounts = requestAssignments.reduce<Record<AssignmentStatus, number>>((accumulator, assignment) => {
     accumulator[assignment.status] = (accumulator[assignment.status] ?? 0) + 1;
     return accumulator;
@@ -528,6 +838,202 @@ export function CollectionRequestPage() {
     { label: "Assignments", value: requestAssignments.length, helper: `${assignmentStatusCounts.ASSIGNED ?? 0} assigned`, detail: "Provider/owner/observer roles" },
   ];
 
+  const createRequestMutation = useMutation({
+    mutationFn: async () => {
+      const indicatorOptions = indicatorsQuery.data?.data ?? [];
+      const templateOptions = templatesQuery.data?.data ?? [];
+      const sourceAssignments = sourceAssignmentsQuery.data?.data ?? [];
+      const geographyMemberCode = resolveMemberCode(geographyMembersQuery.data?.data ?? [], createForm.geography_member_code, "KA");
+      const timePeriodMemberCode = resolveMemberCode(timePeriodMembersQuery.data?.data ?? [], createForm.time_period_member_code, "TIME_2025");
+      const selectedIndicator = indicatorOptions.find((indicator) => indicator.national_indicator_code === createForm.national_indicator_code);
+      const selectedTemplate = templateOptions.find((template) => template.template_code === createForm.template_code);
+      const selectedSourceAssignment = sourceAssignments.find((assignment) => assignment.source_organization_code === createForm.source_organization_code);
+      let indicatorVersionCode = selectedIndicator?.current_version_code;
+      let templateVersionCode = selectedTemplate?.current_version_code;
+
+      if (!indicatorVersionCode) {
+        const indicatorDetail = await mastersService.getIndicator({
+          indicatorCode: createForm.national_indicator_code,
+          locale: language,
+          unitCode: requestsUnitCode,
+        });
+        indicatorVersionCode =
+          indicatorDetail.data.current_version_code ??
+          indicatorDetail.data.versions?.find((version) => isCurrentFlag(version.is_current))?.version_code ??
+          indicatorDetail.data.versions?.[0]?.version_code;
+      }
+
+      if (!templateVersionCode) {
+        const templateVersions = await templatesService.listTemplateVersions({
+          templateCode: createForm.template_code,
+          locale: language,
+          unitCode: requestsUnitCode,
+        });
+        templateVersionCode =
+          templateVersions.data.find((version) => isCurrentFlag(version.is_current))?.version_code ??
+          templateVersions.data[0]?.version_code;
+      }
+
+      if (!indicatorVersionCode) {
+        throw new Error("Selected indicator does not have a version code. Please create/publish an indicator version first.");
+      }
+      if (!templateVersionCode) {
+        throw new Error("Selected template does not have a version code. Please create/publish a template version first.");
+      }
+      if (!createForm.source_organization_code || !createForm.officer_code) {
+        throw new Error("Select a source organization and officer before creating the request.");
+      }
+
+      const renderContract = await templatesService.getRenderContract({
+        versionCode: templateVersionCode,
+        locale: language,
+        unitCode: requestsUnitCode,
+      });
+      const contractAxes = (renderContract.data.axes ?? [])
+        .filter((axis) => recordValue(axis, "axis_code") && recordValue(axis, "dimension_code"));
+      const contractAxisMembers = renderContract.data.axis_members ?? [];
+      const scopeMembers = contractAxes
+        .map((axis, index) => {
+          const axisCode = recordValue(axis, "axis_code");
+          const dimensionCode = recordValue(axis, "dimension_code");
+          const memberCode = memberForTemplateAxis({
+            axis,
+            axisMembers: contractAxisMembers,
+            geographyMemberCode,
+            timePeriodMemberCode,
+          });
+
+          if (!memberCode) return null;
+
+          return {
+            axis_code: axisCode,
+            dimension_code: dimensionCode,
+            member_code: memberCode,
+            source_type: dimensionCode === "GEOGRAPHY" || dimensionCode === "TIME_PERIOD" ? "SSD_SELECTED" : "TEMPLATE_FIXED",
+            sort_order: (index + 1) * 10,
+          };
+        })
+        .filter((member): member is { axis_code: string; dimension_code: string; member_code: string; source_type: string; sort_order: number } => Boolean(member));
+
+      if (!scopeMembers.length) {
+        throw new Error("Selected template render-contract does not expose scope axes for request item scope.");
+      }
+
+      const suffix = normalizeRequestCodePart(createForm.request_code).slice(-18);
+      const itemCode = `REQITEM_${normalizeRequestCodePart(createForm.national_indicator_code)}_${suffix}`;
+      const templateInstanceCode = `TPLINST_${normalizeRequestCodePart(createForm.request_code)}_${normalizeRequestCodePart(createForm.national_indicator_code)}`;
+      const assignmentCode = `ASN_${normalizeRequestCodePart(createForm.request_code)}_${createForm.assignment_role}`;
+
+      await requestsService.upsertRequest({
+        locale: language,
+        payload: {
+          request_code: createForm.request_code,
+          cycle_code: selectedCycleCode,
+          unit_code: requestsUnitCode,
+          source_organization_code: createForm.source_organization_code,
+          officer_code: createForm.officer_code,
+          request_type: createForm.request_type,
+          priority: createForm.priority,
+          status: createForm.status,
+          due_date: createForm.due_date,
+          request_metadata: {
+            note: createForm.note,
+            ui_flow: "collection_request_create",
+          },
+        },
+      });
+
+      await requestsService.upsertRequestItem({
+        locale: language,
+        requestCode: createForm.request_code,
+        payload: {
+          item_code: itemCode,
+          unit_code: requestsUnitCode,
+          national_indicator_code: createForm.national_indicator_code,
+          indicator_version_code: indicatorVersionCode,
+          template_version_code: templateVersionCode,
+          source_organization_code: createForm.source_organization_code,
+          source_assignment_role: selectedSourceAssignment?.assignment_role ?? "PRIMARY_SOURCE",
+          status: createForm.send_now ? "SENT" : "DRAFT",
+          due_date: createForm.due_date,
+          item_metadata: {
+            template_code: createForm.template_code,
+          },
+        },
+      });
+
+      await requestsService.replaceScopeMembers({
+        locale: language,
+        requestCode: createForm.request_code,
+        itemCode,
+        payload: {
+          unit_code: requestsUnitCode,
+          scope_members: scopeMembers,
+        },
+      });
+
+      await requestsService.upsertTemplateInstance({
+        locale: language,
+        requestCode: createForm.request_code,
+        itemCode,
+        payload: {
+          template_instance_code: templateInstanceCode,
+          unit_code: requestsUnitCode,
+          instance_status: "ACTIVE",
+          render_contract_version: "v1",
+          resolved_render_metadata: {
+            template_version_code: templateVersionCode,
+            geography_member_code: geographyMemberCode,
+            time_period_member_code: timePeriodMemberCode,
+          },
+        },
+      });
+
+      await requestsService.upsertAssignment({
+        locale: language,
+        requestCode: createForm.request_code,
+        payload: {
+          assignment_code: assignmentCode,
+          unit_code: requestsUnitCode,
+          assignment_role: createForm.assignment_role,
+          item_code: itemCode,
+          assigned_to_organization_code: createForm.source_organization_code,
+          assigned_to_officer_code: createForm.officer_code,
+          status: "ASSIGNED",
+          due_date: createForm.due_date,
+          assignment_metadata: {
+            request_created_from_ui: true,
+          },
+        },
+      });
+
+      if (createForm.send_now) {
+        await requestsService.updateRequestStatus({
+          locale: language,
+          requestCode: createForm.request_code,
+          payload: {
+            unit_code: requestsUnitCode,
+            status: "SENT",
+            reason: "Sent from Collection Request UI.",
+            cascade_items: true,
+          },
+        });
+      }
+
+      return { requestCode: createForm.request_code };
+    },
+    onSuccess: async ({ requestCode }) => {
+      await queryClient.invalidateQueries({ queryKey: ["requests", "list"] });
+      setSelectedRequestCode(requestCode);
+      setModal(null);
+      setRequestNotice({ type: "success", message: `${requestCode} created successfully.` });
+      setCreateForm(defaultCreateRequestForm());
+    },
+    onError: (error) => {
+      setRequestNotice({ type: "error", message: error instanceof Error ? error.message : "Unable to create request." });
+    },
+  });
+
   return (
     <AppShell persona="Unit Request Admin" activeDashboard="/dashboard/unit-admin">
       <section className="mx-auto flex max-w-[1180px] flex-col gap-4" aria-labelledby="requests-title">
@@ -537,7 +1043,14 @@ export function CollectionRequestPage() {
             <p className="mt-1 text-sm text-muted-foreground">Create request drafts, assign indicator templates, scope dimensions, and prepare source officers for data collection.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setModal("create-request")}><Plus aria-hidden="true" className="size-4" /> New request</Button>
+            <Button
+              onClick={() => {
+                setCreateForm(defaultCreateRequestForm());
+                setModal("create-request");
+              }}
+            >
+              <Plus aria-hidden="true" className="size-4" /> New request
+            </Button>
           </div>
         </div>
 
@@ -552,6 +1065,21 @@ export function CollectionRequestPage() {
           ))}
         </div>
 
+        {requestNotice ? (
+          <div
+            className={[
+              "flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-semibold",
+              requestNotice.type === "success"
+                ? "border border-green-200 bg-green-50 text-green-900"
+                : "border border-destructive/30 bg-destructive/10 text-destructive",
+            ].join(" ")}
+            role="status"
+          >
+            <span>{requestNotice.message}</span>
+            <Button type="button" size="xs" variant="outline" onClick={() => setRequestNotice(null)}>Dismiss</Button>
+          </div>
+        ) : null}
+
         <div className="grid gap-4">
           <Card>
             <CardContent>
@@ -559,7 +1087,7 @@ export function CollectionRequestPage() {
                 <label className="grid gap-1 text-xs font-semibold">
                   Collection cycle
                 <select className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" value={selectedCycleCode} onChange={(event) => setSelectedCycleCode(event.target.value)}>
-                  {collectionCycles.map((cycle) => (
+                  {cycles.map((cycle) => (
                     <option key={cycle.cycle_code} value={cycle.cycle_code}>{cycle.name}</option>
                   ))}
                 </select>
@@ -620,6 +1148,25 @@ export function CollectionRequestPage() {
                   <option value="CLOSED">CLOSED</option>
                 </select>
               </div>
+              {cyclesQuery.isFetching || requestListQuery.isFetching ? (
+                <Loader variant="inline" label="Loading requests from API" className="text-xs text-muted-foreground" />
+              ) : null}
+              {cyclesQuery.error || requestListQuery.error ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+                  <span>Unable to load Requests API data. Showing local sample fallback.</span>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => {
+                      void cyclesQuery.refetch();
+                      void requestListQuery.refetch();
+                    }}
+                  >
+                    <RefreshCw aria-hidden="true" className="size-3" /> Retry
+                  </Button>
+                </div>
+              ) : null}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -633,7 +1180,7 @@ export function CollectionRequestPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredRequests.map((request) => (
+                  {filteredRequests.length ? filteredRequests.map((request) => (
                     <TableRow
                       key={request.request_code}
                       className="cursor-pointer hover:bg-muted/50"
@@ -662,7 +1209,13 @@ export function CollectionRequestPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )) : (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                        No requests found for cycle {selectedCycleCode}.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -677,7 +1230,27 @@ export function CollectionRequestPage() {
         </div>
       </section>
 
-      <RequestModalView modal={modal} selectedRequest={selectedRequest} selectedCycleCode={selectedCycleCode} onOpenModal={setModal} onClose={() => setModal(null)} />
+      <RequestModalView
+        modal={modal}
+        selectedRequest={selectedRequest}
+        selectedCycleCode={selectedCycleCode}
+        cycles={cycles}
+        createForm={createForm}
+        indicatorOptions={indicatorsQuery.data?.data ?? []}
+        templateOptions={templatesQuery.data?.data ?? []}
+        sourceAssignments={sourceAssignmentsQuery.data?.data ?? []}
+        isCreatingRequest={createRequestMutation.isPending}
+        createRequestError={createRequestMutation.error instanceof Error ? createRequestMutation.error.message : undefined}
+        geographyMembers={geographyMembersQuery.data?.data ?? []}
+        timePeriodMembers={timePeriodMembersQuery.data?.data ?? []}
+        areaTypeMembers={areaTypeMembersQuery.data?.data ?? []}
+        genderMembers={genderMembersQuery.data?.data ?? []}
+        onOpenModal={setModal}
+        onCycleChange={setSelectedCycleCode}
+        onCreateFormChange={(patch) => setCreateForm((current) => ({ ...current, ...patch }))}
+        onSubmitCreateRequest={() => createRequestMutation.mutate()}
+        onClose={() => setModal(null)}
+      />
     </AppShell>
   );
 }

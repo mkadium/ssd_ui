@@ -7,13 +7,16 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -32,8 +35,71 @@ import {
   type ValidationResultStatus,
   type ValidationSeverity,
 } from "@/data/validation.sample";
+import { useLanguage } from "@/providers/language-context";
+import { validationService } from "@/services/validationService";
+import type { WorkflowRecord } from "@/types/workflow";
 
 type ValidationModal = "template-cell" | null;
+const validationUnitCode = "SDG";
+
+const readString = (record: WorkflowRecord, keys: string[], fallback = "-") => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "string" && item.length > 0);
+  return typeof value === "string" ? value : fallback;
+};
+
+const readNumber = (record: WorkflowRecord, keys: string[], fallback = 0) => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "number" || typeof item === "string");
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const apiErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return "You are not authorized to view validation runs.";
+    if (error.status === 0) return "Unable to reach Validation API.";
+    return `Validation API returned ${error.status}.`;
+  }
+  return error instanceof Error ? error.message : "Unable to load validation data.";
+};
+
+const toValidationQueueItem = (record: WorkflowRecord): ValidationQueueItemSample => ({
+  validation_run_code: readString(record, ["validation_run_code", "run_code", "code"]),
+  request_code: readString(record, ["request_code"]),
+  item_code: readString(record, ["item_code", "request_item_code"]),
+  submission_code: readString(record, ["submission_code"]),
+  submission_version_code: readString(record, ["submission_version_code", "version_code"]),
+  template_instance_code: readString(record, ["template_instance_code"]),
+  national_indicator_code: readString(record, ["national_indicator_code", "indicator_code"]),
+  indicator_label: readString(record, ["indicator_label", "indicator_name", "national_indicator_name"]),
+  goal_path: readString(record, ["goal_path", "goal_label"], "-"),
+  target_path: readString(record, ["target_path", "target_label"], "-"),
+  source_organization_name: readString(record, ["source_organization_name", "source_unit_name"]),
+  submitted_by: readString(record, ["submitted_by", "submitted_by_name"]),
+  submitted_to: readString(record, ["submitted_to", "reviewer_name"], "-"),
+  received_at: readString(record, ["received_at", "created_at", "started_at"], "-"),
+  status: readString(record, ["status", "run_status", "validation_status"], "PENDING") as ValidationQueueStatus,
+  record_count: readNumber(record, ["record_count", "records_count", "total_records"]),
+  passed_count: readNumber(record, ["passed_count", "pass_count"]),
+  warning_count: readNumber(record, ["warning_count", "warnings_count"]),
+  error_count: readNumber(record, ["error_count", "errors_count"]),
+  blocker_count: readNumber(record, ["blocker_count", "blockers_count"]),
+});
+
+const toValidationResult = (record: WorkflowRecord, runCode: string): ValidationResultSample => ({
+  result_code: readString(record, ["result_code", "validation_result_code", "code"], `${runCode}_RESULT`),
+  validation_run_code: readString(record, ["validation_run_code", "run_code"], runCode),
+  record_code: readString(record, ["record_code", "staged_record_code"]),
+  cell_address: readString(record, ["cell_address", "address", "cell_code"]),
+  geography_label: readString(record, ["geography_label", "geography_name", "member_label"], "-"),
+  time_period: readString(record, ["time_period", "time_period_label", "time_period_member_code"], "-"),
+  area_type: readString(record, ["area_type", "area_type_label", "area_type_member_code"], "-"),
+  rule_code: readString(record, ["rule_code", "validation_rule_code"]),
+  severity: readString(record, ["severity"], "INFO") as ValidationSeverity,
+  status: readString(record, ["status", "result_status"], "PASS") as ValidationResultStatus,
+  message: readString(record, ["message", "validation_message", "detail"], "-"),
+  comparison_type: readString(record, ["comparison_type"], "NONE") as ValidationResultSample["comparison_type"],
+  suggested_action: readString(record, ["suggested_action"], "Review validation evidence before continuing."),
+});
 
 const queueStatusVariant = (status: ValidationQueueStatus | string) => {
   if (["COMPLETED", "READY_FOR_REVIEW", "PASS", "SUBMITTED", "RECEIVED"].includes(status)) return "secondary";
@@ -115,6 +181,8 @@ function ValidationQueue({
   onQueryChange,
   onStatusChange,
   onOpenRun,
+  isLoading,
+  error,
 }: {
   query: string;
   statusFilter: ValidationQueueStatus | "ALL";
@@ -122,6 +190,8 @@ function ValidationQueue({
   onQueryChange: (query: string) => void;
   onStatusChange: (status: ValidationQueueStatus | "ALL") => void;
   onOpenRun: (runCode: string) => void;
+  isLoading: boolean;
+  error?: unknown;
 }) {
   const stats = [
     { label: "Runs", value: queueItems.length, note: "Visible validation records" },
@@ -149,6 +219,13 @@ function ValidationQueue({
           </div>
         ))}
       </div>
+
+      {isLoading ? <Loader variant="inline" label="Loading validation runs from API" className="text-xs text-muted-foreground" /> : null}
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+          {apiErrorMessage(error)}
+        </div>
+      ) : null}
 
       <Card>
         <CardContent className="grid gap-4">
@@ -228,6 +305,11 @@ function ValidationQueue({
                   </TableCell>
                 </TableRow>
               ))}
+              {!queueItems.length ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">No validation runs found.</TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </CardContent>
@@ -289,18 +371,23 @@ function TemplateCellModal({
 function ValidationReport({
   queueItem,
   selectedResult,
+  results,
   onSelectResult,
   onBack,
   onOpenCell,
+  onExecute,
+  isExecuting,
 }: {
   queueItem: ValidationQueueItemSample;
   selectedResult: ValidationResultSample;
+  results: ValidationResultSample[];
   onSelectResult: (resultCode: string) => void;
   onBack: () => void;
   onOpenCell: () => void;
+  onExecute: () => void;
+  isExecuting: boolean;
 }) {
-  const runResults = validationResults.filter((result) => result.validation_run_code === queueItem.validation_run_code);
-  const resultRows = runResults.length > 0 ? runResults : validationResults.filter((result) => result.validation_run_code === "VALRUN_REQ_SDG_NIF_2025_0001_V1");
+  const resultRows = results.length > 0 ? results : validationResults.filter((result) => result.validation_run_code === "VALRUN_REQ_SDG_NIF_2025_0001_V1");
   const resultCounts = [
     { label: "Records", value: queueItem.record_count, note: "Validated staged rows", variant: "outline" },
     { label: "Passed", value: queueItem.passed_count, note: "Rule checks passed", variant: "secondary" },
@@ -323,6 +410,9 @@ function ValidationReport({
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge variant={queueStatusVariant(queueItem.status)}>{queueItem.status}</Badge>
+          <Button type="button" variant="outline" onClick={onExecute} disabled={isExecuting}>
+            <ShieldCheck aria-hidden="true" className="size-4" /> {isExecuting ? "Executing..." : "Execute validation"}
+          </Button>
           <Button type="button" variant="outline"><FileSpreadsheet aria-hidden="true" className="size-4" /> Export view</Button>
         </div>
       </div>
@@ -467,28 +557,68 @@ function ValidationReport({
 }
 
 export function ValidationQueuePage() {
+  const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ValidationQueueStatus | "ALL">("ALL");
   const [selectedRunCode, setSelectedRunCode] = useState<string | null>(null);
   const [selectedResultCode, setSelectedResultCode] = useState(validationResults[0].result_code);
   const [modal, setModal] = useState<ValidationModal>(null);
 
+  const validationRunsQuery = useQuery({
+    queryKey: ["validation", "runs", validationUnitCode, language, statusFilter],
+    queryFn: () => validationService.listRuns({ locale: language, unitCode: validationUnitCode, status: statusFilter === "ALL" ? undefined : statusFilter }),
+  });
+  const queueItems = useMemo(
+    () => validationRunsQuery.data?.data.map(toValidationQueueItem) ?? validationQueueItems,
+    [validationRunsQuery.data],
+  );
+  const resultsQuery = useQuery({
+    queryKey: ["validation", "results", selectedRunCode, validationUnitCode, language],
+    queryFn: () => validationService.listResults({ runCode: selectedRunCode ?? "", locale: language, unitCode: validationUnitCode }),
+    enabled: Boolean(selectedRunCode),
+  });
+  const resultRows = useMemo(
+    () => selectedRunCode ? (resultsQuery.data?.data.map((item) => toValidationResult(item, selectedRunCode)) ?? validationResults.filter((result) => result.validation_run_code === selectedRunCode)) : [],
+    [resultsQuery.data, selectedRunCode],
+  );
+  const executeMutation = useMutation({
+    mutationFn: async () => {
+      const selected = queueItems.find((item) => item.validation_run_code === selectedRunCode);
+      if (!selectedRunCode) throw new Error("Open a validation run before executing validation.");
+      if (selected?.submission_version_code && selected.submission_version_code !== "-") {
+        return validationService.executeSubmissionVersion({
+          locale: language,
+          versionCode: selected.submission_version_code,
+          payload: { unit_code: validationUnitCode },
+        });
+      }
+      return validationService.executeRun({
+        locale: language,
+        runCode: selectedRunCode,
+        payload: { unit_code: validationUnitCode },
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["validation"] });
+    },
+  });
+
   const filteredQueueItems = useMemo(() => {
     const normalized = query.toLowerCase();
-    return validationQueueItems.filter((item) => {
+    return queueItems.filter((item) => {
       const matchesStatus = statusFilter === "ALL" || item.status === statusFilter;
       const matchesQuery = Object.values(item).join(" ").toLowerCase().includes(normalized);
       return matchesStatus && matchesQuery;
     });
-  }, [query, statusFilter]);
+  }, [queueItems, query, statusFilter]);
 
-  const selectedQueueItem = validationQueueItems.find((item) => item.validation_run_code === selectedRunCode) ?? null;
-  const selectedResult = validationResults.find((result) => result.result_code === selectedResultCode) ?? validationResults[0];
+  const selectedQueueItem = queueItems.find((item) => item.validation_run_code === selectedRunCode) ?? null;
+  const selectedResult = resultRows.find((result) => result.result_code === selectedResultCode) ?? resultRows[0] ?? validationResults[0];
 
   const openRun = (runCode: string) => {
     setSelectedRunCode(runCode);
-    const firstResultForRun = validationResults.find((result) => result.validation_run_code === runCode);
-    setSelectedResultCode(firstResultForRun?.result_code ?? validationResults[0].result_code);
+    setSelectedResultCode("");
   };
 
   return (
@@ -497,9 +627,12 @@ export function ValidationQueuePage() {
         <ValidationReport
           queueItem={selectedQueueItem}
           selectedResult={selectedResult}
+          results={resultRows}
           onSelectResult={setSelectedResultCode}
           onBack={() => setSelectedRunCode(null)}
           onOpenCell={() => setModal("template-cell")}
+          onExecute={() => executeMutation.mutate()}
+          isExecuting={executeMutation.isPending}
         />
       ) : (
         <ValidationQueue
@@ -509,6 +642,8 @@ export function ValidationQueuePage() {
           onQueryChange={setQuery}
           onStatusChange={setStatusFilter}
           onOpenRun={openRun}
+          isLoading={validationRunsQuery.isFetching}
+          error={validationRunsQuery.error}
         />
       )}
       {modal === "template-cell" ? (

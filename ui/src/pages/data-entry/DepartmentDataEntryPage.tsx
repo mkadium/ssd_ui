@@ -8,18 +8,21 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  RefreshCw,
   Save,
   Search,
   Send,
   Trash2,
   X,
 } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -41,9 +44,14 @@ import {
   type DataEntrySelectedCellSample,
   type DataEntryWorkflowStepSample,
 } from "@/data/dataEntry.sample";
+import { useLanguage } from "@/providers/language-context";
+import { ingestionService } from "@/services/ingestionService";
+import { requestsService } from "@/services/requestsService";
+import { templatesService } from "@/services/templatesService";
 
 type DataEntryModal = "preview-submit" | "json-structure" | null;
 type DataEntryStage = "editing" | "draft" | "validation_failed" | "validated" | "submitted";
+const dataEntryUnitCode = "SDG";
 
 type DataEntryYearHeader = {
   id: string;
@@ -120,6 +128,23 @@ const focusDataEntryCell = (address: string) => {
   window.setTimeout(() => {
     document.querySelector<HTMLElement>(`[data-data-entry-cell="${address}"]`)?.focus();
   }, 0);
+};
+
+const renderBindingString = (record: Record<string, unknown>, key: string, fallback = "") => {
+  const value = record[key];
+  return typeof value === "string" && value ? value : fallback;
+};
+
+const renderBindingAxisTuple = (value: unknown) => {
+  if (!Array.isArray(value)) return null;
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      axis_code: renderBindingString(item, "axis_code"),
+      dimension_code: renderBindingString(item, "dimension_code"),
+      member_code: renderBindingString(item, "member_code"),
+    }))
+    .filter((item) => item.axis_code && item.member_code);
 };
 
 const assignmentStatusVariant = (status: DataEntryAssignmentStatus) => {
@@ -853,6 +878,7 @@ function DataEntryWorkspace({
 }
 
 export function DepartmentDataEntryPage() {
+  const { language } = useLanguage();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DataEntryAssignmentStatus | "ALL">("ALL");
   const [selectedAssignmentCode, setSelectedAssignmentCode] = useState<string | null>(null);
@@ -894,6 +920,41 @@ export function DepartmentDataEntryPage() {
   const yearWarningCount = Object.keys(yearWarnings).length;
   const completionLabel = `${totalCellCount - missingCount} / ${totalCellCount} cells`;
 
+  const selectedAssignment = dataEntryAssignments.find((assignment) => assignment.assignment_code === selectedAssignmentCode) ?? null;
+  const assignmentQuery = useQuery({
+    queryKey: ["requests", "assignment", selectedAssignmentCode, dataEntryUnitCode, language],
+    queryFn: () => requestsService.getAssignment({ assignmentCode: selectedAssignmentCode ?? "", locale: language, unitCode: dataEntryUnitCode }),
+    enabled: Boolean(selectedAssignmentCode),
+  });
+  const requestItemQuery = useQuery({
+    queryKey: ["requests", "item", selectedAssignment?.request_code, selectedAssignment?.item_code, dataEntryUnitCode, language],
+    queryFn: () => requestsService.getRequestItem({
+      requestCode: selectedAssignment?.request_code ?? "",
+      itemCode: selectedAssignment?.item_code ?? "",
+      locale: language,
+      unitCode: dataEntryUnitCode,
+    }),
+    enabled: Boolean(selectedAssignment?.request_code && selectedAssignment?.item_code),
+  });
+  const templateInstanceQuery = useQuery({
+    queryKey: ["requests", "template-instance", selectedAssignment?.request_code, selectedAssignment?.item_code, dataEntryUnitCode, language],
+    queryFn: () => requestsService.getTemplateInstance({
+      requestCode: selectedAssignment?.request_code ?? "",
+      itemCode: selectedAssignment?.item_code ?? "",
+      locale: language,
+      unitCode: dataEntryUnitCode,
+    }),
+    enabled: Boolean(selectedAssignment?.request_code && selectedAssignment?.item_code),
+  });
+  const templateVersionCode = selectedAssignment?.template_version_code ?? (
+    typeof templateInstanceQuery.data?.data.template_version_code === "string" ? templateInstanceQuery.data.data.template_version_code : ""
+  );
+  const renderContractQuery = useQuery({
+    queryKey: ["templates", "render-contract", templateVersionCode, dataEntryUnitCode, language],
+    queryFn: () => templatesService.getRenderContract({ versionCode: templateVersionCode, locale: language, unitCode: dataEntryUnitCode }),
+    enabled: Boolean(templateVersionCode),
+  });
+
   const filteredAssignments = useMemo(() => {
     const normalized = query.toLowerCase();
     return dataEntryAssignments.filter((assignment) => {
@@ -903,7 +964,6 @@ export function DepartmentDataEntryPage() {
     });
   }, [query, statusFilter]);
 
-  const selectedAssignment = dataEntryAssignments.find((assignment) => assignment.assignment_code === selectedAssignmentCode) ?? null;
   const selectedColumnIndex = Math.max(0, selectedCellAddress.charCodeAt(0) - 66);
   const selectedColumn = columns[selectedColumnIndex] ?? columns[0];
   const selectedRowNumber = Number(selectedCellAddress.slice(1)) - 4;
@@ -1045,6 +1105,60 @@ export function DepartmentDataEntryPage() {
     );
   }, [columns, gridRows, selectedAssignment, years]);
 
+  const submissionPayload = useMemo(() => {
+    if (!selectedAssignment) return null;
+    const renderValueBindings = renderContractQuery.data?.data.data_entry_contract?.value_bindings ?? [];
+
+    return {
+      unit_code: dataEntryUnitCode,
+      request_code: selectedAssignment.request_code,
+      item_code: selectedAssignment.item_code,
+      template_instance_code: selectedAssignment.template_instance_code,
+      submission_channel: "WEB_FORM",
+      payload: {
+        submitted_values: gridRows.flatMap((row, rowIndex) =>
+          columns
+            .map((column, columnIndex) => {
+              const rawValue = row.values[column.key] ?? "";
+              const numericValue = Number(rawValue);
+              const binding = renderValueBindings[rowIndex * columns.length + columnIndex];
+              const axisTuple = renderBindingAxisTuple(binding?.axis_members) ?? [
+                { axis_code: "AXIS_GEOGRAPHY_ROWS", dimension_code: "GEOGRAPHY", member_code: row.geography_code, label: row.geography_label },
+                { axis_code: "AXIS_TIME_PERIOD_COLUMNS", dimension_code: "TIME_PERIOD", member_code: column.yearId, label: column.yearLabel },
+                { axis_code: "AXIS_AREA_TYPE_COLUMNS", dimension_code: "AREA_TYPE", member_code: column.areaType.toUpperCase(), label: column.areaType },
+                { axis_code: "AXIS_GENDER_COLUMNS", dimension_code: "GENDER", member_code: column.gender.toUpperCase(), label: column.gender },
+              ];
+              return {
+                cell_code: renderBindingString(binding ?? {}, "cell_code", `${row.geography_code}_${column.yearLabel}_${column.areaType}_${column.gender}`.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()),
+                measure_code: renderBindingString(binding ?? {}, "measure_code", column.measureCode),
+                value_numeric: rawValue.trim() && !Number.isNaN(numericValue) ? numericValue : null,
+                raw_value_text: rawValue,
+                axis_tuple: axisTuple,
+              };
+            })
+            .filter((value) => value.raw_value_text.trim()),
+        ),
+      },
+    };
+  }, [columns, gridRows, renderContractQuery.data, selectedAssignment]);
+
+  const submitMutation = useMutation({
+    mutationFn: async () => {
+      if (!submissionPayload) {
+        throw new Error("Open an assignment before submitting.");
+      }
+      return ingestionService.submit({ payload: submissionPayload });
+    },
+    onSuccess: () => {
+      setStage("submitted");
+      setModal(null);
+    },
+    onError: () => {
+      setStage("validation_failed");
+      setCellInputWarning("Submission API rejected the payload. Check request item, template instance, and axis tuple codes.");
+    },
+  });
+
   const workflowSteps: DataEntryWorkflowStepSample[] = [
     { label: "Assigned", status: "DONE" },
     { label: "Fill template", status: missingCount === 0 ? "DONE" : "PENDING" },
@@ -1185,8 +1299,7 @@ export function DepartmentDataEntryPage() {
       return;
     }
 
-    setStage("submitted");
-    setModal(null);
+    submitMutation.mutate();
   };
 
   return (
@@ -1198,6 +1311,37 @@ export function DepartmentDataEntryPage() {
         Skip to data entry content
       </a>
       <main id="data-entry-content">
+      {selectedAssignment ? (
+        <div className="mx-auto mb-3 flex max-w-[1180px] flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs">
+          <span className="font-semibold">API context: {selectedAssignment.assignment_code}</span>
+          <div className="flex flex-wrap gap-2 text-muted-foreground">
+            {assignmentQuery.isFetching || requestItemQuery.isFetching || templateInstanceQuery.isFetching || renderContractQuery.isFetching ? (
+              <Loader variant="inline" label="Loading request/template context" />
+            ) : null}
+            {assignmentQuery.data ? <span>assignment loaded</span> : null}
+            {requestItemQuery.data ? <span>item loaded</span> : null}
+            {templateInstanceQuery.data ? <span>template instance loaded</span> : null}
+            {renderContractQuery.data ? <span>{renderContractQuery.data.data.data_entry_contract?.value_bindings?.length ?? 0} value binding(s)</span> : null}
+            {submitMutation.isPending ? <span>submitting...</span> : null}
+            {assignmentQuery.error || requestItemQuery.error || templateInstanceQuery.error || renderContractQuery.error ? (
+              <span className="text-destructive">API context incomplete; sample grid remains visible.</span>
+            ) : null}
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => {
+                void assignmentQuery.refetch();
+                void requestItemQuery.refetch();
+                void templateInstanceQuery.refetch();
+                void renderContractQuery.refetch();
+              }}
+            >
+              <RefreshCw aria-hidden="true" className="size-3" /> Retry
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {selectedAssignment ? (
         <DataEntryWorkspace
           assignment={selectedAssignment}

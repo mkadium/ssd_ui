@@ -8,14 +8,17 @@ import {
   ListFilter,
   Search,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { ApiError } from "@/api/client";
 import { EChart } from "@/components/charts/EChart";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -31,6 +34,67 @@ import {
   unitSummaryCards,
   type UnitSummaryCard,
 } from "@/data/unitAdminDashboard.sample";
+import { useLanguage } from "@/providers/language-context";
+import { dashboardService } from "@/services/dashboardService";
+import type { WorkflowRecord } from "@/types/workflow";
+
+const dashboardUnitCode = "SDG";
+
+const readString = (record: WorkflowRecord, keys: string[], fallback = "-") => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "string" && item.length > 0);
+  return typeof value === "string" ? value : fallback;
+};
+
+const readNumber = (record: WorkflowRecord, keys: string[], fallback = 0) => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "number" || typeof item === "string");
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const apiErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return "You are not authorized to view dashboard data.";
+    if (error.status === 0) return "Unable to reach Dashboard API.";
+    return `Dashboard API returned ${error.status}.`;
+  }
+  return "Unable to load dashboard data.";
+};
+
+const toGoalStatus = (record: WorkflowRecord) => ({
+  goal_code: readString(record, ["goal_code", "code"]),
+  goal_label: readString(record, ["goal_label", "name", "label"]),
+  required_indicators: readNumber(record, ["required_indicators", "required_count"]),
+  requested_indicators: readNumber(record, ["requested_indicators", "requested_count"]),
+  submitted_indicators: readNumber(record, ["submitted_indicators", "submitted_count"]),
+  approved_indicators: readNumber(record, ["approved_indicators", "approved_count"]),
+  pending_indicators: readNumber(record, ["pending_indicators", "pending_count"]),
+});
+
+const toTargetStatus = (record: WorkflowRecord) => ({
+  target_code: readString(record, ["target_code", "code"]),
+  target_label: readString(record, ["target_label", "name", "label"]),
+  goal_code: readString(record, ["goal_code"]),
+  required_indicators: readNumber(record, ["required_indicators", "required_count"]),
+  requested_indicators: readNumber(record, ["requested_indicators", "requested_count"]),
+  submitted_indicators: readNumber(record, ["submitted_indicators", "submitted_count"]),
+  validation_errors: readNumber(record, ["validation_errors", "error_count"]),
+  review_pending: readNumber(record, ["review_pending", "review_pending_count"]),
+});
+
+const toIndicatorStatus = (record: WorkflowRecord) => ({
+  indicator_code: readString(record, ["indicator_code", "national_indicator_code", "code"]),
+  indicator_label: readString(record, ["indicator_label", "national_indicator_name", "name"]),
+  goal_code: readString(record, ["goal_code"]),
+  target_code: readString(record, ["target_code"]),
+  request_code: readString(record, ["request_code"]),
+  template_version_code: readString(record, ["template_version_code"]),
+  required: true,
+  request_status: readString(record, ["request_status"], "PENDING"),
+  submission_status: readString(record, ["submission_status"], "NOT_SENT"),
+  validation_status: readString(record, ["validation_status"], "NOT_RUN"),
+  review_status: readString(record, ["review_status"], "NOT_STARTED"),
+  due_date: readString(record, ["due_date"], "-"),
+});
 
 const toneClasses: Record<UnitSummaryCard["tone"], string> = {
   blue: "border-l-blue-700 bg-blue-50",
@@ -47,7 +111,39 @@ const statusVariant = (status: string) => {
 };
 
 export function UnitAdminDashboardPage() {
+  const { language } = useLanguage();
   const [activeFocus, setActiveFocus] = useState("REQUIRED_INDICATORS");
+
+  const overallQuery = useQuery({
+    queryKey: ["dashboard", "overall-summary", dashboardUnitCode, language],
+    queryFn: () => dashboardService.getOverallSummary({ locale: language, unitCode: dashboardUnitCode }),
+  });
+  const goalsQuery = useQuery({
+    queryKey: ["dashboard", "goals", dashboardUnitCode, language],
+    queryFn: () => dashboardService.listGoals({ locale: language, unitCode: dashboardUnitCode }),
+  });
+  const targetsQuery = useQuery({
+    queryKey: ["dashboard", "targets", dashboardUnitCode, language],
+    queryFn: () => dashboardService.listTargets({ locale: language, unitCode: dashboardUnitCode }),
+  });
+  const indicatorsQuery = useQuery({
+    queryKey: ["dashboard", "national-indicators", dashboardUnitCode, language],
+    queryFn: () => dashboardService.listNationalIndicators({ locale: language, unitCode: dashboardUnitCode }),
+  });
+
+  const goals = useMemo(() => goalsQuery.data?.data.map(toGoalStatus) ?? goalStatusRows, [goalsQuery.data]);
+  const targets = useMemo(() => targetsQuery.data?.data.map(toTargetStatus) ?? targetStatusRows, [targetsQuery.data]);
+  const indicators = useMemo(() => indicatorsQuery.data?.data.map(toIndicatorStatus) ?? indicatorStatusRows, [indicatorsQuery.data]);
+  const summaryCards = useMemo(() => {
+    const summary = overallQuery.data?.data;
+    if (!summary) return unitSummaryCards;
+    return unitSummaryCards.map((card) => ({
+      ...card,
+      value: String(summary[card.code.toLowerCase()] ?? summary[card.code] ?? card.value),
+    }));
+  }, [overallQuery.data]);
+  const dashboardError = overallQuery.error ?? goalsQuery.error ?? targetsQuery.error ?? indicatorsQuery.error;
+  const dashboardLoading = overallQuery.isFetching || goalsQuery.isFetching || targetsQuery.isFetching || indicatorsQuery.isFetching;
 
   const goalBarOption = useMemo<EChartsCoreOption>(
     () => ({
@@ -57,7 +153,7 @@ export function UnitAdminDashboardPage() {
       grid: { left: 38, right: 16, top: 22, bottom: 42 },
       xAxis: {
         type: "category",
-        data: goalStatusRows.map((row) => row.goal_code.replace("GOAL_", "G")),
+        data: goals.map((row) => row.goal_code.replace("GOAL_", "G")),
         axisLabel: { fontSize: 11 },
       },
       yAxis: { type: "value", axisLabel: { fontSize: 11 } },
@@ -65,21 +161,21 @@ export function UnitAdminDashboardPage() {
         {
           name: "Required",
           type: "bar",
-          data: goalStatusRows.map((row) => row.required_indicators),
+          data: goals.map((row) => row.required_indicators),
         },
         {
           name: "Submitted",
           type: "bar",
-          data: goalStatusRows.map((row) => row.submitted_indicators),
+          data: goals.map((row) => row.submitted_indicators),
         },
         {
           name: "Pending",
           type: "bar",
-          data: goalStatusRows.map((row) => row.pending_indicators),
+          data: goals.map((row) => row.pending_indicators),
         },
       ],
     }),
-    [],
+    [goals],
   );
 
   const targetPieOption = useMemo<EChartsCoreOption>(
@@ -156,8 +252,15 @@ export function UnitAdminDashboardPage() {
           </CardContent>
         </Card>
 
+        {dashboardLoading ? <Loader variant="inline" label="Loading dashboard API data" className="text-xs text-muted-foreground" /> : null}
+        {dashboardError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+            {apiErrorMessage(dashboardError)}
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-5 gap-3">
-          {unitSummaryCards.map((card) => (
+          {summaryCards.map((card) => (
             <button
               key={card.code}
               type="button"
@@ -221,7 +324,7 @@ export function UnitAdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <ul className="space-y-2">
-                {targetStatusRows.map((target) => (
+                {targets.map((target) => (
                   <li key={target.target_code}>
                     <button
                       type="button"
@@ -276,7 +379,7 @@ export function UnitAdminDashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {indicatorStatusRows.map((row) => (
+                  {indicators.map((row) => (
                     <TableRow key={row.indicator_code}>
                       <TableCell>
                         <span className="block font-mono text-[11px]">{row.indicator_code}</span>
@@ -345,8 +448,8 @@ export function UnitAdminDashboardPage() {
               </div>
 
               <div className="mt-5 rounded-md border border-border bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
-                This screen is sample-data only. Live integration should read from Dashboard, Requests,
-                Ingestion, Validation, and Review API contracts without exposing internal IDs or raw payloads.
+                This screen reads Dashboard APIs when available and falls back to local display rows when DEV has no records.
+                Internal IDs, raw payloads, hashes, and tokens are not displayed.
               </div>
             </CardContent>
           </Card>

@@ -9,13 +9,16 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -38,8 +41,79 @@ import {
   type ReviewTaskSample,
   type ReviewTaskStatus,
 } from "@/data/review.sample";
+import { useLanguage } from "@/providers/language-context";
+import { reviewService } from "@/services/reviewService";
+import type { WorkflowRecord } from "@/types/workflow";
 
 type ReviewModal = ReviewActionType | "cell-detail" | null;
+const reviewUnitCode = "SDG";
+
+const readString = (record: WorkflowRecord, keys: string[], fallback = "-") => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "string" && item.length > 0);
+  return typeof value === "string" ? value : fallback;
+};
+
+const readNumber = (record: WorkflowRecord, keys: string[], fallback = 0) => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "number" || typeof item === "string");
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const apiErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return "You are not authorized to review these tasks.";
+    if (error.status === 0) return "Unable to reach Review API.";
+    return `Review API returned ${error.status}.`;
+  }
+  return error instanceof Error ? error.message : "Unable to load review data.";
+};
+
+const toReviewTask = (record: WorkflowRecord): ReviewTaskSample => ({
+  task_code: readString(record, ["task_code", "review_task_code", "code"]),
+  request_code: readString(record, ["request_code"]),
+  item_code: readString(record, ["item_code", "request_item_code"]),
+  submission_version_code: readString(record, ["submission_version_code", "version_code"]),
+  validation_run_code: readString(record, ["validation_run_code", "run_code"]),
+  template_instance_code: readString(record, ["template_instance_code"]),
+  national_indicator_code: readString(record, ["national_indicator_code", "indicator_code"]),
+  indicator_label: readString(record, ["indicator_label", "indicator_name", "national_indicator_name"]),
+  goal_path: readString(record, ["goal_path", "goal_label"], "-"),
+  target_path: readString(record, ["target_path", "target_label"], "-"),
+  source_organization_name: readString(record, ["source_organization_name", "source_unit_name"]),
+  submitted_by: readString(record, ["submitted_by", "submitted_by_name"]),
+  reviewer_name: readString(record, ["reviewer_name", "assigned_to_name"]),
+  review_level: readNumber(record, ["review_level"], 1),
+  max_review_level: readNumber(record, ["max_review_level"], 1),
+  priority: readString(record, ["priority"], "NORMAL") as ReviewPriority,
+  status: readString(record, ["status", "task_status"], "READY") as ReviewTaskStatus,
+  assigned_at: readString(record, ["assigned_at", "created_at"], "-"),
+  due_date: readString(record, ["due_date"], "-"),
+  validation_status: readString(record, ["validation_status"], "PASSED") as ReviewTaskSample["validation_status"],
+  validation_error_count: readNumber(record, ["validation_error_count", "error_count"]),
+  validation_warning_count: readNumber(record, ["validation_warning_count", "warning_count"]),
+});
+
+const toReviewAction = (record: WorkflowRecord, taskCode: string): ReviewActionSample => ({
+  action_code: readString(record, ["action_code", "review_action_code", "code"], `${taskCode}_ACTION`),
+  task_code: readString(record, ["task_code"], taskCode),
+  action_type: readString(record, ["action_type"], "REQUEST_CLARIFICATION") as ReviewActionType,
+  action_status: readString(record, ["action_status", "status"], "RECORDED") as ReviewActionSample["action_status"],
+  actor_name: readString(record, ["actor_name", "reviewer_name", "created_by"]),
+  review_level: readNumber(record, ["review_level"], 1),
+  action_at: readString(record, ["action_at", "created_at"], "-"),
+  note: readString(record, ["note", "comment", "message"], "-"),
+});
+
+const toReviewApproval = (record: WorkflowRecord, taskCode: string) => ({
+  approval_code: readString(record, ["approval_code", "review_approval_code", "code"], `${taskCode}_APPROVAL`),
+  task_code: readString(record, ["task_code"], taskCode),
+  review_level: readNumber(record, ["review_level"], 1),
+  approver_role: readString(record, ["approver_role", "role"], "-"),
+  approver_name: readString(record, ["approver_name", "actor_name"], "-"),
+  status: readString(record, ["status", "approval_status"], "PENDING") as ApprovalStatus,
+  decided_at: readString(record, ["decided_at", "created_at"], "-"),
+  note: readString(record, ["note", "comment"], "-"),
+});
 
 const reviewStatusVariant = (status: ReviewTaskStatus | string) => {
   if (["READY", "APPROVED", "PASSED", "SUBMITTED", "RECEIVED"].includes(status)) return "secondary";
@@ -121,6 +195,8 @@ function ReviewQueue({
   onQueryChange,
   onStatusChange,
   onOpenTask,
+  isLoading,
+  error,
 }: {
   query: string;
   statusFilter: ReviewTaskStatus | "ALL";
@@ -128,6 +204,8 @@ function ReviewQueue({
   onQueryChange: (query: string) => void;
   onStatusChange: (status: ReviewTaskStatus | "ALL") => void;
   onOpenTask: (taskCode: string) => void;
+  isLoading: boolean;
+  error?: unknown;
 }) {
   const stats = [
     { label: "Tasks", value: tasks.length, note: "Visible reviewer tasks" },
@@ -155,6 +233,13 @@ function ReviewQueue({
           </div>
         ))}
       </div>
+
+      {isLoading ? <Loader variant="inline" label="Loading review tasks from API" className="text-xs text-muted-foreground" /> : null}
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+          {apiErrorMessage(error)}
+        </div>
+      ) : null}
 
       <Card>
         <CardContent className="grid gap-4">
@@ -246,6 +331,11 @@ function ReviewQueue({
                   </TableCell>
                 </TableRow>
               ))}
+              {!tasks.length ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">No review tasks found.</TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </CardContent>
@@ -257,12 +347,19 @@ function ReviewQueue({
 function ReviewActionModal({
   modal,
   task,
+  isPending,
+  error,
+  onSubmit,
   onClose,
 }: {
   modal: ReviewActionType;
   task: ReviewTaskSample;
+  isPending: boolean;
+  error?: unknown;
+  onSubmit: (comment: string) => void;
   onClose: () => void;
 }) {
+  const [comment, setComment] = useState("Reviewed validation summary and submitted template values.");
   const actionConfig: Record<ReviewActionType, { title: string; tone: string; icon: typeof CheckCircle2 }> = {
     APPROVE: { title: "Approve submission", tone: "Approval will move this task to the next configured review level or final approval.", icon: CheckCircle2 },
     REJECT: { title: "Reject submission", tone: "Reject is a terminal visual action until governed review mutation APIs are approved.", icon: XCircle },
@@ -306,14 +403,21 @@ function ReviewActionModal({
           </div>
           <label className="grid gap-1 text-xs font-semibold">
             Reviewer note
-            <Textarea defaultValue="Reviewed validation summary and submitted template values. Decision note is required before recording this action." />
+            <Textarea value={comment} onChange={(event) => setComment(event.target.value)} />
           </label>
+          {error ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+              {apiErrorMessage(error)}
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center justify-between border-t border-border bg-muted/40 px-5 py-4">
-          <span className="text-xs text-muted-foreground">Visual state only. No review mutation is executed.</span>
+          <span className="text-xs text-muted-foreground">Decision is submitted to governed Review APIs.</span>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="button" onClick={onClose}>Save/Submit</Button>
+            <Button type="button" onClick={() => onSubmit(comment)} disabled={isPending || !comment.trim()}>
+              {isPending ? "Submitting..." : "Save/Submit"}
+            </Button>
           </div>
         </div>
       </div>
@@ -579,23 +683,73 @@ function ReviewWorkspace({
 }
 
 export function ReviewApprovalPage() {
+  const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ReviewTaskStatus | "ALL">("ALL");
   const [selectedTaskCode, setSelectedTaskCode] = useState<string | null>(null);
   const [modal, setModal] = useState<ReviewModal>(null);
 
+  const tasksQuery = useQuery({
+    queryKey: ["review", "tasks", reviewUnitCode, language, statusFilter],
+    queryFn: () => reviewService.listTasks({ locale: language, unitCode: reviewUnitCode, status: statusFilter === "ALL" ? undefined : statusFilter }),
+  });
+  const tasks = useMemo(() => tasksQuery.data?.data.map(toReviewTask) ?? reviewTasks, [tasksQuery.data]);
+
   const filteredTasks = useMemo(() => {
     const normalized = query.toLowerCase();
-    return reviewTasks.filter((task) => {
+    return tasks.filter((task) => {
       const matchesStatus = statusFilter === "ALL" || task.status === statusFilter;
       const matchesQuery = Object.values(task).join(" ").toLowerCase().includes(normalized);
       return matchesStatus && matchesQuery;
     });
-  }, [query, statusFilter]);
+  }, [query, statusFilter, tasks]);
 
-  const selectedTask = reviewTasks.find((task) => task.task_code === selectedTaskCode) ?? null;
-  const selectedAction = selectedTask ? reviewActions.find((action) => action.task_code === selectedTask.task_code) : undefined;
-  const approvals = selectedTask ? reviewApprovals.filter((approval) => approval.task_code === selectedTask.task_code) : [];
+  const selectedTask = tasks.find((task) => task.task_code === selectedTaskCode) ?? null;
+  const actionsQuery = useQuery({
+    queryKey: ["review", "actions", selectedTaskCode, reviewUnitCode, language],
+    queryFn: () => reviewService.listActions({ taskCode: selectedTaskCode ?? "", locale: language, unitCode: reviewUnitCode }),
+    enabled: Boolean(selectedTaskCode),
+  });
+  const approvalsQuery = useQuery({
+    queryKey: ["review", "approvals", selectedTaskCode, reviewUnitCode, language],
+    queryFn: () => reviewService.listApprovals({ taskCode: selectedTaskCode ?? "", locale: language, unitCode: reviewUnitCode }),
+    enabled: Boolean(selectedTaskCode),
+  });
+  const actions = selectedTask ? (actionsQuery.data?.data.map((item) => toReviewAction(item, selectedTask.task_code)) ?? reviewActions.filter((action) => action.task_code === selectedTask.task_code)) : [];
+  const selectedAction = actions[0];
+  const approvals = selectedTask ? (approvalsQuery.data?.data.map((item) => toReviewApproval(item, selectedTask.task_code)) ?? reviewApprovals.filter((approval) => approval.task_code === selectedTask.task_code)) : [];
+
+  const reviewActionMutation = useMutation({
+    mutationFn: async ({ actionType, comment }: { actionType: ReviewActionType; comment: string }) => {
+      if (!selectedTask) throw new Error("Open a review task before submitting a decision.");
+      if (actionType === "APPROVE") {
+        return reviewService.createApproval({
+          locale: language,
+          taskCode: selectedTask.task_code,
+          payload: {
+            unit_code: reviewUnitCode,
+            approval_status: "APPROVED",
+            comment,
+            is_final_approval: selectedTask.review_level >= selectedTask.max_review_level,
+          },
+        });
+      }
+      return reviewService.createAction({
+        locale: language,
+        taskCode: selectedTask.task_code,
+        payload: {
+          unit_code: reviewUnitCode,
+          action_type: actionType,
+          comment,
+        },
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review"] });
+      setModal(null);
+    },
+  });
 
   return (
     <AppShell persona="Reviewer" activeDashboard="/dashboard/unit-admin">
@@ -616,10 +770,19 @@ export function ReviewApprovalPage() {
           onQueryChange={setQuery}
           onStatusChange={setStatusFilter}
           onOpenTask={setSelectedTaskCode}
+          isLoading={tasksQuery.isFetching}
+          error={tasksQuery.error}
         />
       )}
       {selectedTask && modal && modal !== "cell-detail" ? (
-        <ReviewActionModal modal={modal} task={selectedTask} onClose={() => setModal(null)} />
+        <ReviewActionModal
+          modal={modal}
+          task={selectedTask}
+          isPending={reviewActionMutation.isPending}
+          error={reviewActionMutation.error}
+          onSubmit={(comment) => reviewActionMutation.mutate({ actionType: modal, comment })}
+          onClose={() => setModal(null)}
+        />
       ) : null}
       {modal === "cell-detail" ? (
         <CellDetailModal onClose={() => setModal(null)} />

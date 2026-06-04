@@ -6,13 +6,16 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { ApiError } from "@/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Loader } from "@/components/ui/loader";
 import {
   Table,
   TableBody,
@@ -29,8 +32,65 @@ import {
   type InvitationRecordSample,
   type InvitationStatus,
 } from "@/data/invitationAccess.sample";
+import { useLanguage } from "@/providers/language-context";
+import { invitationAccessService } from "@/services/invitationAccessService";
+import type { WorkflowRecord } from "@/types/workflow";
 
 type InvitationAction = "resend" | "revoke" | "copy-link" | null;
+const invitationUnitCode = "SDG";
+
+const readString = (record: WorkflowRecord, keys: string[], fallback = "-") => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "string" && item.length > 0);
+  return typeof value === "string" ? value : fallback;
+};
+
+const readBool = (record: WorkflowRecord, keys: string[], fallback = false) => {
+  const value = keys.map((key) => record[key]).find((item) => typeof item === "boolean" || typeof item === "string");
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return ["TRUE", "YES", "1", "AVAILABLE"].includes(value.toUpperCase());
+  return fallback;
+};
+
+const apiErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return "You are not authorized to manage invitation access.";
+    if (error.status === 0) return "Unable to reach Invitation Access API.";
+    return `Invitation Access API returned ${error.status}.`;
+  }
+  return error instanceof Error ? error.message : "Unable to load invitation access data.";
+};
+
+const toInvitationRecord = (record: WorkflowRecord): InvitationRecordSample => ({
+  invitation_code: readString(record, ["invitation_code", "code"]),
+  request_code: readString(record, ["request_code"]),
+  item_code: readString(record, ["item_code", "request_item_code"]),
+  assignment_code: readString(record, ["assignment_code"]),
+  source_organization_name: readString(record, ["source_organization_name", "source_unit_name", "organization_name"]),
+  officer_name: readString(record, ["officer_name", "contact_name", "assignee_name", "assigned_to"]),
+  contact_email: readString(record, ["contact_email", "email", "recipient"], "Hidden"),
+  contact_mobile: readString(record, ["contact_mobile", "mobile"], "masked"),
+  delivery_channel: readString(record, ["delivery_channel", "channel"], "EMAIL") as InvitationRecordSample["delivery_channel"],
+  delivery_status: readString(record, ["delivery_status", "notification_status"], "QUEUED") as InvitationRecordSample["delivery_status"],
+  invitation_status: readString(record, ["invitation_status", "status"], "CREATED") as InvitationStatus,
+  created_at: readString(record, ["created_at", "created_on"], "-"),
+  sent_at: readString(record, ["sent_at"], ""),
+  expires_at: readString(record, ["expires_at", "expires_on"], "-"),
+  first_opened_at: readString(record, ["first_opened_at", "opened_at"], ""),
+  setup_completed_at: readString(record, ["setup_completed_at"], ""),
+  revoked_at: readString(record, ["revoked_at"], ""),
+  one_time_link_available: readBool(record, ["one_time_link_available", "setup_url_available"], false),
+  access_scope_label: readString(record, ["access_scope_label"], `${readString(record, ["request_code"])} / ${readString(record, ["item_code", "request_item_code"])}`),
+});
+
+const toInvitationEvent = (record: WorkflowRecord) => ({
+  event_code: readString(record, ["event_code", "audit_event_code", "code"], `${Date.now()}`),
+  invitation_code: readString(record, ["invitation_code"]),
+  event_type: readString(record, ["event_type", "type"], "CREATED") as (typeof invitationEvents)[number]["event_type"],
+  event_status: readString(record, ["event_status", "severity"], "INFO") as (typeof invitationEvents)[number]["event_status"],
+  occurred_at: readString(record, ["occurred_at", "created_at"], "-"),
+  actor: readString(record, ["actor", "actor_name", "created_by"], "-"),
+  message: readString(record, ["message", "detail", "description"], "-"),
+});
 
 const invitationStatusVariant = (status: InvitationStatus) => {
   if (["SENT", "OPENED", "SETUP_COMPLETED"].includes(status)) return "secondary";
@@ -47,10 +107,16 @@ const deliveryStatusVariant = (status: DeliveryStatus) => {
 function ActionStateModal({
   action,
   invitation,
+  setupUrl,
+  isPending,
+  onConfirm,
   onClose,
 }: {
   action: Exclude<InvitationAction, null>;
   invitation: InvitationRecordSample;
+  setupUrl: string;
+  isPending: boolean;
+  onConfirm: () => void;
   onClose: () => void;
 }) {
   const config: Record<Exclude<InvitationAction, null>, { title: string; message: string; icon: typeof RotateCcw }> = {
@@ -107,15 +173,15 @@ function ActionStateModal({
           </div>
           {action === "copy-link" ? (
             <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-950">
-              Placeholder only: `https://ssd.example.gov.in/setup/&lt;one-time-token-shown-once&gt;`
+              {setupUrl ? setupUrl : "The setup link will appear here only after generation and is cleared when this dialog closes."}
             </div>
           ) : null}
         </div>
         <div className="flex items-center justify-between border-t border-border bg-muted/40 px-5 py-4">
-          <span className="text-xs text-muted-foreground">No token, token hash, email, or revoke mutation is executed.</span>
+          <span className="text-xs text-muted-foreground">Raw setup links are never stored after this dialog closes.</span>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="button" onClick={onClose}>Save/Submit</Button>
+            <Button type="button" onClick={onConfirm} disabled={isPending}>{isPending ? "Submitting..." : "Save/Submit"}</Button>
           </div>
         </div>
       </div>
@@ -125,14 +191,15 @@ function ActionStateModal({
 
 function InvitationDetailModal({
   invitation,
+  events,
   onAction,
   onClose,
 }: {
   invitation: InvitationRecordSample;
+  events: ReturnType<typeof toInvitationEvent>[];
   onAction: (action: Exclude<InvitationAction, null>) => void;
   onClose: () => void;
 }) {
-  const events = invitationEvents.filter((event) => event.invitation_code === invitation.invitation_code);
   const outbox = notificationOutbox.filter((item) => item.invitation_code === invitation.invitation_code);
 
   return (
@@ -262,27 +329,85 @@ function InvitationDetailModal({
 }
 
 export function InvitationAccessPage() {
+  const { language } = useLanguage();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<InvitationStatus | "ALL">("ALL");
   const [selectedInvitationCode, setSelectedInvitationCode] = useState<string | null>(null);
   const [action, setAction] = useState<InvitationAction>(null);
+  const [oneTimeSetupUrl, setOneTimeSetupUrl] = useState("");
+
+  const invitationsQuery = useQuery({
+    queryKey: ["invitation-access", "invitations", invitationUnitCode, language],
+    queryFn: () => invitationAccessService.listInvitations({ locale: language, unitCode: invitationUnitCode }),
+  });
+
+  const invitations = useMemo(
+    () => invitationsQuery.data?.data.map(toInvitationRecord) ?? invitationRecords,
+    [invitationsQuery.data],
+  );
+
+  const selectedInvitation = invitations.find((invitation) => invitation.invitation_code === selectedInvitationCode) ?? null;
+  const eventsQuery = useQuery({
+    queryKey: ["invitation-access", "events", selectedInvitationCode, invitationUnitCode, language],
+    queryFn: () => invitationAccessService.listEvents({ invitationCode: selectedInvitationCode ?? "", locale: language, unitCode: invitationUnitCode }),
+    enabled: Boolean(selectedInvitationCode),
+  });
+  const selectedEvents = eventsQuery.data?.data.map(toInvitationEvent) ?? invitationEvents.filter((event) => event.invitation_code === selectedInvitationCode);
+
+  const closeAction = () => {
+    setAction(null);
+    setOneTimeSetupUrl("");
+  };
+
+  const actionMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedInvitation || !action) return null;
+      if (action === "copy-link") {
+        return invitationAccessService.generateLink({
+          locale: language,
+          invitationCode: selectedInvitation.invitation_code,
+          payload: { unit_code: invitationUnitCode },
+        });
+      }
+      if (action === "resend") {
+        return invitationAccessService.updateNotificationStatus({
+          locale: language,
+          invitationCode: selectedInvitation.invitation_code,
+          payload: { unit_code: invitationUnitCode, notification_status: "QUEUED" },
+        });
+      }
+      return invitationAccessService.revoke({
+        locale: language,
+        invitationCode: selectedInvitation.invitation_code,
+        payload: { unit_code: invitationUnitCode, revoke_reason: "Revoked from Invitation Access UI." },
+      });
+    },
+    onSuccess: async (response) => {
+      const setupUrl = response?.data?.setup_url;
+      if (typeof setupUrl === "string") {
+        setOneTimeSetupUrl(setupUrl);
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["invitation-access"] });
+      closeAction();
+    },
+  });
 
   const filteredInvitations = useMemo(() => {
     const normalized = query.toLowerCase();
-    return invitationRecords.filter((invitation) => {
+    return invitations.filter((invitation) => {
       const matchesStatus = statusFilter === "ALL" || invitation.invitation_status === statusFilter;
       const matchesQuery = Object.values(invitation).join(" ").toLowerCase().includes(normalized);
       return matchesStatus && matchesQuery;
     });
-  }, [query, statusFilter]);
-
-  const selectedInvitation = invitationRecords.find((invitation) => invitation.invitation_code === selectedInvitationCode) ?? null;
+  }, [invitations, query, statusFilter]);
 
   const stats = [
     { label: "Invitations", value: filteredInvitations.length, note: "Visible request-linked records" },
-    { label: "Sent/opened", value: invitationRecords.filter((invitation) => ["SENT", "OPENED", "SETUP_COMPLETED"].includes(invitation.invitation_status)).length, note: "Contributor has access path" },
-    { label: "Manual send", value: invitationRecords.filter((invitation) => invitation.delivery_status === "PENDING_MANUAL_SEND").length, note: "Needs admin delivery" },
-    { label: "Revoked/expired", value: invitationRecords.filter((invitation) => ["REVOKED", "EXPIRED"].includes(invitation.invitation_status)).length, note: "No active access" },
+    { label: "Sent/opened", value: invitations.filter((invitation) => ["SENT", "OPENED", "SETUP_COMPLETED"].includes(invitation.invitation_status)).length, note: "Contributor has access path" },
+    { label: "Manual send", value: invitations.filter((invitation) => invitation.delivery_status === "PENDING_MANUAL_SEND").length, note: "Needs admin delivery" },
+    { label: "Revoked/expired", value: invitations.filter((invitation) => ["REVOKED", "EXPIRED"].includes(invitation.invitation_status)).length, note: "No active access" },
   ];
 
   return (
@@ -315,6 +440,13 @@ export function InvitationAccessPage() {
               </div>
               <Badge variant="outline">{filteredInvitations.length} records</Badge>
             </div>
+
+            {invitationsQuery.isFetching ? <Loader variant="inline" label="Loading invitations from API" className="text-xs text-muted-foreground" /> : null}
+            {invitationsQuery.error ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+                {apiErrorMessage(invitationsQuery.error)}
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="flex min-w-80 items-center gap-2 rounded-md bg-muted/60 px-2">
@@ -390,6 +522,11 @@ export function InvitationAccessPage() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {!filteredInvitations.length ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">No invitation records found.</TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </CardContent>
@@ -399,12 +536,20 @@ export function InvitationAccessPage() {
       {selectedInvitation ? (
         <InvitationDetailModal
           invitation={selectedInvitation}
+          events={selectedEvents}
           onAction={setAction}
           onClose={() => setSelectedInvitationCode(null)}
         />
       ) : null}
       {selectedInvitation && action ? (
-        <ActionStateModal action={action} invitation={selectedInvitation} onClose={() => setAction(null)} />
+        <ActionStateModal
+          action={action}
+          invitation={selectedInvitation}
+          setupUrl={oneTimeSetupUrl}
+          isPending={actionMutation.isPending}
+          onConfirm={() => actionMutation.mutate()}
+          onClose={closeAction}
+        />
       ) : null}
     </AppShell>
   );
