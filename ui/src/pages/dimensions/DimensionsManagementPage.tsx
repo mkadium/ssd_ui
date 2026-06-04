@@ -157,11 +157,25 @@ function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
   return Array.from(uniqueItems.values());
 }
 
+const modalFieldLabelClass = "grid gap-1.5 text-xs font-semibold text-slate-700";
+const modalInputClass =
+  "h-10 border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalReadOnlyInputClass =
+  "h-10 border-slate-300 bg-slate-100 px-3 text-sm text-slate-600 shadow-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalSelectClass =
+  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+
 function Field({ label, value, readOnly = false, required = false }: { label: string; value?: string | number; readOnly?: boolean; required?: boolean }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
-      <Input name={label} defaultValue={value ?? ""} readOnly={readOnly} required={required} className={readOnly ? "bg-muted/60" : undefined} />
+      <Input
+        name={label}
+        defaultValue={value ?? ""}
+        readOnly={readOnly}
+        required={required}
+        className={readOnly ? modalReadOnlyInputClass : modalInputClass}
+      />
     </label>
   );
 }
@@ -227,7 +241,7 @@ function DimensionModalView({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="dimension-modal-title">
-      <form onSubmit={onSubmit} className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+      <form onSubmit={onSubmit} className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
           <div>
             <p className="text-[11px] font-semibold uppercase text-muted-foreground">Dimension Management</p>
@@ -333,7 +347,7 @@ function DimensionModalView({
                   </div>
                 </div>
               ) : null}
-              <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
+              <div className="grid grid-cols-3 gap-4 max-md:grid-cols-1">
                 {modal === "create-root" ? (
                   <Field label="dimension_code" value={selectedDimensionCode} />
                 ) : (
@@ -347,9 +361,9 @@ function DimensionModalView({
                 />
                 <Field label="external_code" value={modal === "add-child" ? "" : selectedMember?.external_code ?? undefined} />
                 <Field label="sort_order" value={modal === "add-child" ? "" : selectedMember?.sort_order ?? undefined} />
-                <label className="grid gap-1 text-xs font-semibold">
+                <label className={modalFieldLabelClass}>
                   status
-                  <select name="is_active" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={normalizeStatus(selectedMember?.status) === "RETIRED" ? "NO" : "YES"}>
+                  <select name="is_active" className={modalSelectClass} defaultValue={normalizeStatus(selectedMember?.status) === "RETIRED" ? "NO" : "YES"}>
                     <option>YES</option>
                     <option>NO</option>
                   </select>

@@ -215,6 +215,14 @@ function getFallbackIndicatorMappings(unitCode: string) {
   return sampleIndicatorMappings;
 }
 
+const modalFieldLabelClass = "grid gap-1.5 text-xs font-semibold text-slate-700";
+const modalInputClass =
+  "h-10 border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalSelectClass =
+  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalTextareaClass =
+  "min-h-24 border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+
 function FormModal({
   modal,
   selectedEdition,
@@ -419,41 +427,70 @@ function FormModal({
             </div>
           ) : (
             <div className="grid gap-4">
-              <div className="grid grid-cols-3 gap-3">
-                <label className="grid gap-1 text-xs font-semibold">
+              <div className="grid grid-cols-3 gap-4 max-md:grid-cols-1">
+                <label className={modalFieldLabelClass}>
                   Framework code
-                  <Input name="framework_code" defaultValue={selectedEdition.framework_code} required />
+                  <Input
+                    name="framework_code"
+                    defaultValue={selectedEdition.framework_code}
+                    required
+                    className={modalInputClass}
+                  />
                 </label>
-                <label className="grid gap-1 text-xs font-semibold">
+                <label className={modalFieldLabelClass}>
                   Edition code
-                  <Input name="edition_code" defaultValue={modal === "create-edition" ? "" : selectedEdition.edition_code} required />
+                  <Input
+                    name="edition_code"
+                    defaultValue={modal === "create-edition" ? "" : selectedEdition.edition_code}
+                    required
+                    className={modalInputClass}
+                  />
                 </label>
-                <label className="grid gap-1 text-xs font-semibold">
+                <label className={modalFieldLabelClass}>
                   Status
-                  <select name="status" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={modal === "create-edition" ? "DRAFT" : selectedEdition.status}>
+                  <select name="status" className={modalSelectClass} defaultValue={modal === "create-edition" ? "DRAFT" : selectedEdition.status}>
                     <option value="DRAFT">DRAFT</option>
                     <option value="ACTIVE">ACTIVE</option>
                     <option value="ARCHIVED">ARCHIVED</option>
                   </select>
                 </label>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="grid gap-1 text-xs font-semibold">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+                <label className={modalFieldLabelClass}>
                   Version label
-                  <Input name="version_label" defaultValue={modal === "create-edition" ? "" : selectedEdition.version_label} placeholder="2025" />
+                  <Input
+                    name="version_label"
+                    defaultValue={modal === "create-edition" ? "" : selectedEdition.version_label}
+                    placeholder="2025"
+                    className={modalInputClass}
+                  />
                 </label>
-                <label className="grid gap-1 text-xs font-semibold">
+                <label className={modalFieldLabelClass}>
                   Effective from
-                  <Input name="effective_from" type="date" defaultValue={modal === "create-edition" || selectedEdition.effective_from === "-" ? "" : selectedEdition.effective_from} />
+                  <Input
+                    name="effective_from"
+                    type="date"
+                    defaultValue={modal === "create-edition" || selectedEdition.effective_from === "-" ? "" : selectedEdition.effective_from}
+                    className={modalInputClass}
+                  />
                 </label>
               </div>
-              <label className="grid gap-1 text-xs font-semibold">
+              <label className={modalFieldLabelClass}>
                 Name en-IN
-                <Input name="name" defaultValue={modal === "create-edition" ? "" : selectedEdition.name} required />
+                <Input
+                  name="name"
+                  defaultValue={modal === "create-edition" ? "" : selectedEdition.name}
+                  required
+                  className={modalInputClass}
+                />
               </label>
-              <label className="grid gap-1 text-xs font-semibold">
+              <label className={modalFieldLabelClass}>
                 Description
-                <Textarea name="description" defaultValue={modal === "create-edition" ? "" : selectedEdition.description} />
+                <Textarea
+                  name="description"
+                  defaultValue={modal === "create-edition" ? "" : selectedEdition.description}
+                  className={modalTextareaClass}
+                />
               </label>
             </div>
           )}
@@ -1003,7 +1040,7 @@ export function FrameworkEditionSetupPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Selected edition</CardTitle>
+              <CardTitle>Active edition</CardTitle>
             </CardHeader>
             <CardContent>
               <dl className="grid gap-3 text-xs">
@@ -1021,7 +1058,7 @@ export function FrameworkEditionSetupPage() {
                 </div>
               </dl>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button variant="outline" onClick={() => openModal("add-root")}>Create Label</Button>
+                <Button variant="outline" onClick={() => openModal("add-root")}>Create Level</Button>
               </div>
             </CardContent>
           </Card>

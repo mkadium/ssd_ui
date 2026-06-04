@@ -55,6 +55,13 @@ const organizationTypeOptions = [
 ];
 const measureValueTypeOptions = ["NUMERIC", "INTEGER", "TEXT", "BOOLEAN", "DATE"];
 const unsupportedMeasureFormFields = new Set(["decimal_places", "validation_rule_code"]);
+const modalFieldLabelClass = "grid gap-1.5 text-xs font-semibold text-slate-700";
+const modalInputClass =
+  "h-10 border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalReadOnlyInputClass =
+  "h-10 border-slate-300 bg-slate-100 px-3 text-sm text-slate-600 shadow-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalSelectClass =
+  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
 
 const statusVariant = (value?: string) => {
   if (["ACTIVE", "YES", "NUMERIC"].includes(value ?? "")) return "secondary";
@@ -191,18 +198,18 @@ function unitsFromMeasures(measures: MasterRow[]): MasterRow[] {
 
 function TextField({ label, value, required = false }: { label: string; value?: string; required?: boolean }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
-      <Input name={label} defaultValue={value ?? ""} required={required} />
+      <Input name={label} defaultValue={value ?? ""} required={required} className={modalInputClass} />
     </label>
   );
 }
 
 function ReadOnlyField({ label, value, required = false }: { label: string; value?: string; required?: boolean }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
-      <Input name={label} value={value ?? ""} readOnly required={required} className="bg-muted/60" />
+      <Input name={label} value={value ?? ""} readOnly required={required} className={modalReadOnlyInputClass} />
     </label>
   );
 }
@@ -219,9 +226,9 @@ function ParentOrganizationField({
   const parentOptions = options.filter((item) => item.organization_code !== currentOrganizationCode);
 
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       parent_organization_code
-      <select name="parent_organization_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name="parent_organization_code" className={modalSelectClass} defaultValue={value}>
         <option value="">No parent</option>
         {parentOptions.map((item) => (
           <option key={item.id} value={item.organization_code}>{item.organization_code} / {item.name}</option>
@@ -233,9 +240,9 @@ function ParentOrganizationField({
 
 function OrganizationField({ label, value, options }: { label: string; value?: string; options: MasterRow[] }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
-      <select name={label} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
+      <select name={label} className={modalSelectClass} defaultValue={value} required>
         <option value="">Select organization</option>
         {options.map((item) => (
           <option key={item.id} value={item.organization_code}>
@@ -249,9 +256,9 @@ function OrganizationField({ label, value, options }: { label: string; value?: s
 
 function OrganizationTypeField({ value }: { value?: string }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       organization_type
-      <select name="organization_type" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value ?? "DIVISION"} required>
+      <select name="organization_type" className={modalSelectClass} defaultValue={value ?? "DIVISION"} required>
         {organizationTypeOptions.map((type) => (
           <option key={type} value={type}>{type}</option>
         ))}
@@ -262,9 +269,9 @@ function OrganizationTypeField({ value }: { value?: string }) {
 
 function UnitField({ value, options }: { value?: string; options: MasterRow[] }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       unit_code
-      <select name="unit_code" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value}>
+      <select name="unit_code" className={modalSelectClass} defaultValue={value}>
         <option value="">Select unit</option>
         {options.map((item) => (
           <option key={item.id} value={item.unit_code}>
@@ -278,9 +285,9 @@ function UnitField({ value, options }: { value?: string; options: MasterRow[] })
 
 function MeasureValueTypeField({ value }: { value?: string }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       value_type
-      <select name="value_type" className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value ?? "NUMERIC"} required>
+      <select name="value_type" className={modalSelectClass} defaultValue={value ?? "NUMERIC"} required>
         {measureValueTypeOptions.map((type) => (
           <option key={type} value={type}>{type}</option>
         ))}
@@ -375,7 +382,7 @@ function ReferenceDialog({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="reference-dialog-title">
-      <form onSubmit={onSubmit} className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+      <form onSubmit={onSubmit} className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
           <div>
             <p className="text-[11px] font-semibold uppercase text-muted-foreground">{tab.tableName}</p>
@@ -410,7 +417,7 @@ function ReferenceDialog({
           ) : null}
 
           {!isView && !isDelete ? (
-            <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+            <div className="grid grid-cols-4 gap-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
               {tab.columns.map((column) =>
                 tab.code === "measures" && unsupportedMeasureFormFields.has(column.key) ? null : column.key === "version_code" && tab.code === "measures" ? (
                   <ReadOnlyField key={column.key} label={column.key} value={row?.version_code ?? activeMeasureVersionCode} required />
