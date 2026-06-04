@@ -53,6 +53,9 @@ type DialogState = {
   row?: MasterRow;
   entity?: DialogEntity;
 } | null;
+type IndicatorMutationResult = {
+  mappingWarning?: string;
+};
 
 const globalMappings: MasterRow[] = [];
 const globalIndicatorMappingOptions: MasterRow[] = [
@@ -1134,22 +1137,27 @@ export function IndicatorManagementPage() {
         }
 
         const nodeCode = readString(formData, "node_code");
+        let mappingWarning: string | undefined;
         if (!isDeactivate && nodeCode && nationalIndicatorCode) {
-          await mastersService.createFrameworkIndicatorMapping({
-            locale: language,
-            body: {
-              framework_code: frameworkCode,
-              edition_code: editionCode,
-              node_code: nodeCode,
-              national_indicator_code: nationalIndicatorCode,
-              mapping_type: "PRIMARY",
-              is_active: true,
-            },
-          });
+          try {
+            await mastersService.createFrameworkIndicatorMapping({
+              locale: language,
+              body: {
+                framework_code: frameworkCode,
+                edition_code: editionCode,
+                node_code: nodeCode,
+                national_indicator_code: nationalIndicatorCode,
+                mapping_type: "PRIMARY",
+                is_active: true,
+              },
+            });
+          } catch (error) {
+            mappingWarning = `Indicator saved, but framework mapping was not saved: ${safeApiMessage(error)}`;
+          }
         }
 
         setSelectedIndicatorCode(nationalIndicatorCode || row?.national_indicator_code || selectedIndicatorCode);
-        return;
+        return { mappingWarning };
       }
 
       if (entity === "version") {
@@ -1182,7 +1190,7 @@ export function IndicatorManagementPage() {
             body: { ...body, is_current: isDeactivate ? false : body.is_current },
           });
         }
-        return;
+        return {};
       }
 
       if (entity === "metadata" || entity === "measure") {
@@ -1212,7 +1220,7 @@ export function IndicatorManagementPage() {
             body,
           });
         }
-        return;
+        return {};
       }
 
       if (entity === "global-mapping") {
@@ -1233,7 +1241,7 @@ export function IndicatorManagementPage() {
             is_active: currentDialog.mode === "map" ? true : !isDeactivate && readBoolean(formData, "is_active", true),
           },
         });
-        return;
+        return {};
       }
 
       if (entity === "source") {
@@ -1252,11 +1260,13 @@ export function IndicatorManagementPage() {
           },
         });
       }
+
+      return {};
     },
-    onSuccess: async () => {
+    onSuccess: async (result: IndicatorMutationResult) => {
       await invalidateIndicatorQueries();
       setMutationError(null);
-      setMutationMessage("Indicator setup saved. Latest API data is being refreshed.");
+      setMutationMessage(result.mappingWarning ?? "Indicator setup saved. Latest API data is being refreshed.");
       setDialog(null);
       window.setTimeout(() => setMutationMessage(null), 5000);
     },
