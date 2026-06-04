@@ -187,6 +187,16 @@ function apiRequestToSample(request: CollectionRequestItem): CollectionRequestSa
   };
 }
 
+const modalFieldLabelClass = "grid gap-1.5 text-xs font-semibold text-slate-700";
+const modalInputClass =
+  "h-10 border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalReadOnlyInputClass =
+  "h-10 border-slate-300 bg-slate-100 px-3 text-sm text-slate-600 shadow-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalSelectClass =
+  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+const modalTextareaClass =
+  "min-h-24 border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
+
 function Field({
   label,
   value,
@@ -199,12 +209,12 @@ function Field({
   onChange?: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
       <Input
         value={value ?? ""}
         readOnly={readOnly}
-        className={readOnly ? "bg-muted/60" : undefined}
+        className={readOnly ? modalReadOnlyInputClass : modalInputClass}
         onChange={(event) => onChange?.(event.target.value)}
       />
     </label>
@@ -223,10 +233,10 @@ function SelectField({
   onChange?: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <label className={modalFieldLabelClass}>
       {label}
       <select
-        className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs"
+        className={modalSelectClass}
         value={value}
         onChange={(event) => onChange?.(event.target.value)}
       >
@@ -389,7 +399,7 @@ function RequestModalView({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="request-modal-title">
-      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
         <div className="flex items-start justify-between border-b border-border/70 px-5 py-4">
           <div>
             <p className="text-[11px] font-semibold uppercase text-muted-foreground">Collection Requests</p>
@@ -479,9 +489,13 @@ function RequestModalView({
               </section>
 
               <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-3 max-lg:grid-cols-1">
-                <label className="grid gap-1 text-xs font-semibold">
+                <label className={modalFieldLabelClass}>
                   Request note
-                  <Textarea value={createForm.note} onChange={(event) => onCreateFormChange({ note: event.target.value })} />
+                  <Textarea
+                    value={createForm.note}
+                    onChange={(event) => onCreateFormChange({ note: event.target.value })}
+                    className={modalTextareaClass}
+                  />
                 </label>
                 <div className="rounded-md bg-muted/40 p-3 text-xs">
                   <p className="font-bold">Readiness checklist</p>
