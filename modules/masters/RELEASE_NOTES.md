@@ -4,7 +4,7 @@
 |---|---|
 | Module | Masters UI |
 | Status | MASTERS_CATEGORIZED_WORKSPACES_SAMPLE_DATA |
-| Last Updated | 2026-06-01 |
+| Last Updated | 2026-06-04 |
 
 ## v0.1.0
 - Created UI module context from ready Masters API contract.
@@ -32,3 +32,5 @@
 - Added Indicator Management Measures tab with DB v0.2-oriented measure defaults: decimal places, validation rule code, aggregation type, unit, value type, and required flag.
 - Updated Reference Masters stats to be table-specific instead of generic for every master.
 - Replaced remaining modal "Save draft" labels in Masters flows with "Save/Submit".
+- Fixed the Create indicator modal framework-edition selection so create mode starts from an available active edition and does not submit an invalid stale selector value.
+- Redesigned the Create indicator modal into a sectioned enterprise form with visible controls, required markers, field-level errors, status dropdown, color picker preview, and a stronger Save Indicator action.

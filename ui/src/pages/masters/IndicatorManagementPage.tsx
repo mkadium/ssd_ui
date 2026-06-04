@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
@@ -32,11 +32,11 @@ import {
   indicatorMappingNodeOptions,
   type MasterRow,
 } from "@/data/mastersManagement.sample";
+import { cn } from "@/lib/utils";
 import { useLanguage } from "@/providers/language-context";
 import { mastersService } from "@/services/mastersService";
 import type {
   IndicatorDetail,
-  FrameworkEditionListItem,
   IndicatorListItem,
   IndicatorVersionDetail,
   OfficerListItem,
@@ -53,6 +53,9 @@ type DialogState = {
   row?: MasterRow;
   entity?: DialogEntity;
 } | null;
+type IndicatorMutationResult = {
+  mappingWarning?: string;
+};
 
 const globalMappings: MasterRow[] = [];
 const globalIndicatorMappingOptions: MasterRow[] = [
@@ -160,16 +163,6 @@ function indicatorToRow(indicator: IndicatorListItem): MasterRow {
     status: indicator.status ?? "ACTIVE",
     color_value: indicator.color_value ?? undefined,
   };
-}
-
-function frameworkEditionToRows(items: FrameworkEditionListItem[]): MasterRow[] {
-  return items.map((item) => ({
-    id: `${item.framework_code}.${item.edition_code}`,
-    framework_code: item.framework_code,
-    edition_code: item.edition_code,
-    name: item.name,
-    status: item.status,
-  }));
 }
 
 function sourceToRow(source: SourceAssignmentListItem): MasterRow {
@@ -334,11 +327,39 @@ function RelatedTable({
   );
 }
 
-function SelectField({ label, value, options, name = label, required = false }: { label: string; value?: string; options: MasterRow[]; name?: string; required?: boolean }) {
+const formLabelClass = "text-xs font-semibold text-slate-700";
+const formControlClass =
+  "h-10 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
+const formErrorClass = "text-[11px] font-medium text-red-700";
+
+function FieldLabel({ label, required = false }: { label: string; required?: boolean }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold">
+    <span className={formLabelClass}>
       {label}
-      <select name={name} className="h-9 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required={required}>
+      {required ? <span className="ml-0.5 text-red-600" aria-label="required">*</span> : null}
+    </span>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  name = label,
+  required = false,
+  error,
+}: {
+  label: string;
+  value?: string;
+  options: MasterRow[];
+  name?: string;
+  required?: boolean;
+  error?: string;
+}) {
+  return (
+    <label className="grid min-w-0 gap-1.5">
+      <FieldLabel label={label} required={required} />
+      <select name={name} className={formControlClass} defaultValue={value} required={required} aria-invalid={Boolean(error)}>
         <option value="">Select</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
@@ -346,6 +367,7 @@ function SelectField({ label, value, options, name = label, required = false }: 
           </option>
         ))}
       </select>
+      {error ? <span className={formErrorClass}>{error}</span> : null}
     </label>
   );
 }
@@ -356,17 +378,26 @@ function TextField({
   name = label,
   required = false,
   className = "",
+  error,
 }: {
   label: string;
   value?: string;
   name?: string;
   required?: boolean;
   className?: string;
+  error?: string;
 }) {
   return (
-    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
-      {label}
-      <Input name={name} defaultValue={value ?? ""} required={required} />
+    <label className={cn("grid min-w-0 gap-1.5", className)}>
+      <FieldLabel label={label} required={required} />
+      <Input
+        name={name}
+        defaultValue={value ?? ""}
+        required={required}
+        aria-invalid={Boolean(error)}
+        className={formControlClass}
+      />
+      {error ? <span className={formErrorClass}>{error}</span> : null}
     </label>
   );
 }
@@ -377,42 +408,187 @@ function ReadOnlyField({
   name = label,
   required = false,
   className = "",
+  error,
 }: {
   label: string;
   value?: string;
   name?: string;
   required?: boolean;
   className?: string;
+  error?: string;
 }) {
   return (
-    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
-      {label}
-      <Input name={name} value={value ?? ""} readOnly required={required} className="bg-muted/60" />
+    <label className={cn("grid min-w-0 gap-1.5", className)}>
+      <FieldLabel label={label} required={required} />
+      <Input name={name} value={value ?? ""} readOnly required={required} aria-invalid={Boolean(error)} className={cn(formControlClass, "bg-slate-100 text-slate-600")} />
+      {error ? <span className={formErrorClass}>{error}</span> : null}
     </label>
   );
 }
 
+function ColorField({
+  label,
+  value,
+  name = label,
+  required = false,
+  className = "",
+  error,
+}: {
+  label: string;
+  value?: string;
+  name?: string;
+  required?: boolean;
+  className?: string;
+  error?: string;
+}) {
+  const initialValue = value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#1d5fd1";
+  const [colorValue, setColorValue] = useState(initialValue);
+
+  return (
+    <label className={cn("grid min-w-0 gap-1.5", className)}>
+      <FieldLabel label={label} required={required} />
+      <div className={cn(formControlClass, "flex items-center gap-2 p-1.5")}>
+        <input
+          type="color"
+          name={name}
+          value={colorValue}
+          onChange={(event) => setColorValue(event.target.value)}
+          className="h-7 w-9 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+          aria-label={label}
+        />
+        <span className="size-5 rounded border border-slate-300" style={{ backgroundColor: colorValue }} aria-hidden="true" />
+        <span className="font-mono text-xs text-slate-700">{colorValue}</span>
+      </div>
+      {error ? <span className={formErrorClass}>{error}</span> : null}
+    </label>
+  );
+}
+
+function FormSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/70 p-4">
+      <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 max-md:grid-cols-1">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+type FrameworkEditionOption = {
+  label: string;
+  value: string;
+  framework_code: string;
+  edition_code: string;
+  status: string;
+  is_active?: boolean;
+};
+
 function FrameworkEditionField({
   value,
   options,
+  isLoading = false,
+  error,
+  fieldError,
+  onRetry,
   className = "",
 }: {
   value?: string;
-  options: MasterRow[];
+  options: FrameworkEditionOption[];
+  isLoading?: boolean;
+  error?: string | null;
+  fieldError?: string;
+  onRetry?: () => void;
   className?: string;
 }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const isSearchable = options.length > 10;
+  const selectedValue = options.some((option) => option.value === value) ? value : "";
+  
+  const filteredOptions = useMemo(() => {
+    if (!isSearchable || !searchTerm) return options;
+    return options.filter((opt) => 
+      opt.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      opt.edition_code.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [options, searchTerm, isSearchable]);
+
+  if (error) {
+    return (
+      <div className={cn("grid min-w-0 gap-2", className)}>
+        <FieldLabel label="Framework edition" required />
+        <div className="rounded-md border border-red-200 bg-red-50 p-3">
+          <p className="text-red-700 text-xs font-medium mb-2">{error}</p>
+          {onRetry && (
+            <Button size="sm" variant="outline" onClick={onRetry} type="button">
+              Retry
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className={cn("grid min-w-0 gap-1.5", className)}>
+        <FieldLabel label="Framework edition" required />
+        <div className={cn(formControlClass, "flex items-center")}>
+          <Loader variant="inline" label="Loading" className="text-slate-500" />
+          <span className="ml-2 text-xs text-muted-foreground">Loading framework editions...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (options.length === 0) {
+    return (
+      <div className={cn("grid min-w-0 gap-1.5", className)}>
+        <FieldLabel label="Framework edition" required />
+        <div className={cn(formControlClass, "flex items-center text-slate-500")}>
+          No active framework editions available
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <label className={["grid min-w-0 gap-1 text-xs font-semibold", className].join(" ")}>
-      framework_edition
-      <select name="framework_edition_key" className="h-9 min-w-0 rounded-md border border-input bg-input/20 px-2 text-xs" defaultValue={value} required>
+    <div className={cn("grid min-w-0 gap-1.5", className)}>
+      <FieldLabel label="Framework edition" required />
+      {isSearchable && (
+        <input
+          type="text"
+          placeholder="Search framework editions..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className={formControlClass}
+        />
+      )}
+      <select 
+        name="framework_edition_key" 
+        className={formControlClass} 
+        defaultValue={selectedValue} 
+        required
+        aria-invalid={Boolean(fieldError)}
+      >
         <option value="">Select framework edition</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.framework_code} / {option.edition_code} / {option.name ?? option.status ?? ""}
+        {filteredOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label} ({option.edition_code})
           </option>
         ))}
       </select>
-    </label>
+      {isSearchable && filteredOptions.length === 0 && (
+        <p className="text-xs text-muted-foreground">No matches found</p>
+      )}
+      {fieldError ? <span className={formErrorClass}>{fieldError}</span> : null}
+    </div>
   );
 }
 
@@ -422,6 +598,9 @@ function IndicatorDialog({
   selectedVersion,
   selectedUnitCode,
   frameworkEditionOptions,
+  frameworkEditionsLoading,
+  frameworkEditionsError,
+  onRetryFrameworkEditions,
   organizationRowsData,
   officerRowsData,
   periodicityRowsData,
@@ -434,7 +613,10 @@ function IndicatorDialog({
   selectedIndicator?: MasterRow;
   selectedVersion?: MasterRow;
   selectedUnitCode: string;
-  frameworkEditionOptions: MasterRow[];
+  frameworkEditionOptions: FrameworkEditionOption[];
+  frameworkEditionsLoading?: boolean;
+  frameworkEditionsError?: string | null;
+  onRetryFrameworkEditions?: () => void;
   organizationRowsData: MasterRow[];
   officerRowsData: MasterRow[];
   periodicityRowsData: MasterRow[];
@@ -443,6 +625,12 @@ function IndicatorDialog({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setFieldErrors({});
+  }, [dialog?.mode, dialog?.entity, dialog?.title]);
+
   if (!dialog) return null;
 
   const isDelete = dialog.mode === "delete";
@@ -456,26 +644,69 @@ function IndicatorDialog({
   const isSourceForm = isFormMode && entity === "source";
   const activeFrameworkCode = row?.framework_code ?? selectedIndicator?.framework_code ?? "SDG_NIF";
   const activeEditionCode = row?.edition_code ?? selectedIndicator?.edition_code ?? "SDG_NIF_2025";
-  const activeFrameworkEditionKey = `${activeFrameworkCode}.${activeEditionCode}`;
+  const activeFrameworkEditionKey =
+    dialog.mode === "create" && entity === "indicator"
+      ? frameworkEditionOptions[0]?.value
+      : activeEditionCode;
   const activeIndicatorCode = row?.national_indicator_code ?? selectedIndicator?.national_indicator_code ?? "";
   const activeVersionCode = row?.version_code ?? selectedVersion?.version_code ?? selectedIndicator?.current_version_code ?? "";
   const defaultVersionNumber = row?.version_number ?? "1";
   const defaultVersionCode = row?.version_code ?? buildVersionCode(activeIndicatorCode, Number.parseInt(defaultVersionNumber, 10) || 1);
 
+  const validateIndicatorForm = (formData: FormData) => {
+    const nextErrors: Record<string, string> = {};
+
+    if (!readString(formData, "framework_edition_key")) {
+      nextErrors.framework_edition_key = "Select a framework edition.";
+    }
+
+    if (!readString(formData, "name")) {
+      nextErrors.name = "Enter an indicator name.";
+    }
+
+    if (!readString(formData, "national_indicator_code")) {
+      nextErrors.national_indicator_code = "Enter a national indicator code.";
+    }
+
+    return nextErrors;
+  };
+
+  const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (isIndicatorForm) {
+      const nextErrors = validateIndicatorForm(new FormData(event.currentTarget));
+
+      setFieldErrors(nextErrors);
+
+      if (Object.keys(nextErrors).length > 0) {
+        event.preventDefault();
+        return;
+      }
+    }
+
+    onSubmit(event);
+  };
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="indicator-dialog-title">
-      <form onSubmit={onSubmit} className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-md bg-card shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4">
+      <form
+        onSubmit={handleFormSubmit}
+        noValidate={isIndicatorForm}
+        className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5">
           <div>
-            <p className="text-[11px] font-semibold uppercase text-muted-foreground">Indicator management</p>
-            <h2 id="indicator-dialog-title" className="text-xl font-bold">{dialog.title}</h2>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Indicator management</p>
+            <h2 id="indicator-dialog-title" className="mt-1 text-xl font-semibold text-slate-950">{dialog.title}</h2>
+            {isIndicatorForm ? (
+              <p className="mt-1 text-sm text-slate-600">Create the base indicator record and its classification context.</p>
+            ) : null}
           </div>
-          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close" className="text-slate-500 hover:bg-slate-100 hover:text-slate-900">
             <X aria-hidden="true" className="size-4" />
           </Button>
         </div>
 
-        <div className="overflow-y-auto p-5">
+        <div className="overflow-y-auto bg-white p-6">
           {dialog.mode === "view" && row ? (
             <dl className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
               {Object.entries(row).filter(([key]) => key !== "id").map(([key, value]) => (
@@ -498,19 +729,63 @@ function IndicatorDialog({
 
           {isIndicatorForm ? (
             <div className="grid gap-4">
-              <div className="grid grid-cols-6 gap-3 max-lg:grid-cols-2">
-                <FrameworkEditionField value={activeFrameworkEditionKey} options={frameworkEditionOptions} className="col-span-3 max-lg:col-span-2" />
-                <TextField label="national_indicator_code" value={row?.national_indicator_code} className="col-span-2 max-lg:col-span-1" />
-                <TextField label="indicator_number" value={row?.indicator_number} className="col-span-1 max-lg:col-span-1" />
-              </div>
-              <TextField label="name" value={row?.name} required />
-              <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-                <TextField label="owning_unit_code" value={row?.owning_unit_code ?? (selectedUnitCode || "SDG")} />
-                <SelectField label="framework_node" name="node_code" value={row?.mapped_node_code} options={indicatorMappingNodeOptions} />
-                <TextField label="status" value={row?.status ?? "ACTIVE"} />
-                <TextField label="color_value" value={row?.color_value} />
-              </div>
-              <div className="rounded-md bg-accent px-3 py-2 text-xs text-accent-foreground">
+              <FormSection title="Indicator Information">
+                <FrameworkEditionField 
+                  value={activeFrameworkEditionKey} 
+                  options={frameworkEditionOptions} 
+                  isLoading={frameworkEditionsLoading}
+                  error={frameworkEditionsError}
+                  fieldError={fieldErrors.framework_edition_key}
+                  onRetry={onRetryFrameworkEditions}
+                  className="max-md:col-span-1" 
+                />
+                <TextField
+                  label="National indicator code"
+                  name="national_indicator_code"
+                  value={row?.national_indicator_code}
+                  required
+                  error={fieldErrors.national_indicator_code}
+                />
+                <TextField
+                  label="Indicator number"
+                  name="indicator_number"
+                  value={row?.indicator_number}
+                />
+                <TextField
+                  label="Indicator name"
+                  name="name"
+                  value={row?.name}
+                  required
+                  error={fieldErrors.name}
+                />
+              </FormSection>
+
+              <FormSection title="Classification">
+                <TextField
+                  label="Owning unit code"
+                  name="owning_unit_code"
+                  value={row?.owning_unit_code ?? (selectedUnitCode || "SDG")}
+                />
+                <SelectField
+                  label="Framework node"
+                  name="node_code"
+                  value={row?.mapped_node_code}
+                  options={indicatorMappingNodeOptions}
+                />
+                <SelectField
+                  label="Status"
+                  name="status"
+                  value={row?.status ?? "ACTIVE"}
+                  options={[{ id: "ACTIVE" }, { id: "DRAFT" }, { id: "RETIRED" }]}
+                />
+                <ColorField
+                  label="Color value"
+                  name="color_value"
+                  value={row?.color_value}
+                />
+              </FormSection>
+
+              <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-900">
                 If a framework node is selected, the UI also submits the framework-indicator mapping after saving the indicator.
               </div>
             </div>
@@ -591,12 +866,22 @@ function IndicatorDialog({
 
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-border/70 bg-muted/40 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-6 py-4">
           {errorMessage ? <span className="mr-auto text-xs font-semibold text-red-700">{errorMessage}</span> : null}
-          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting} className="h-9 border-slate-300 bg-white px-4 text-sm text-slate-700 hover:bg-slate-100">
+            Cancel
+          </Button>
           {dialog.mode !== "view" ? (
-            <Button type="submit" variant={isDelete ? "destructive" : "default"} disabled={isSubmitting}>
-              {isSubmitting ? "Saving..." : isDelete ? "Deactivate" : "Save/Submit"}
+            <Button
+              type="submit"
+              variant={isDelete ? "destructive" : "default"}
+              disabled={isSubmitting}
+              className={cn(
+                "h-9 px-4 text-sm font-semibold shadow-sm",
+                isDelete ? "" : "bg-primary text-white hover:bg-primary/90",
+              )}
+            >
+              {isSubmitting ? "Saving..." : isDelete ? "Deactivate" : isIndicatorForm ? "Save Indicator" : "Save/Submit"}
             </Button>
           ) : null}
         </div>
@@ -652,21 +937,39 @@ export function IndicatorManagementPage() {
     [indicatorsQuery.data],
   );
   const nationalIndicatorRows = liveNationalIndicatorRows;
-  const frameworkEditionOptions = useMemo(() => {
-    const options = frameworkEditionToRows(frameworkEditionsQuery.data?.data ?? []);
-    const optionKeys = new Set(options.map((option) => option.id));
+  
+  const frameworkEditionOptions = useMemo((): FrameworkEditionOption[] => {
+    // Filter active framework editions from API response
+    const activeFrameworkEditions = (frameworkEditionsQuery.data?.data ?? []).filter(
+      (item) => item.status === "ACTIVE" && (item.is_active !== false)
+    );
+    
+    // Convert to FrameworkEditionOption format
+    const options: FrameworkEditionOption[] = activeFrameworkEditions.map((item) => ({
+      label: item.name,
+      value: item.edition_code,
+      framework_code: item.framework_code,
+      edition_code: item.edition_code,
+      status: item.status,
+      is_active: item.is_active,
+    }));
+    
+    // Keep track of existing options to avoid duplicates
+    const existingValues = new Set(options.map((opt) => opt.value));
 
+    // Add fallback framework editions from indicators if not already present
     for (const indicator of nationalIndicatorRows) {
       if (indicator.framework_code && indicator.edition_code) {
-        const id = `${indicator.framework_code}.${indicator.edition_code}`;
-        if (!optionKeys.has(id)) {
+        if (!existingValues.has(indicator.edition_code)) {
           options.push({
-            id,
+            label: `${indicator.framework_code} / ${indicator.edition_code}`,
+            value: indicator.edition_code,
             framework_code: indicator.framework_code,
             edition_code: indicator.edition_code,
-            name: id,
+            status: "ACTIVE",
+            is_active: true,
           });
-          optionKeys.add(id);
+          existingValues.add(indicator.edition_code);
         }
       }
     }
@@ -791,7 +1094,7 @@ export function IndicatorManagementPage() {
       const row = currentDialog.row;
       const isDeactivate = currentDialog.mode === "delete";
       const frameworkEditionKey = readString(formData, "framework_edition_key");
-      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.id === frameworkEditionKey);
+      const selectedFrameworkEdition = frameworkEditionOptions.find((option) => option.value === frameworkEditionKey);
       const frameworkCode =
         selectedFrameworkEdition?.framework_code ||
         readString(formData, "framework_code") ||
@@ -834,22 +1137,27 @@ export function IndicatorManagementPage() {
         }
 
         const nodeCode = readString(formData, "node_code");
+        let mappingWarning: string | undefined;
         if (!isDeactivate && nodeCode && nationalIndicatorCode) {
-          await mastersService.createFrameworkIndicatorMapping({
-            locale: language,
-            body: {
-              framework_code: frameworkCode,
-              edition_code: editionCode,
-              node_code: nodeCode,
-              national_indicator_code: nationalIndicatorCode,
-              mapping_type: "PRIMARY",
-              is_active: true,
-            },
-          });
+          try {
+            await mastersService.createFrameworkIndicatorMapping({
+              locale: language,
+              body: {
+                framework_code: frameworkCode,
+                edition_code: editionCode,
+                node_code: nodeCode,
+                national_indicator_code: nationalIndicatorCode,
+                mapping_type: "PRIMARY",
+                is_active: true,
+              },
+            });
+          } catch (error) {
+            mappingWarning = `Indicator saved, but framework mapping was not saved: ${safeApiMessage(error)}`;
+          }
         }
 
         setSelectedIndicatorCode(nationalIndicatorCode || row?.national_indicator_code || selectedIndicatorCode);
-        return;
+        return { mappingWarning };
       }
 
       if (entity === "version") {
@@ -882,7 +1190,7 @@ export function IndicatorManagementPage() {
             body: { ...body, is_current: isDeactivate ? false : body.is_current },
           });
         }
-        return;
+        return {};
       }
 
       if (entity === "metadata" || entity === "measure") {
@@ -912,7 +1220,7 @@ export function IndicatorManagementPage() {
             body,
           });
         }
-        return;
+        return {};
       }
 
       if (entity === "global-mapping") {
@@ -933,7 +1241,7 @@ export function IndicatorManagementPage() {
             is_active: currentDialog.mode === "map" ? true : !isDeactivate && readBoolean(formData, "is_active", true),
           },
         });
-        return;
+        return {};
       }
 
       if (entity === "source") {
@@ -952,11 +1260,13 @@ export function IndicatorManagementPage() {
           },
         });
       }
+
+      return {};
     },
-    onSuccess: async () => {
+    onSuccess: async (result: IndicatorMutationResult) => {
       await invalidateIndicatorQueries();
       setMutationError(null);
-      setMutationMessage("Indicator setup saved. Latest API data is being refreshed.");
+      setMutationMessage(result.mappingWarning ?? "Indicator setup saved. Latest API data is being refreshed.");
       setDialog(null);
       window.setTimeout(() => setMutationMessage(null), 5000);
     },
@@ -1281,6 +1591,9 @@ export function IndicatorManagementPage() {
         selectedVersion={currentVersion}
         selectedUnitCode={selectedUnitCode}
         frameworkEditionOptions={frameworkEditionOptions}
+        frameworkEditionsLoading={frameworkEditionsQuery.isFetching}
+        frameworkEditionsError={frameworkEditionsQuery.error ? safeApiMessage(frameworkEditionsQuery.error) : null}
+        onRetryFrameworkEditions={() => frameworkEditionsQuery.refetch()}
         organizationRowsData={organizationRowsData}
         officerRowsData={officerRowsData}
         periodicityRowsData={periodicityRowsData}
