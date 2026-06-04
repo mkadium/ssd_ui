@@ -129,7 +129,7 @@ function toFrameworkEdition(item: Record<string, unknown>) {
 
 function getParentByChild(relationships: FrameworkHierarchyDetail["relationships"]) {
   return new Map(
-    relationships
+    (relationships ?? [])
       .filter((relationship) => relationship.relationship_type === "PARENT_CHILD")
       .map((relationship) => [
         relationship.child_node_code,
@@ -144,6 +144,7 @@ function getNodeIndicatorCount() {
 
 function toFrameworkNodes(hierarchy?: FrameworkHierarchyDetail): FrameworkNode[] {
   if (!hierarchy) return sampleFrameworkNodes;
+  if (!hierarchy.nodes?.length) return [];
 
   const parentByChild = getParentByChild(hierarchy.relationships);
 
@@ -162,7 +163,7 @@ function toFrameworkLevels(
   hierarchy: FrameworkHierarchyDetail | undefined,
   nodes: FrameworkNode[],
 ): FrameworkLevel[] {
-  if (!hierarchy) return sampleFrameworkLevels;
+  if (!hierarchy?.levels?.length) return sampleFrameworkLevels;
 
   return hierarchy.levels.map((level) => ({
     level_code: level.level_code,
