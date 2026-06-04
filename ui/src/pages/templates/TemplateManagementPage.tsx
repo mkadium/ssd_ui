@@ -39,11 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { dimensionMembers } from "@/data/dimensionsManagement.sample";
 import { nationalIndicatorOptions, unitOptions } from "@/data/mastersManagement.sample";
 import {
-  templateAxes,
   templateDefinitions,
-  templateMeasures,
-  templateValidationRules,
-  templateVersions,
   type TemplateDefinitionSample,
   type TemplateStatus,
 } from "@/data/templatesManagement.sample";
@@ -359,6 +355,14 @@ function numberFromRecord(record: Record<string, unknown>, key: string, fallback
 function stringFromRecord(record: Record<string, unknown>, key: string) {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function displayRecordValue(record: Record<string, unknown> | undefined, key: string, fallback = "-") {
+  if (!record) return fallback;
+  const value = record[key];
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "boolean") return value ? "YES" : "NO";
+  return String(value);
 }
 
 function canvasCellsFromRenderContract(contract?: { render_elements?: Array<Record<string, unknown>> }) {
@@ -1792,11 +1796,31 @@ export function TemplateManagementPage() {
     queryFn: () => templatesService.getRenderContract({ versionCode: activeVersionCode, locale: language, unitCode: templatesUnitCode }),
     enabled: Boolean(activeVersionCode),
   });
+  const renderContract = renderContractQuery.data?.data;
+  const contractVersion = renderContract?.version;
+  const contractAxes = renderContract?.axes ?? [];
+  const contractAxisMembers = renderContract?.axis_members ?? [];
+  const contractMeasures = renderContract?.measures ?? [];
+  const contractCells = renderContract?.cells ?? [];
+  const contractCellAxisMembers = renderContract?.cell_axis_members ?? [];
+  const contractBindingGroups = renderContract?.binding_groups ?? [];
+  const contractRenderElements = renderContract?.render_elements ?? [];
+  const contractValidationRuleRefs = renderContract?.validation_rule_refs ?? [];
+  const contractDataEntryBindings = renderContract?.data_entry_cell_bindings ?? [];
+  const contractSectionCounts = [
+    ["templates.template_axes", contractAxes.length],
+    ["templates.template_axis_members", contractAxisMembers.length],
+    ["templates.template_measures", contractMeasures.length],
+    ["templates.template_cells", contractCells.length],
+    ["templates.template_cell_axis_members", contractCellAxisMembers.length],
+    ["templates.template_binding_groups", contractBindingGroups.length],
+    ["templates.template_render_elements", contractRenderElements.length],
+    ["templates.template_validation_rule_refs", contractValidationRuleRefs.length],
+    ["templates.data_entry_cell_bindings", contractDataEntryBindings.length],
+  ];
+  const axisMemberCount = (axisCode: string) =>
+    contractAxisMembers.filter((member) => displayRecordValue(member, "axis_code") === axisCode).length;
   const canvasDisplayCells = cells;
-  const selectedVersion = templateVersions.find((version) => version.version_code === selectedTemplate.current_version_code) ?? templateVersions[0];
-  const axesForVersion = templateAxes.filter((axis) => axis.version_code === selectedVersion.version_code);
-  const measuresForVersion = templateMeasures.filter((measure) => measure.version_code === selectedVersion.version_code);
-  const rulesForVersion = templateValidationRules.filter((rule) => rule.version_code === selectedVersion.version_code);
   const selectedMeasure = measureBindingOptions.find((measure) => measure.code === selectedMeasureCode) ?? measureBindingOptions[0];
   const generatedRows = getMembersForObject("GEOGRAPHY", geographyScope).length;
   const generatedColumns = getMembersForObject("TIME_PERIOD").length * getMembersForObject("AREA_TYPE").length * getMembersForObject("GENDER").length;
@@ -1822,8 +1846,6 @@ export function TemplateManagementPage() {
   const statCards = [
     { label: "Templates", value: templates.length, helper: `${templates.filter((item) => item.status === "ACTIVE").length} active`, detail: "Definitions by selected unit" },
     { label: "Drafts", value: templates.filter((item) => item.status === "DRAFT").length, helper: "Inactive until publish", detail: "Safe working copies" },
-    { label: "Generated cells", value: generatedRows * generatedColumns, helper: `${generatedRows} rows x ${generatedColumns} columns`, detail: "From dimension bindings" },
-    { label: "Bound objects", value: boundObjects.length, helper: `${rulesForVersion.length} rules available`, detail: "Axes, measure, indicator" },
   ];
 
   const templateJson = useMemo(() => {
@@ -4814,19 +4836,25 @@ export function TemplateManagementPage() {
               <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-sm font-bold">Version</p>
-                  <p className="mt-1 font-mono text-[11px]">{selectedVersion.version_code}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{selectedVersion.title}</p>
+                  <p className="mt-1 font-mono text-[11px]">{displayRecordValue(contractVersion, "version_code", activeVersionCode || "-")}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{displayRecordValue(contractVersion, "title")}</p>
                 </div>
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-sm font-bold">Mapped indicator</p>
-                  <p className="mt-1 font-mono text-[11px]">{selectedTemplate.mapped_indicator_code} / {selectedTemplate.mapped_global_indicator_code}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{selectedTemplate.mapped_indicator_name}</p>
+                  <p className="mt-1 font-mono text-[11px]">{displayRecordValue(contractVersion, "indicator_version_code")}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{displayRecordValue(contractVersion, "template_code")}</p>
                 </div>
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-sm font-bold">Live generated contract</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{boundObjects.length} bound objects / {generatedRows * generatedColumns} generated cells.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{contractBindingGroups.length} groups / {contractCells.length} cells / {contractRenderElements.length} render elements.</p>
                 </div>
               </div>
+
+              {!renderContractQuery.isFetching && !renderContract ? (
+                <div className="rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  No live render-contract data returned for this template version.
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-2 gap-4 max-xl:grid-cols-1">
                 <Table>
@@ -4839,21 +4867,25 @@ export function TemplateManagementPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(boundObjects.length ? boundObjects : axesForVersion.map((axis) => ({
-                      code: axis.axis_code as BindingObjectCode,
-                      label: axis.axis_code,
-                      type: "Dimension" as HeaderType,
-                      alignment: axis.axis_role === "ROW" ? "row" as const : "column" as const,
-                      range: axis.axis_role,
-                      memberCount: axis.axis_depth,
-                    }))).map((axis) => (
-                      <TableRow key={axis.code}>
-                        <TableCell className="font-mono text-[11px]">{axis.label}</TableCell>
-                        <TableCell>{axis.alignment}</TableCell>
-                        <TableCell>{axis.range}</TableCell>
-                        <TableCell>{axis.memberCount}</TableCell>
+                    {contractAxes.map((axis) => {
+                      const axisCode = displayRecordValue(axis, "axis_code");
+
+                      return (
+                        <TableRow key={axisCode}>
+                          <TableCell className="font-mono text-[11px]">{displayRecordValue(axis, "label", axisCode)}</TableCell>
+                          <TableCell>{displayRecordValue(axis, "axis_role")}</TableCell>
+                          <TableCell>{displayRecordValue(axis, "selected_range", displayRecordValue(axis, "dimension_code"))}</TableCell>
+                          <TableCell>{axisMemberCount(axisCode)}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {!contractAxes.length ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
+                          No live axes returned by the render-contract API.
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    ) : null}
                   </TableBody>
                 </Table>
 
@@ -4867,20 +4899,21 @@ export function TemplateManagementPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {measuresForVersion.map((measure) => (
-                      <TableRow key={measure.measure_code}>
-                        <TableCell className="font-mono text-[11px]">{measure.measure_code}</TableCell>
-                        <TableCell>{measure.value_type}</TableCell>
-                        <TableCell>{measure.unit_code}</TableCell>
-                        <TableCell>{measure.is_required ? "YES" : "NO"}</TableCell>
+                    {contractMeasures.map((measure) => (
+                      <TableRow key={displayRecordValue(measure, "measure_code")}>
+                        <TableCell className="font-mono text-[11px]">{displayRecordValue(measure, "measure_code")}</TableCell>
+                        <TableCell>{displayRecordValue(measure, "value_type")}</TableCell>
+                        <TableCell>{displayRecordValue(measure, "unit_code", displayRecordValue(measure, "measure_unit_code"))}</TableCell>
+                        <TableCell>{displayRecordValue(measure, "is_required")}</TableCell>
                       </TableRow>
                     ))}
-                    <TableRow>
-                      <TableCell className="font-mono text-[11px]">GENERATED_INPUT_CELLS</TableCell>
-                      <TableCell>NUMERIC</TableCell>
-                      <TableCell>PERCENT</TableCell>
-                      <TableCell>{generatedRows * generatedColumns}</TableCell>
-                    </TableRow>
+                    {!contractMeasures.length ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
+                          No live measures returned by the render-contract API.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               </div>
@@ -4889,22 +4922,14 @@ export function TemplateManagementPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Contract table</TableHead>
-                    <TableHead>What this designer creates</TableHead>
+                    <TableHead>Live row count</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {[
-                    ["templates.template_axes", "GEOGRAPHY row axis; TIME_PERIOD, AREA_TYPE, GENDER column axes; indicator context axis."],
-                    ["templates.template_axis_members", "Selected geography states, time periods, area type members, and gender members."],
-                    ["templates.template_measures", "INDICATOR_VALUE numeric percent measure."],
-                    ["templates.template_cells", `${generatedRows * generatedColumns} editable required cells for NIF_1_2_1_V1.`],
-                    ["templates.template_cell_axis_members", "Each generated cell is linked to geography, time, area type, and gender members."],
-                    ["templates.template_render_elements", "Merged title, time headers, area headers, gender headers, row labels, and input cells."],
-                    ["templates.template_validation_rule_refs", "Required, non-negative numeric, and two-decimal validation references."],
-                  ].map(([table, purpose]) => (
+                  {contractSectionCounts.map(([table, count]) => (
                     <TableRow key={table}>
                       <TableCell className="font-mono text-[11px]">{table}</TableCell>
-                      <TableCell>{purpose}</TableCell>
+                      <TableCell>{count} live row(s)</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
