@@ -6,137 +6,143 @@ import {
   LockKeyhole,
   UserRound,
 } from "lucide-react";
-import { useState } from "react";
-import {
-  useForm,
-  type FieldErrors,
-  type Resolver,
-  type SubmitHandler,
-} from "react-hook-form";
-import { Navigate, useNavigate } from "react-router-dom";
-import { z } from "zod";
+import { useState, type FormEvent } from "react";
+// import {
+//   useForm,
+//   type FieldErrors,
+//   type Resolver,
+//   type SubmitHandler,
+// } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
+// import { z } from "zod";
 
-import { ApiError } from "@/api/client";
+// import { ApiError } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader } from "@/components/ui/loader";
-import { useAuth } from "@/hooks/useAuth";
-import { useLogin } from "@/hooks/useLogin";
-import { getDefaultDashboardPath } from "@/lib/authRedirect";
+// import { Loader } from "@/components/ui/loader";
+// import { useAuth } from "@/hooks/useAuth";
+// import { useLogin } from "@/hooks/useLogin";
+// import { getDefaultDashboardPath } from "@/lib/authRedirect";
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const loginSchema = z.object({
-  login_identifier: z
-    .string()
-    .trim()
-    .min(1, "Login identifier is required.")
-    .max(255, "Login identifier must be 255 characters or less."),
-  password: z.string().min(1, "Password is required."),
-  unit_id: z
-    .string()
-    .trim()
-    .optional()
-    .refine((value) => !value || uuidPattern.test(value), "Unit ID must be a valid UUID."),
-});
-
-type LoginFormValues = z.infer<typeof loginSchema>;
-
-const loginResolver: Resolver<LoginFormValues> = async (values) => {
-  const result = loginSchema.safeParse(values);
-
-  if (result.success) {
-    return {
-      values: result.data,
-      errors: {},
-    };
-  }
-
-  const errors = result.error.issues.reduce<FieldErrors<LoginFormValues>>(
-    (fieldErrors, issue) => {
-      const fieldName = issue.path[0] as keyof LoginFormValues | undefined;
-
-      if (fieldName) {
-        fieldErrors[fieldName] = {
-          type: issue.code,
-          message: issue.message,
-        };
-      }
-
-      return fieldErrors;
-    },
-    {},
-  );
-
-  return {
-    values: {},
-    errors,
-  };
-};
-
-function getLoginErrorMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.status === 0) {
-      return "Unable to reach the API. Check server availability and CORS.";
-    }
-
-    if (error.status === 401) {
-      return "Invalid login credentials.";
-    }
-
-    if (error.status === 403) {
-      return "You do not have permission to access this portal.";
-    }
-
-    if (error.status === 422) {
-      return "Check the login fields and try again.";
-    }
-
-    if (error.status >= 500) {
-      return "Login is temporarily unavailable. Try again later.";
-    }
-
-    return "Login failed. Check credentials and try again.";
-  }
-
-  return "Login failed. Check credentials, API URL, and server availability.";
-}
+// const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+//
+// const loginSchema = z.object({
+//   login_identifier: z
+//     .string()
+//     .trim()
+//     .min(1, "Login identifier is required.")
+//     .max(255, "Login identifier must be 255 characters or less."),
+//   password: z.string().min(1, "Password is required."),
+//   unit_id: z
+//     .string()
+//     .trim()
+//     .optional()
+//     .refine((value) => !value || uuidPattern.test(value), "Unit ID must be a valid UUID."),
+// });
+//
+// type LoginFormValues = z.infer<typeof loginSchema>;
+//
+// const loginResolver: Resolver<LoginFormValues> = async (values) => {
+//   const result = loginSchema.safeParse(values);
+//
+//   if (result.success) {
+//     return {
+//       values: result.data,
+//       errors: {},
+//     };
+//   }
+//
+//   const errors = result.error.issues.reduce<FieldErrors<LoginFormValues>>(
+//     (fieldErrors, issue) => {
+//       const fieldName = issue.path[0] as keyof LoginFormValues | undefined;
+//
+//       if (fieldName) {
+//         fieldErrors[fieldName] = {
+//           type: issue.code,
+//           message: issue.message,
+//         };
+//       }
+//
+//       return fieldErrors;
+//     },
+//     {},
+//   );
+//
+//   return {
+//     values: {},
+//     errors,
+//   };
+// };
+//
+// function getLoginErrorMessage(error: unknown) {
+//   if (error instanceof ApiError) {
+//     if (error.status === 0) {
+//       return "Unable to reach the API. Check server availability and CORS.";
+//     }
+//
+//     if (error.status === 401) {
+//       return "Invalid login credentials.";
+//     }
+//
+//     if (error.status === 403) {
+//       return "You do not have permission to access this portal.";
+//     }
+//
+//     if (error.status === 422) {
+//       return "Check the login fields and try again.";
+//     }
+//
+//     if (error.status >= 500) {
+//       return "Login is temporarily unavailable. Try again later.";
+//     }
+//
+//     return "Login failed. Check credentials and try again.";
+//   }
+//
+//   return "Login failed. Check credentials, API URL, and server availability.";
+// }
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, roles, pages } = useAuth();
-  const loginMutation = useLogin();
+  // Auth is temporarily disabled. Restore these hooks when API login is enabled again.
+  // const { isAuthenticated, roles, pages } = useAuth();
+  // const loginMutation = useLogin();
   const [showPassword, setShowPassword] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<LoginFormValues>({
-    resolver: loginResolver,
-    defaultValues: {
-      login_identifier: "",
-      password: "",
-      unit_id: "",
-    },
-  });
+  // const {
+  //   register,
+  //   handleSubmit,
+  //   formState: { errors, isSubmitting },
+  // } = useForm<LoginFormValues>({
+  //   resolver: loginResolver,
+  //   defaultValues: {
+  //     login_identifier: "",
+  //     password: "",
+  //     unit_id: "",
+  //   },
+  // });
+  //
+  // if (isAuthenticated) {
+  //   return <Navigate to={getDefaultDashboardPath({ roles, pages })} replace />;
+  // }
+  //
+  // const onSubmit: SubmitHandler<LoginFormValues> = (values) => {
+  //   loginMutation.mutate(
+  //     {
+  //       login_identifier: values.login_identifier,
+  //       password: values.password,
+  //       unit_id: values.unit_id || null,
+  //     },
+  //     {
+  //       onSuccess: (data) =>
+  //         navigate(getDefaultDashboardPath(data), { replace: true }),
+  //     },
+  //   );
+  // };
 
-  if (isAuthenticated) {
-    return <Navigate to={getDefaultDashboardPath({ roles, pages })} replace />;
-  }
-
-  const onSubmit: SubmitHandler<LoginFormValues> = (values) => {
-    loginMutation.mutate(
-      {
-        login_identifier: values.login_identifier,
-        password: values.password,
-        unit_id: values.unit_id || null,
-      },
-      {
-        onSuccess: (data) =>
-          navigate(getDefaultDashboardPath(data), { replace: true }),
-      },
-    );
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    navigate("/dashboard/super-admin", { replace: true });
   };
 
   return (
@@ -190,7 +196,7 @@ export function LoginPage() {
             </label>
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="shrink-0 rounded-md border border-border bg-background p-4 max-sm:p-3 max-[380px]:p-2.5 [@media(max-height:680px)]:p-3">
+          <form onSubmit={onSubmit} className="shrink-0 rounded-md border border-border bg-background p-4 max-sm:p-3 max-[380px]:p-2.5 [@media(max-height:680px)]:p-3">
             <div className="grid gap-3 max-[380px]:gap-2 [@media(max-height:680px)]:gap-2">
               <label className="grid gap-1 text-sm font-semibold">
                 Login identifier
@@ -198,18 +204,16 @@ export function LoginPage() {
                   <UserRound aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     className="h-11 pl-10 [@media(max-height:680px)]:h-10"
-                    {...register("login_identifier")}
+                    name="login_identifier"
                     placeholder="Username, email, or mobile number"
                     autoComplete="username"
-                    aria-invalid={Boolean(errors.login_identifier)}
-                    aria-describedby={errors.login_identifier ? "login-identifier-error" : undefined}
                   />
                 </span>
-                {errors.login_identifier ? (
+                {/* {errors.login_identifier ? (
                   <span id="login-identifier-error" className="text-xs font-medium text-red-700">
                     {errors.login_identifier.message}
                   </span>
-                ) : null}
+                ) : null} */}
               </label>
 
               <label className="grid gap-1 text-sm font-semibold">
@@ -219,11 +223,9 @@ export function LoginPage() {
                   <Input
                     className="h-11 pl-10 pr-10 [@media(max-height:680px)]:h-10"
                     type={showPassword ? "text" : "password"}
-                    {...register("password")}
+                    name="password"
                     placeholder="Enter password"
                     autoComplete="current-password"
-                    aria-invalid={Boolean(errors.password)}
-                    aria-describedby={errors.password ? "password-error" : undefined}
                   />
                   <button
                     type="button"
@@ -234,49 +236,47 @@ export function LoginPage() {
                     {showPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
                   </button>
                 </span>
-                {errors.password ? (
+                {/* {errors.password ? (
                   <span id="password-error" className="text-xs font-medium text-red-700">
                     {errors.password.message}
                   </span>
-                ) : null}
+                ) : null} */}
               </label>
 
               <label className="grid gap-1 text-sm font-semibold">
                 Unit ID <span className="text-xs font-normal text-muted-foreground">(optional)</span>
                 <Input
                   className="h-11 [@media(max-height:680px)]:h-10"
-                  {...register("unit_id")}
+                  name="unit_id"
                   placeholder="Only if a specific unit context is required"
-                  aria-invalid={Boolean(errors.unit_id)}
-                  aria-describedby={errors.unit_id ? "unit-id-error" : undefined}
                 />
-                {errors.unit_id ? (
+                {/* {errors.unit_id ? (
                   <span id="unit-id-error" className="text-xs font-medium text-red-700">
                     {errors.unit_id.message}
                   </span>
-                ) : null}
+                ) : null} */}
               </label>
             </div>
 
-            {loginMutation.isError && (
+            {/* {loginMutation.isError && (
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
                 {getLoginErrorMessage(loginMutation.error)}
               </p>
-            )}
+            )} */}
 
             <div className="mt-3 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-stretch max-[380px]:mt-2">
               <p className="text-xs text-muted-foreground max-[380px]:hidden">
                 Passwords and tokens are not displayed.
               </p>
-              <Button type="submit" className="h-11 shrink-0 px-5 [@media(max-height:680px)]:h-10" disabled={loginMutation.isPending || isSubmitting}>
-                {loginMutation.isPending ? (
+              <Button type="submit" className="h-11 shrink-0 px-5 [@media(max-height:680px)]:h-10">
+                {/* {loginMutation.isPending ? (
                   <Loader variant="inline" label="Signing in" />
-                ) : (
+                ) : ( */}
                   <>
                     Sign in
                     <ArrowRight aria-hidden="true" className="size-4" />
                   </>
-                )}
+                {/* )} */}
               </Button>
             </div>
           </form>
