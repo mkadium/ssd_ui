@@ -95,6 +95,18 @@ export type DimensionMemberRelationshipRequest = {
   is_active?: boolean;
 };
 
+export type DimensionMemberRelationshipItem = {
+  dimension_code?: string;
+  parent_member_code: string;
+  parent_member_name?: string | null;
+  child_member_code: string;
+  child_member_name?: string | null;
+  relationship_type?: string | null;
+  sort_order?: number | string | null;
+  status?: string | null;
+  is_active?: boolean | string | null;
+};
+
 export type DimensionMemberSetMemberItem = DimensionMemberItem & {
   set_code: string;
 };

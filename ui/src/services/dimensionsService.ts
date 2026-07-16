@@ -6,6 +6,7 @@ import type {
   DimensionDetailResponse,
   DimensionListResponse,
   DimensionMemberItem,
+  DimensionMemberRelationshipItem,
   DimensionMemberRollupRuleItem,
   DimensionMemberSetItem,
   DimensionMemberSetRequest,
@@ -204,6 +205,28 @@ export const dimensionsService = {
     return apiRequest<DimensionDetailResponse<Record<string, unknown>>>(
       `/dimensions/${encodeURIComponent(dimensionCode)}/member-relationships?${params.toString()}`,
       { method: "POST", json: body },
+    );
+  },
+
+  listMemberRelationships: async ({
+    dimensionCode,
+    locale,
+    limit = 500,
+    offset = 0,
+  }: {
+    dimensionCode: string;
+    locale: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<DimensionListResponse<DimensionMemberRelationshipItem>> => {
+    const params = new URLSearchParams({
+      locale,
+      limit: String(limit),
+      offset: String(offset),
+    });
+
+    return apiRequest<DimensionListResponse<DimensionMemberRelationshipItem>>(
+      `/dimensions/${encodeURIComponent(dimensionCode)}/member-relationships?${params.toString()}`,
     );
   },
 

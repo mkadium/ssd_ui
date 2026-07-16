@@ -338,10 +338,10 @@ function DimensionModalView({
                 ) : (
                   <Field label="dimension_code" value={selectedDimensionCode} readOnly />
                 )}
-                <Field label="member_code" value={modal === "add-child" ? "" : selectedMember?.member_code} required />
+                <Field label="member_code" value={modal === "create-root" || modal === "add-child" ? "" : selectedMember?.member_code} required />
                 <Field
                   label="parent_member_code"
-                  value={modal === "create-root" ? "ROOT" : modal === "add-child" ? selectedMember?.member_code : selectedMember?.parent_member_code ?? "ROOT"}
+                  value={modal === "create-root" ? "" : modal === "add-child" ? selectedMember?.member_code : selectedMember?.parent_member_code ?? ""}
                   readOnly={modal !== "edit-member"}
                 />
                 <Field label="external_code" value={modal === "add-child" ? "" : selectedMember?.external_code ?? undefined} />
@@ -512,6 +512,12 @@ export function DimensionsManagementPage() {
     enabled: Boolean(effectiveDimensionCode),
   });
 
+  const memberRelationshipsQuery = useQuery({
+    queryKey: ["dimensions", "member-relationships", effectiveDimensionCode, locale],
+    queryFn: () => dimensionsService.listMemberRelationships({ dimensionCode: effectiveDimensionCode, locale }),
+    enabled: Boolean(effectiveDimensionCode),
+  });
+
   const memberSetsQuery = useQuery({
     queryKey: ["dimensions", "member-sets", effectiveDimensionCode, locale],
     queryFn: () => dimensionsService.listMemberSets({ dimensionCode: effectiveDimensionCode, locale }),
@@ -545,9 +551,19 @@ export function DimensionsManagementPage() {
   });
 
   const selectedDimensionDetail = dimensionDetailQuery.data?.data ?? selectedDimension;
-  const membersForDimension: DimensionMemberItem[] = membersQuery.data?.data?.length
+  const rawMembersForDimension: DimensionMemberItem[] = membersQuery.data?.data?.length
     ? membersQuery.data.data
     : [];
+  const memberRelationships = memberRelationshipsQuery.data?.data ?? [];
+  const parentByChildMemberCode = new Map(
+    memberRelationships
+      .filter((relationship) => normalizeStatus(relationship.status ?? relationship.is_active) !== "RETIRED")
+      .map((relationship) => [relationship.child_member_code, relationship.parent_member_code]),
+  );
+  const membersForDimension: DimensionMemberItem[] = rawMembersForDimension.map((member) => ({
+    ...member,
+    parent_member_code: member.parent_member_code ?? parentByChildMemberCode.get(member.member_code) ?? null,
+  }));
   const selectedMember = membersForDimension.find((member) => member.member_code === selectedMemberCode) ?? membersForDimension[0];
   const memberSetsForDimension = memberSetsQuery.data?.data?.length
     ? memberSetsQuery.data.data
@@ -641,6 +657,7 @@ export function DimensionsManagementPage() {
   const primaryDataError = dimensionsQuery.error;
   const supplementalDataError =
     membersQuery.error ??
+    memberRelationshipsQuery.error ??
     memberSetsQuery.error ??
     geographyLevelsQuery.error ??
     geographiesQuery.error ??
@@ -655,6 +672,7 @@ export function DimensionsManagementPage() {
   const isInitialLoading =
     dimensionsQuery.isPending ||
     (Boolean(effectiveDimensionCode) && membersQuery.isPending) ||
+    (Boolean(effectiveDimensionCode) && memberRelationshipsQuery.isPending) ||
     memberSetsQuery.isPending ||
     geographyLevelsQuery.isPending ||
     geographiesQuery.isPending ||
@@ -814,6 +832,7 @@ export function DimensionsManagementPage() {
       queryClient.invalidateQueries({ queryKey: ["dimensions", "definitions"] }),
       queryClient.invalidateQueries({ queryKey: ["dimensions", "definition-detail"] }),
       queryClient.invalidateQueries({ queryKey: ["dimensions", "members"] }),
+      queryClient.invalidateQueries({ queryKey: ["dimensions", "member-relationships"] }),
       queryClient.invalidateQueries({ queryKey: ["dimensions", "member-sets"] }),
       queryClient.invalidateQueries({ queryKey: ["dimensions", "member-set-members"] }),
       queryClient.invalidateQueries({ queryKey: ["dimensions", "geographies"] }),
