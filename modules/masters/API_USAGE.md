@@ -6,7 +6,7 @@ Masters / Metadata UI
 
 ## Unit-Scoped Framework APIs
 
-WP-2026-011 requires Masters framework APIs to support public stable `unit_code`.
+WP-2026-012 requires Masters framework APIs to support public stable `unit_code`.
 
 Expected API usage after API handoff:
 
@@ -40,4 +40,3 @@ Create/update body must include `unit_code` until API confirms a token-derived a
 - UI must never pass internal `unit_id`.
 - UI must refresh Framework page data after unit switch.
 - UI must handle 400/404/409/422 errors with safe production messages.
-

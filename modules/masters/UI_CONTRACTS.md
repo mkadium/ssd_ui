@@ -10,7 +10,7 @@ UNIT_SCOPED_FRAMEWORK_OWNERSHIP_GOVERNED_PENDING_API
 
 ## Framework Management Contract
 
-The Framework Management screen must support unit-scoped framework editions after WP-2026-011 is implemented.
+The Framework Management screen must support unit-scoped framework editions after WP-2026-012 is implemented.
 
 Required screens/areas:
 
@@ -59,4 +59,3 @@ Validation:
 - Framework hierarchy tabs must show data only for the selected or derived unit.
 - Changing unit context must clear prior selected framework state and reload.
 - UI must use localized labels from API where available and stable codes as fallback.
-

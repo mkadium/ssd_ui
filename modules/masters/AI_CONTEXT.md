@@ -7,7 +7,7 @@ Masters / Metadata UI
 ## Related Work Packets
 
 - WP-2026-002: Master Metadata and i18n-Ready Schema Design
-- WP-2026-011: Unit-Scoped Framework Edition Ownership
+- WP-2026-012: Unit-Scoped Framework Edition Ownership
 
 ## Current Architecture
 
@@ -36,8 +36,7 @@ Masters / Metadata UI
 
 ## AI Warnings
 
-- Do not implement final API integration until WP-2026-011 DB and API contracts are ready.
+- Do not implement final API integration until WP-2026-012 DB and API contracts are ready.
 - Do not expose internal `unit_id` in UI routes, forms, or API query construction.
 - Do not treat active framework edition as global.
 - Do not hardcode SDG-only framework behavior.
-
