@@ -4,25 +4,25 @@
 Dimensions UI
 
 ## Status
-DIMENSIONS_MANAGEMENT_SAMPLE_DATA
+DIMENSION_LIBRARY_API_INTEGRATED
 
 ## Current Understanding
 - API contract: `ssd_api/modules/dimensions/API_CONTRACTS.md`.
 - API evidence: `DEV_AUTHENTICATED_ENDPOINT_EVIDENCE_CAPTURED`.
-- Implementation root: `ssd_ui/ui/src/`.
+- Implementation root: `ssd_ui/frontend/src/`.
 - Context root: `ssd_ui/modules/dimensions/`.
-- Current API surface is read-only.
-- Route implemented: `/dimensions`.
-- Current UI implementation: `ssd_ui/ui/src/pages/dimensions/DimensionsManagementPage.tsx`.
-- Sample data: `ssd_ui/ui/src/data/dimensionsManagement.sample.ts`.
+- Route implemented: `/dimensions/library`.
+- Current UI implementation: `ssd_ui/frontend/src/pages/dimensions/dimension-library-page.tsx`.
+- API client: `ssd_ui/frontend/src/api/dimensions.api.ts`.
 - Dimension Management is unit-scoped through the shared App Shell unit selector.
-- The screen uses local sample data shaped from the Dimensions API/DB contract; no live Dimensions API calls yet.
-- UI create/edit/delete/bulk upload controls are visual states only until governed Dimensions mutation APIs exist.
-- Current screen includes enriched dimension summary cards, a second-row searchable dimension selector beside the member hierarchy tree, a full-width selected-member panel, create-dimension modal state, root/child creation modal states, member table, rollup rules, member sets, geography records, time periods, dependency/usage panel, search, pagination affordance, and bulk upload/download format affordance.
-- DB v0.2 rollup sample UI is represented through `dimensionRollupRules` with `entry_mode`, `aggregation_method`, `measure_code`, `validation_rule_code`, and rollup children. This is UI-only until the Dimensions API exposes the documented rollup endpoint.
-- New root member creation allows editable `dimension_code` for new dimension drafts; child/edit flows keep dimension context locked to protect hierarchy consistency.
+- The screen uses live Dimensions API calls for stat cards, management rows, dimension details, members, relationships, member sets, rollups, and aliases.
+- UI create flows use governed Dimensions mutation APIs where available.
+- Current screen follows the Framework-style workflow pattern: KPI cards, filters, a single tabbed workflow card, and right-side drawer forms.
+- Tab sequence: Dimensions, Members, Hierarchy, Member Sets, Rollups, Aliases.
+- Geography and time-period specialized workflows are not separate left-nav pages yet; they should be added inside the Dimension Library workflow unless governance later approves separate pages.
 
 ## Scope
 - Dimension definitions, members, member sets, geographies, and time periods.
 - Use parent-child filters to render hierarchy browsers.
-- Do not implement CRUD/mutation behavior until governed API contracts exist.
+- Use stable codes only; do not expose internal IDs.
+- Keep dimensions as governed global/reference data. Unit selector may scope usage metrics only.

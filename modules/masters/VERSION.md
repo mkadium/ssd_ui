@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Module | Masters UI |
-| Current Version | v0.1.0 |
-| Status | MASTERS_CATEGORIZED_WORKSPACES_SAMPLE_DATA |
+| Current Version | v0.1.1 |
+| Status | MASTERS_UOM_UI_INTEGRATED |
 | Created Date | 2026-05-31 |
-| Last Updated | 2026-05-31 |
+| Last Updated | 2026-07-17 |
 
 ## Version History
 
@@ -17,3 +17,4 @@
 | v0.1.0 | 2026-05-31 | Implemented categorized Indicator Management and Reference Masters sample-data foundations and routes |
 | v0.1.0 | 2026-05-31 | Refined Masters UX for dynamic framework hierarchy, mapping drilldown, multi-source indicator assignments, Units master, active-version context, and table-specific stats |
 | v0.1.0 | 2026-05-31 | Added shared App Shell unit scope selector and clarified parent/root versus selected-node child creation |
+| v0.1.1 | 2026-07-17 | Integrated Unit of Measurement (UOM) Masters reference page with API list/create/update contracts |

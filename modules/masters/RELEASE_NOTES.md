@@ -3,8 +3,37 @@
 | Field | Value |
 |---|---|
 | Module | Masters UI |
-| Status | MASTERS_CATEGORIZED_WORKSPACES_SAMPLE_DATA |
-| Last Updated | 2026-06-01 |
+| Status | MASTERS_UOM_UI_INTEGRATED |
+| Last Updated | 2026-07-17 |
+
+## v0.1.1
+
+- Added Unit of Measurement (UOM) as a governed Masters reference page under `/masters/uom`.
+- Integrated UOM list/create/update through the shared Masters reference API client.
+- UOM page manages stable `uom_code`, localized name/description, symbol, type, sort order, and active state.
+- Fixed long UOM code/table overflow by truncating compact table cells and keeping full values available through tooltips and the detail panel.
+- Added dynamic Framework level navigation under the Framework module; labels load from the selected or derived unit's active hierarchy levels.
+- Implemented the dynamic Framework level page with active node browsing, KPI cards, search, grid/list views, color-aware cards, compact rows, and child counts from active relationships.
+- Dynamic Framework level pages keep indicator/readiness values pending until governed API mapping/coverage data is available.
+- Fixed Framework Editions table column compression by scoping compact Masters table rules to Masters reference tables and adding Framework-specific column widths.
+- Fixed Framework sidebar active-state behavior so the Framework admin page is not selected when a dynamic level page is active.
+- Added the first Indicator Library page using selected-unit Masters indicator APIs with search, status filter, compact table, and detail sections for versions, measures, sources, metadata, and mappings.
+- Redesigned Indicator Library into a full-width table with ministry/department, periodicity, status, and UOM filters plus a row-driven Details/Mapping workspace.
+- Changed Indicator Library row click behavior to open a separate main-content detail page with official metadata, metadata status, related hierarchy, and mapping sections.
+- Added base Indicator create drawer using the selected unit active framework/edition and improved source ministry/department display through organization hierarchy lookup.
+- Added dynamic indicator hierarchy navigation using framework mapping path data, parent node detail routing, target-row parent-detail selection, and node-based mapped indicator reads.
+- Updated dynamic Framework level pages to use API indicator counts, hide child counts on indicator-mapping/last levels, add dynamic parent filters, and show parent node codes for target-style rows.
+- Optimized Indicator Library table rendering to use enriched `/masters/indicators` summary fields instead of loading detail records for each visible row.
+- Simplified Indicator detail hierarchy hero to show only dynamic parent and mapped node labels without long descriptions.
+- Tightened parent framework node detail layout for 1366x768, removed child-node descriptions from the left list, and enabled mapped indicator click-through to Indicator Library detail.
+- Added explicit Indicator detail loading state and separated UOM from Measures in the Mapping tab.
+- Added available upsert/deactivate controls for framework mapping, global mapping, source assignment, and measure sections in Indicator detail.
+- Removed the separate Framework mapping section from Indicator detail and moved remaining mapping edits into compact right-side drawer forms.
+- Split Indicator Mapping source assignment from source officer recipient assignment to match the database model.
+- Changed Indicator Mapping drawers to fixed right-side forms with searchable dropdown inputs for global indicators, sources, officers, periodicities, UOMs, and measures.
+- Fixed Indicator Library source ministry/department filtering to use stable organization codes from the loaded source options.
+- Added Global Indicators under Indicator Management with list, search, status filter, detail panel, and right-drawer create/edit.
+- Verified production frontend build after UOM integration.
 
 ## v0.1.0
 - Created UI module context from ready Masters API contract.

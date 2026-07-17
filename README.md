@@ -12,7 +12,8 @@ Contains the unified portal UI, dashboard screens, CMS screens, admin screens, G
 
 - `.init/` contains AI bootstrap rules, agents, skills, MCPs, boundaries, prompts, and workflow.
 - `modules/` contains module context, UI contracts, page flows, component maps, API usage, release notes, dependencies, pending tasks, versions, known issues, and ownership.
-- `ui/` contains actual UI implementation code. The current Vite app scaffold is under `ui/src/` with shared React folders for assets, components, hooks, libraries, pages, routes, services, stores, and utilities.
+- `frontend/` contains the new active UI implementation code for direct screen-by-screen development.
+- `ui/` contains the previous Vite app scaffold/reference and should not be treated as the active implementation path unless governance/admin explicitly redirects work back to it.
 
 ## AI Bootstrap
 
@@ -47,26 +48,44 @@ Each UI module must maintain:
 
 ## Implementation Module Structure
 
-Actual UI code lives under:
+Active UI code lives under:
 
 ```text
-ssd_ui/ui/src/
+ssd_ui/frontend/src/
 ```
 
-Current scaffold:
+Current active scaffold:
 
 ```text
-ssd_ui/ui/src/assets/
-ssd_ui/ui/src/components/
-ssd_ui/ui/src/hooks/
-ssd_ui/ui/src/lib/
-ssd_ui/ui/src/pages/
-ssd_ui/ui/src/routes/
-ssd_ui/ui/src/services/
-ssd_ui/ui/src/stores/
-ssd_ui/ui/src/utils/
+ssd_ui/frontend/src/api/
+ssd_ui/frontend/src/assets/
+ssd_ui/frontend/src/components/
+ssd_ui/frontend/src/hooks/
+ssd_ui/frontend/src/layouts/
+ssd_ui/frontend/src/lib/
+ssd_ui/frontend/src/pages/
+ssd_ui/frontend/src/providers/
+ssd_ui/frontend/src/routes/
+ssd_ui/frontend/src/stores/
 ```
 
 Module behavior, contracts, page flows, component maps, API usage, and release context must still be tracked under `ssd_ui/modules/<module>/`.
 
-Do not place implementation code under `ssd_ui/modules/<module>/`, and do not create `ssd_ui/ui/modules/<module>/`.
+Do not place implementation code under `ssd_ui/modules/<module>/`, and do not create `ssd_ui/frontend/modules/<module>/`.
+
+## Frontend Development Direction
+
+Build screens directly in `ssd_ui/frontend/` one workflow at a time.
+
+Start with shell/navigation/theme, then implement:
+
+1. Auth/login and current profile.
+2. Dashboard shell and navigation review.
+3. Masters and dimensions.
+4. Templates and measure provider policy.
+5. Requests, measure assignments, and alerts.
+6. Data entry and ingestion.
+7. Validation.
+8. Review and approval.
+9. Published data and dashboard drilldowns.
+10. CMS/DMS when approved for implementation.

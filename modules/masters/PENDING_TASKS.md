@@ -1,21 +1,19 @@
 # PENDING TASKS
 
+## Masters Reference Pages
+
 | Task | Owner | Status | Target Version |
 |---|---|---|---|
-| Design Masters route/page plan | UI Team | STARTED | v0.1.0 |
-| Implement Framework Edition Setup sample-data screen | UI Team | DONE | v0.1.0 |
-| Implement Indicator Management sample-data screen | UI Team | DONE | v0.1.0 |
-| Implement Reference Masters sample-data screen | UI Team | DONE | v0.1.0 |
-| Refactor Masters screens to enterprise CRUD-first UX pattern | UI Team | DONE | v0.1.0 |
-| Categorize ready Masters DB objects across Framework, Indicator Management, and Reference Masters | UI Team | DONE | v0.1.0 |
-| Remove fixed Goal/Target assumptions from Masters UI flow | UI Team | DONE | v0.1.0 |
-| Add dynamic framework level/root/child hierarchy affordances | UI Team | DONE | v0.1.0 |
-| Add shared App Shell unit selector and remove duplicate Framework tree Add child action | UI Team | DONE | v0.1.0 |
-| Add framework mapping coverage drilldown and indicator detail modal | UI Team | DONE | v0.1.0 |
-| Move source organization/officer/cadence fields out of base indicator form into multi-source assignment forms | UI Team | DONE | v0.1.0 |
-| Add Units reference master and Measures unit-code relationship in sample UI | UI Team | DONE | v0.1.0 |
-| Add table-specific Reference Master stats | UI Team | DONE | v0.1.0 |
-| Implement read-only Masters screens | UI Team | STARTED | v0.1.0 |
-| Capture accessibility/responsive evidence | UI Team | STARTED | v0.1.0 |
-| Replace Framework Setup sample data with Masters API integration | UI Team | PENDING | v0.1.0 |
-| Replace categorized Masters sample data with Masters API integration | UI Team | PENDING | v0.1.0 |
+| Integrate Unit of Measurement (UOM) page with Masters API | UI | COMPLETE_LOCAL_BUILD_DEV_LIST_EVIDENCE | v0.1.1 |
+| Capture UOM create/update UI runtime evidence | UI/API/Testing | PENDING | v0.1.1 |
+
+## WP-2026-012 Unit-Scoped Framework Edition Ownership
+
+| Task | Owner | Status | Target Version |
+|---|---|---|---|
+| Add Super Admin top-bar Unit dropdown behavior | UI | WAITING_API_CONTRACT |
+| Hide Unit dropdown for Unit Admin derived-unit flow | UI | WAITING_API_CONTRACT |
+| Add Unit field to Framework Edition form | UI | WAITING_API_CONTRACT |
+| Reload Framework page by selected/derived unit context | UI | WAITING_API_CONTRACT |
+| Update active edition validation message | UI | WAITING_API_CONTRACT |
+| Add UI smoke evidence for selected-unit behavior | UI | WAITING_API_CONTRACT |
