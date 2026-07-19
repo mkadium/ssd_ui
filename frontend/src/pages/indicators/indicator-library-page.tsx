@@ -506,9 +506,9 @@ export function IndicatorLibraryPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Indicator Code</th>
-                <th>Global Indicator Number/Code</th>
                 <th>Indicator Name</th>
+                <th>Global Indicator Number/Code</th>
+                <th>Indicator Code</th>
                 <th>Data Source Ministry</th>
                 <th>Department</th>
                 <th>Unit of Measurement</th>
@@ -536,11 +536,9 @@ export function IndicatorLibraryPage() {
                       onClick={() => void loadIndicatorDetail(code)}
                     >
                       <td>
-                        <span className="code-text" title={row.indicatorCode}>
-                          {row.indicatorCode}
-                        </span>
-                        <span className="muted-code" title={row.indicatorNumber}>
-                          {row.indicatorNumber}
+                        <span className="cell-text indicator-name-full" title={`${row.indicatorNumber} - ${row.indicatorName}`}>
+                          <strong>{row.indicatorNumber}</strong>
+                          {row.indicatorName}
                         </span>
                       </td>
                       <td>
@@ -562,8 +560,11 @@ export function IndicatorLibraryPage() {
                         )}
                       </td>
                       <td>
-                        <span className="cell-text" title={row.indicatorName}>
-                          {row.indicatorName}
+                        <span className="code-text" title={row.indicatorCode}>
+                          {row.indicatorCode}
+                        </span>
+                        <span className="muted-code" title={row.indicatorNumber}>
+                          {row.indicatorNumber}
                         </span>
                       </td>
                       <td>

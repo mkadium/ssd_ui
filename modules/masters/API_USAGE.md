@@ -69,6 +69,44 @@ PATCH /masters/organizations/{organization_code}/officers/{officer_code}
 
 UOM codes are consumed by indicator versions as `unit_of_measure_code` and by indicator measures as `unit_code`.
 
+## Data Field / Measure Mapping APIs
+
+WP-2026-011 Data Field Library integration uses these DB-backed API contracts:
+
+```text
+GET /masters/data-fields
+GET /masters/data-fields/{measure_code}
+POST /masters/data-fields/{measure_code}/source-mappings
+POST /masters/data-fields/{measure_code}/periodicity-mappings
+POST /masters/data-fields/{measure_code}/grain-mappings
+DELETE /masters/data-fields/mappings/{mapping_type}/{mapping_code}
+POST /masters/data-fields/mappings/{mapping_type}/{mapping_code}/restore
+```
+
+Expected list row summary:
+
+- measure/data-field code and name
+- indicator/version context
+- source organization/ministry/department summary
+- UOM
+- periodicity
+- required grain / collection-key labels and codes
+- availability/status
+- usage count
+- last approved/reference period where available
+
+The UI must use stable codes and must not request or display internal IDs.
+
+## Data Field UI Integration Evidence
+
+- `Data Field Library` is available under Data Fields navigation at `/data-fields/library`.
+- The list page uses `GET /masters/data-fields` once for table-ready rows and filters client-side from API summary fields.
+- Row click loads the selected profile with `GET /masters/data-fields/{measure_code}`.
+- Source, periodicity, and required grain / collection-key mappings open right-side drawer forms and save through the WP-2026-011 mapping routes.
+- Data Field create/edit uses the existing indicator-version measure APIs: `POST /masters/indicator-versions/{version_code}/measures` and `PATCH /masters/indicator-versions/{version_code}/measures/{measure_code}`.
+- Unmap/restore actions use `SOURCE`, `PERIODICITY`, and `GRAIN` mapping types with stable mapping codes.
+- Production frontend build passed after integration on 2026-07-18.
+
 ## UOM UI Integration Evidence
 
 - `Unit of Measurement (UOM)` is available under Masters navigation at `/masters/uom`.

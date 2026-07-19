@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookOpen,
   Building2,
+  CalendarDays,
   ClipboardCheck,
   Database,
   FileCheck,
@@ -94,7 +95,11 @@ export const navigationModules: NavModule[] = [
     label: "Dimensions",
     basePath: "/dimensions",
     icon: Layers3,
-    items: [{ label: "Dimension Library", path: "/dimensions/library", icon: Layers3 }],
+    items: [
+      { label: "Dimension Library", path: "/dimensions/library", icon: Layers3 },
+      { label: "Geography", path: "/dimensions/geography", icon: Globe2 },
+      { label: "Time Periods", path: "/dimensions/time-periods", icon: CalendarDays },
+    ],
   },
   {
     label: "Data Fields",
@@ -108,7 +113,6 @@ export const navigationModules: NavModule[] = [
     icon: FileText,
     items: [
       { label: "Template Library", path: "/template/library", icon: FileText },
-      { label: "Studio", path: "/template/studio", icon: TableProperties },
       { label: "Template Mappings", path: "/template/mappings", icon: GitBranch },
     ],
   },

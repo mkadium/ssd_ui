@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Module | Masters UI |
-| Status | MASTERS_UOM_UI_INTEGRATED |
-| Last Updated | 2026-07-17 |
+| Status | MASTERS_DATA_FIELD_UI_INTEGRATED |
+| Last Updated | 2026-07-18 |
 
 ## v0.1.1
 
@@ -33,6 +33,13 @@
 - Changed Indicator Mapping drawers to fixed right-side forms with searchable dropdown inputs for global indicators, sources, officers, periodicities, UOMs, and measures.
 - Fixed Indicator Library source ministry/department filtering to use stable organization codes from the loaded source options.
 - Added Global Indicators under Indicator Management with list, search, status filter, detail panel, and right-drawer create/edit.
+- Added Data Field Library under `/data-fields/library` using WP-2026-011 APIs for list, profile, source mapping, periodicity mapping, required grain / collection-key mapping, unmap, and restore flows.
+- Added Data Field create/edit/deactivate drawer backed by existing indicator-version measure APIs.
+- Changed Data Field row click to open a dedicated full-width detail workspace instead of a cramped side profile panel.
+- Added compact Data Field table filters for source, periodicity, UOM, status, grain, and text search.
+- Added Data Field profile tabs for Overview, Source, Periodicity, Required Grain, Used In, and History with clean empty states.
+- Added right-side Data Field mapping drawers with stable-code dropdown validation for source organizations, periodicities, dimensions, members, member sets, geographies, and time periods.
+- Verified production frontend build after Data Field Library integration.
 - Verified production frontend build after UOM integration.
 
 ## v0.1.0

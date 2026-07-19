@@ -88,6 +88,11 @@ export type DimensionMemberSet = {
   name?: string;
   description?: string | null;
   member_count?: number;
+  usage_count?: number;
+  template_axis_count?: number;
+  request_scope_count?: number;
+  is_immutable?: boolean;
+  lock_reason?: string | null;
   is_active?: boolean;
 };
 
@@ -131,6 +136,58 @@ export type DimensionRollupRule = {
   validation_rule_code?: string | null;
   children?: Record<string, unknown>[];
   is_active?: boolean;
+};
+
+export type TimeFrequency = {
+  frequency_code?: string;
+  name?: string;
+  description?: string | null;
+  months_interval?: number | null;
+  sort_order?: number;
+  is_active?: boolean;
+};
+
+export type TimePeriod = {
+  time_period_code?: string;
+  member_code?: string;
+  frequency_code?: string;
+  frequency_name?: string;
+  period_year?: number;
+  period_quarter?: number | null;
+  period_month?: number | null;
+  start_date?: string;
+  end_date?: string;
+  status?: string;
+  is_active?: boolean;
+  name?: string;
+  short_name?: string | null;
+  description?: string | null;
+};
+
+export type GeographyLevel = {
+  level_code?: string;
+  level_number?: number;
+  name?: string;
+  description?: string | null;
+  is_active?: boolean;
+};
+
+export type Geography = {
+  geography_code?: string;
+  member_code?: string;
+  level_code?: string;
+  level_name?: string;
+  parent_geography_code?: string | null;
+  parent_geography_name?: string | null;
+  iso_alpha2_code?: string | null;
+  iso_alpha3_code?: string | null;
+  census_code?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  is_active?: boolean;
+  name?: string;
+  short_name?: string | null;
+  description?: string | null;
 };
 
 export type DimensionPayload = {
@@ -201,6 +258,54 @@ export type DimensionRollupPayload = {
   children: { member_code: string; child_order: number; child_weight?: number; is_active: boolean }[];
 };
 
+export type TimePeriodPayload = {
+  time_period_code?: string;
+  frequency_code: string;
+  period_year: number;
+  period_quarter?: number;
+  period_month?: number;
+  start_date: string;
+  end_date: string;
+  status: string;
+  is_active: boolean;
+  name: string;
+  short_name?: string;
+  description?: string;
+};
+
+export type TimeFrequencyPayload = {
+  frequency_code?: string;
+  months_interval?: number;
+  sort_order: number;
+  is_active: boolean;
+  name: string;
+  description?: string;
+};
+
+export type TimePeriodSetPayload = {
+  set_code?: string;
+  set_type: string;
+  is_active: boolean;
+  name: string;
+  description?: string;
+  items: { time_period_code: string; sort_order: number; is_active: boolean }[];
+};
+
+export type GeographyPayload = {
+  geography_code?: string;
+  level_code: string;
+  parent_geography_code?: string;
+  iso_alpha2_code?: string;
+  iso_alpha3_code?: string;
+  census_code?: string;
+  effective_from?: string;
+  effective_to?: string;
+  is_active: boolean;
+  name: string;
+  short_name?: string;
+  description?: string;
+};
+
 function query(params: Record<string, string | number | undefined | null>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -245,6 +350,123 @@ export async function listDimensionManagementRows(filters: {
 
 export async function listDimensionStructureTypes() {
   const result = await apiGet<ListResponse<DimensionStructureType>>(`/dimensions/structure-types${localeParams()}`);
+  return result.data;
+}
+
+export async function listTimeFrequencies() {
+  const result = await apiGet<ListResponse<TimeFrequency>>(`/dimensions/time-frequencies${localeParams()}`);
+  return result.data;
+}
+
+export async function createTimeFrequency(payload: TimeFrequencyPayload) {
+  const result = await apiPost<DetailResponse<TimeFrequency>, TimeFrequencyPayload>(`/dimensions/time-frequencies${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function updateTimeFrequency(frequencyCode: string, payload: TimeFrequencyPayload) {
+  const result = await apiPatch<DetailResponse<TimeFrequency>, TimeFrequencyPayload>(`/dimensions/time-frequencies/${encodeURIComponent(frequencyCode)}${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function deactivateTimeFrequency(frequencyCode: string) {
+  const result = await apiDelete<DetailResponse<TimeFrequency>>(`/dimensions/time-frequencies/${encodeURIComponent(frequencyCode)}${localeParams()}`);
+  return result.data;
+}
+
+export async function listTimePeriods(filters: { frequencyCode?: string; limit?: number; offset?: number } = {}) {
+  const result = await apiGet<ListResponse<TimePeriod>>(
+    `/dimensions/time-periods${localeParams({
+      frequency_code: filters.frequencyCode === "ALL" ? undefined : filters.frequencyCode,
+      limit: filters.limit ?? 500,
+      offset: filters.offset ?? 0,
+    })}`,
+  );
+  return result.data;
+}
+
+export async function listAllTimePeriods(filters: { frequencyCode?: string } = {}) {
+  const pageSize = 500;
+  const allRows: TimePeriod[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await listTimePeriods({ ...filters, limit: pageSize, offset });
+    const rows = page.data ?? [];
+    allRows.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return { data: allRows };
+}
+
+export async function createTimePeriod(payload: TimePeriodPayload) {
+  const result = await apiPost<DetailResponse<TimePeriod>, TimePeriodPayload>(`/dimensions/time-periods${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function updateTimePeriod(timePeriodCode: string, payload: TimePeriodPayload) {
+  const result = await apiPatch<DetailResponse<TimePeriod>, TimePeriodPayload>(`/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function deactivateTimePeriod(timePeriodCode: string) {
+  const result = await apiDelete<DetailResponse<TimePeriod>>(`/dimensions/time-periods/${encodeURIComponent(timePeriodCode)}${localeParams()}`);
+  return result.data;
+}
+
+export async function listTimePeriodSets() {
+  const result = await apiGet<ListResponse<DimensionMemberSet>>(`/dimensions/time-period-sets${localeParams()}`);
+  return result.data;
+}
+
+export async function listGeographyLevels() {
+  const result = await apiGet<ListResponse<GeographyLevel>>(`/dimensions/geography-levels${localeParams()}`);
+  return result.data;
+}
+
+export async function listGeographies(filters: {
+  parentGeographyCode?: string;
+  levelCode?: string;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const result = await apiGet<ListResponse<Geography>>(
+    `/dimensions/geographies${localeParams({
+      parent_geography_code: filters.parentGeographyCode,
+      level_code: filters.levelCode === "ALL" ? undefined : filters.levelCode,
+      limit: filters.limit ?? 500,
+      offset: filters.offset ?? 0,
+    })}`,
+  );
+  return result.data;
+}
+
+export async function createGeography(payload: GeographyPayload) {
+  const result = await apiPost<DetailResponse<Geography>, GeographyPayload>(`/dimensions/geographies${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function updateGeography(geographyCode: string, payload: GeographyPayload) {
+  const result = await apiPatch<DetailResponse<Geography>, GeographyPayload>(`/dimensions/geographies/${encodeURIComponent(geographyCode)}${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function deactivateGeography(geographyCode: string) {
+  const result = await apiDelete<DetailResponse<Geography>>(`/dimensions/geographies/${encodeURIComponent(geographyCode)}${localeParams()}`);
+  return result.data;
+}
+
+export async function listTimePeriodSetPeriods(setCode: string) {
+  const result = await apiGet<ListResponse<DimensionMemberSetItem>>(
+    `/dimensions/time-period-sets/${encodeURIComponent(setCode)}/periods${localeParams({ limit: 1000, offset: 0 })}`,
+  );
+  return result.data;
+}
+
+export async function createTimePeriodSet(payload: TimePeriodSetPayload) {
+  const result = await apiPost<DetailResponse<DimensionMemberSet>, TimePeriodSetPayload>(`/dimensions/time-period-sets${localeParams()}`, payload);
+  return result.data;
+}
+
+export async function updateTimePeriodSet(setCode: string, payload: TimePeriodSetPayload) {
+  const result = await apiPatch<DetailResponse<DimensionMemberSet>, TimePeriodSetPayload>(`/dimensions/time-period-sets/${encodeURIComponent(setCode)}${localeParams()}`, payload);
   return result.data;
 }
 
@@ -355,6 +577,14 @@ export async function listDimensionMemberSetMembers(setCode: string, limit = 300
 export async function createDimensionMemberSet(dimensionCode: string, payload: DimensionSetPayload) {
   const result = await apiPost<DetailResponse<DimensionMemberSet>, DimensionSetPayload>(
     `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets${localeParams()}`,
+    payload,
+  );
+  return result.data;
+}
+
+export async function updateDimensionMemberSet(dimensionCode: string, setCode: string, payload: DimensionSetPayload) {
+  const result = await apiPatch<DetailResponse<DimensionMemberSet>, DimensionSetPayload>(
+    `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}${localeParams()}`,
     payload,
   );
   return result.data;

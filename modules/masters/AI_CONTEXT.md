@@ -30,6 +30,10 @@ Masters / Metadata UI
 - Indicator detail Mapping tab no longer shows a separate Framework section. It supports available upsert-style edits for global mapping, source assignment/officer mapping, version-level UOM, and measures through compact right-side mapping drawers. Deactivation uses `is_active=false`; hard delete is not implemented.
 - Indicator detail separates version-level Unit of Measurement from measure rows because these are different DB concepts.
 - Global Indicators page is implemented under Indicator Management using `/masters/global-indicators` list/create/update APIs. It supports search, status filter, compact table, detail panel, and right-drawer create/edit.
+- Data Field Library is implemented under `/data-fields/library` using WP-2026-011 Masters APIs. It treats indicator measures as schedulable data fields with source, periodicity, and required grain / collection-key mappings.
+- Data Field Library lives under the Data Fields navigation while consuming Masters metadata APIs because the current measure records are under `metadata.indicator_measures`.
+- Data Field Library uses `GET /masters/data-fields` for table rows. Row click opens a dedicated detail workspace through `/data-fields/library?measure={measure_code}`, which uses `GET /masters/data-fields/{measure_code}` for the selected profile, existing indicator-version measure create/update routes for Data Field CRUD, and mapping routes for source, periodicity, required grain, unmap, and restore operations.
+- Data Field mapping drawers use stable-code selections for source organizations, periodicities, dimensions, dimension members, member sets, geographies, and time periods. Multiple grain mappings together define the collection key structure, for example `State + Time Period + Locality + Sex -> Measure Value`.
 - DEC-2026-006 requires framework editions to be unit-owned.
 - Super Admin must be able to select the active unit context from the top bar.
 - Unit Admin and ordinary unit-scoped users should use the unit assigned through authentication/user role context and do not need a top-bar Unit dropdown by default.
@@ -62,3 +66,4 @@ Masters / Metadata UI
 - Do not hardcode SDG-only framework behavior.
 - Do not compute Goal/Target indicator counts from guesses. Use API-provided `indicator_count` from hierarchy nodes.
 - Do not treat UOM display names as keys. Use stable `uom_code`; localized names/descriptions are display content only.
+- Do not implement Data Field source/periodicity/required-grain mappings as UI-only state. Use the WP-2026-011 API mapping routes and stable-code persistence.

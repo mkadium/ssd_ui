@@ -4,7 +4,15 @@
 |---|---|
 | Module | Dimensions UI |
 | Status | DIMENSION_LIBRARY_API_INTEGRATED |
-| Last Updated | 2026-07-17 |
+| Last Updated | 2026-07-18 |
+
+## v0.3.0
+- Added API-backed Time Periods page at `/dimensions/time-periods`.
+- Added frequencies, period list, create/edit/deactivate flow, and reporting sequence management.
+- Reporting sequences support regular and irregular year selections through `TIME_PERIOD` member sets.
+- Used reporting sequences now show as immutable and support Copy as New Cycle/Version instead of in-place period mutation.
+- Added UI handling for API-provided reporting sequence usage metadata and lock reason.
+- Added compact styling for 1366x768 usability.
 
 ## v0.2.0
 - Added live API-integrated Dimension Library at `/dimensions/library`.

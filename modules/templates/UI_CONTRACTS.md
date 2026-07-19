@@ -1,35 +1,75 @@
 # UI CONTRACTS
 
 ## Templates UI Contract
-- Read-only template list, detail, version, and render-contract views are allowed.
-- `/templates` is implemented as a unit-scoped sample-data management surface.
-- Template list must show template status, active/current version, mapped national/global indicator, source/owning unit context, cell counts, and row actions.
-- Designer UI may be prototyped with sample data, but persistence is blocked until mutation APIs exist.
-- Designer grid must bind visible cells to governed public contract keys: `template_code`, `version_code`, `axis_code`, `measure_code`, `cell_code`, `dimension_code`, and `member_code`.
-- Dimension binding UX must support geography row axis, time merged headers, area type/gender column groups, show-header toggle, row/column alignment, editable/required/access options, and validation rule references.
-- Do not expose internal IDs, raw metadata, secrets, or tokens.
+- Template UI must use `ssd_ui/frontend/src/` as the active implementation root.
+- Template Library must consume governed Templates APIs, not local sample data.
+- Template Studio must preserve stable public codes:
+  - `template_code`
+  - `version_code`
+  - `axis_code`
+  - `measure_code`
+  - `cell_code`
+  - `dimension_code`
+  - `member_code`
+  - `member_set_code`
+- UI must not expose internal UUIDs to users or route state.
+- Unit scope comes from the App Shell selected unit for Super Admin, or authenticated user unit for unit-scoped users.
+- Locale scope comes from the App Shell locale selector.
 
-## Template Designer v0.2 Notes
+## Template Library
+- Must show governed template definitions and versions from API.
+- Must allow creating template definitions and draft versions through API-backed drawer forms.
+- Must use full-width table layout by default.
+- Row click must open selected template profile and versions in a right-side drawer/panel.
+- Version details should be loaded only when needed and cached during the session to avoid slow row preview/detail opens.
+- Must route version design work to `/template/studio`.
 
-- Row number column remains sticky while the template canvas scrolls horizontally.
-- Designer options support sample DB v0.2 binding behavior:
-  - measure defaults: `INDICATOR_VALUE`, `PERSON_COUNT`, `POVERTY_RATE`
-  - rollup entry modes: `MANUAL`, `DERIVED`, `MANUAL_WITH_VALIDATION`
-  - aggregation methods: `SUM`, `AVG`, `WEIGHTED_AVG`, `MIN`, `MAX`, `NO_ROLLUP`
-- JSON preview includes `binding_groups`, `measure`, `rollup_rules`, and `data_entry_binding_shape`.
-- Blank-cell selection must reset the options context so stale binding-group settings are not shown for an unbound cell.
-- Freeze and Editable cells are toggle actions:
-  - Freeze marks a header/range for sticky/frozen rendering in the eventual data-entry view.
-  - Editable cells marks or unmarks the selected range as department data-entry inputs.
-- Measure-as-column behavior is represented as strict selected-measure binding. The user selects one available measure (`INDICATOR_VALUE`, `PERSON_COUNT`, `POVERTY_RATE`, etc.) and binds it to the selected header cell/range. Already-bound measures are removed from the picker until unbound, and each generated/submitted value must still carry its exact `measure_code`.
-- Later dimension binding or axis re-alignment must preserve already-bound strict measure header cells instead of replacing them with dimension members.
-- If strict measure headers are present, newly generated column-dimension headers must start below the measure header row so no Time/Area/Gender member is hidden under a preserved measure cell.
-- Binding a column dimension while the selected cell is under a strict measure header must apply the dimension locally to that measure group and expand the measure header span to cover the generated dimension leaves. It must not force the dimension under the first measure or a global column axis.
-- Expanding one strict measure group must preserve sibling measure groups. If the selected measure needs more columns, measure groups and local headers to the right shift right before the selected group is repainted.
-- Unbinding a strict measure group must remove its local column dimensions and generated cells as one block. Unbinding a local dimension inside a strict measure group must affect only that selected measure group and must not remove dimensions from sibling measures.
-- Merged header cells must remain directly editable. The editor must write text to the visible merge owner, not to a hidden merged child/focus cell.
-- Local strict-measure header stacks must also relayout row-axis headers/members: row-axis headers merge across the full generated header depth, and row-axis members begin at the first data-entry row.
-- Combine measure must work for strict measure groups as well as the older global measure-axis mode. In strict mode, it visually stacks measure/unit text under the deepest selected local dimension headers while keeping JSON relation codes separate.
-- Combine measure is a visual render option. It may stack the selected dimension label above the measure/unit label, but saved/submitted structures must keep `dimension_code`, `member_code`, and `measure_code` separate.
-- Vertical alignment options must affect the visible canvas cell alignment, not only JSON metadata.
-- These are UI-only sample controls until Templates/Dimensions API v0.2 render-contract endpoints are implemented.
+## Template Studio Step Contract
+- Structure: default first working step; manage template axes and structure rules.
+- Recipients: derived from measure source assignments, source officers, periodicity, and required grain.
+- Preview: summarize contract shape before publish.
+- Publish: only after readiness checks.
+- Validation configuration remains available from column-level controls and is saved as validation rule/reference data.
+- Indicator mapping is handled outside the Studio wizard sequence.
+
+## Template Structure Builder Contract
+- Structure page uses a left data library and Excel-style live preview.
+- Structure must remain compact enough for 1366x768 users to see the library, drop zones, and preview without excessive page scrolling.
+- Left data library must include only:
+  - General dimension member sets
+  - Geography member sets
+  - Time-period reporting sequence sets
+  - Measures/Data Fields
+- Left data library must not show unrelated raw metadata tables.
+- Structure drop zones are:
+  - Separate Into Tabs By
+  - Each Row Represents
+  - Show Across Columns
+  - Fields To Fill
+- The separate Calculated Fields drop zone is removed from the current Structure UI. Compute, Calculated, and Rollup outputs are added through Settings and appear in Fields To Fill.
+- Dragging a member set into rows or columns should preview member items in the table builder.
+- Dragging measures into Fields To Fill should preview editable cells.
+- Compute, Calculated, and Rollup outputs in Fields To Fill must appear as preview columns, not only as selected chips.
+- Generated preview columns are non-editable and must repeat under every active column group such as each selected year/time period.
+- Rollup outputs must come from approved dimension rollup rules. If no applicable rollup rule exists for the selected structure, the Studio must show an empty rollup state instead of allowing ad hoc rollup expression creation.
+- Dropping directly on preview row headers, column headers, or cells must update the matching structure zone.
+- Preview settings may support code visibility, zebra rows, compact cells, and editable-cell highlighting.
+- The library search must apply only to the active library tab.
+- Member-set item counts should use actual set members when catalog count is unavailable.
+
+## Governed Time-Period Contract
+- `TIME_PERIOD` must be represented as a governed template axis.
+- Recommended default behavior is `FROM_REQUEST`.
+- `FROM_REQUEST` means the request cycle supplies the exact reporting period; Template Studio should not hardcode the period.
+- `CONTRIBUTOR_SELECT` means the data provider can select one or more periods from a governed time-period set during data entry.
+- `FIXED_SET` means the template references a specific approved time-period set and should be used only when the template is intentionally year/cycle-specific.
+- Published or used time-period sets are immutable. New cycles or changed member lists require a new time-period set/version.
+- Template Studio may reference immutable time-period sets but must not edit their membership.
+- If users need a different year sequence, they must create a new set in the Time Periods page and map that set to the template axis.
+- Template Studio may also create a new time-period reporting sequence set for convenience, as long as it creates a new set/version and does not mutate an existing used/published set.
+
+## Warnings
+- Do not create hidden sample persistence for template designer state; use the governed Studio draft/formula persistence endpoints after API restart from latest code.
+- Do not mutate time-period sets from Template Studio.
+- Do not hardcode Goal/Target naming.
+- Do not bypass API contracts for template versions, axes, measures, cells, binding groups, render elements, or validation refs.

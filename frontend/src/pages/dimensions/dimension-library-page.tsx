@@ -61,6 +61,8 @@ const STRUCTURE_FILTERS = [
   { value: "RANGE_BUCKETS", label: "Range Buckets" },
 ];
 
+const SPECIAL_DIMENSION_CODES = new Set(["GEOGRAPHY", "TIME_PERIOD"]);
+
 const emptyDimensionForm = {
   dimension_code: "",
   dimension_type: "GENERAL",
@@ -207,7 +209,6 @@ export function DimensionLibraryPage() {
   const [rollupChildren, setRollupChildren] = useState([emptyRollupChild]);
   const [listModal, setListModal] = useState<{ title: string; rows: DimensionMember[] } | null>(null);
   const [query, setQuery] = useState("");
-  const [structureFilter, setStructureFilter] = useState("ALL");
   const [usageFilter, setUsageFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ACTIVE");
   const [notice, setNotice] = useState("");
@@ -242,24 +243,11 @@ export function DimensionLibraryPage() {
           .join(" ")
           .includes(q);
       const statusMatches = statusFilter === "ALL" || statusOf(row) === statusFilter;
-      const structureMatches =
-        structureFilter === "ALL" ||
-        row.dimension_structure_type === structureFilter ||
-        row.type === structureFilter ||
-        row.dimension_structure_type_name === structureFilter;
       const used = numberValue(row.used_in_count) > 0;
       const usageMatches = usageFilter === "ALL" || (usageFilter === "USED" ? used : !used);
-      return matchesQuery && statusMatches && structureMatches && usageMatches;
+      return matchesQuery && statusMatches && usageMatches;
     });
-  }, [query, rows, statusFilter, structureFilter, usageFilter]);
-
-  const structureOptions = useMemo(
-    () =>
-      structureTypes.length
-        ? structureTypes.map((type) => ({ value: type.structure_type_code ?? "", label: textValue(type.name ?? type.structure_type_code) }))
-        : STRUCTURE_FILTERS.filter((filter) => filter.value !== "ALL"),
-    [structureTypes],
-  );
+  }, [query, rows, statusFilter, usageFilter]);
 
   useEffect(() => {
     void loadPage();
@@ -304,7 +292,7 @@ export function DimensionLibraryPage() {
           return { data: { rows: fallback.data } };
         }),
       ]);
-      const nextRows = rowResponse.data?.rows ?? [];
+      const nextRows = (rowResponse.data?.rows ?? []).filter((row) => !SPECIAL_DIMENSION_CODES.has(String(row.dimension_code ?? "").toUpperCase()));
       setRows(nextRows);
       setStatCards(cardResponse.data ?? []);
       setStructureTypes(structureResponse.data ?? []);
@@ -659,13 +647,8 @@ export function DimensionLibraryPage() {
     { card_code: "TOTAL_DIMENSIONS", label: "Total Dimensions", value: rows.length },
     { card_code: "UNUSED_DIMENSIONS", label: "Unused", value: rows.filter((row) => numberValue(row.used_in_count) === 0).length },
     { card_code: "HIGH_CARDINALITY_DIMENSIONS", label: "High Cardinality", value: rows.filter((row) => numberValue(row.value_count) >= 50).length },
-    {
-      card_code: "MOST_USED_DIMENSION",
-      label: "Most Used",
-      value: rows.slice().sort((a, b) => numberValue(b.used_in_count) - numberValue(a.used_in_count))[0]?.dimension_name ?? "-",
-    },
   ];
-  const cards = statCards.length ? statCards : fallbackCards;
+  const cards = (statCards.length ? statCards : fallbackCards).filter((card) => card.card_code !== "MOST_USED_DIMENSION");
 
   return (
     <div className="workflow-page dimensions-page">
@@ -691,11 +674,11 @@ export function DimensionLibraryPage() {
       {error && <div className="notice error">{error}</div>}
 
       <section className="metric-grid four dimension-metric-grid">
-        {cards.slice(0, 4).map((card) => (
+        {cards.slice(0, 3).map((card) => (
           <article className="metric-card compact-metric-card dimension-metric-card" key={card.card_code ?? card.label}>
             <div className="metric-value">{textValue(card.display_value ?? card.value)}</div>
             <div className="metric-label">{textValue(card.label)}</div>
-            <div className="metric-sublabel">{card.card_code === "MOST_USED_DIMENSION" ? "Most Used" : getSelectedUnitCode()}</div>
+            <div className="metric-sublabel">{getSelectedUnitCode()}</div>
           </article>
         ))}
       </section>
@@ -703,16 +686,8 @@ export function DimensionLibraryPage() {
       <section className="toolbar-panel dimensions-toolbar-panel">
         <label className="input-shell">
           <Search size={14} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search dimension by name, code, or structure" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search dimension by name or code" />
         </label>
-        <select value={structureFilter} onChange={(event) => setStructureFilter(event.target.value)} aria-label="Structure type">
-          <option value="ALL">All structures</option>
-          {structureOptions.map((filter) => (
-            <option value={filter.value} key={filter.value}>
-              {filter.label}
-            </option>
-          ))}
-        </select>
         <select value={usageFilter} onChange={(event) => setUsageFilter(event.target.value)} aria-label="Usage">
           <option value="ALL">All usage</option>
           <option value="USED">Used</option>
@@ -1021,6 +996,7 @@ export function DimensionLibraryPage() {
             </div>
             <label title="Measure to aggregate for the selected parent member. This will become a searchable measure dropdown when the measure catalog is exposed here.">Measure code<input list="dimension-measure-code-examples" placeholder="Example: AREA_TOTAL, POPULATION_TOTAL, VALUE" value={rollupForm.measure_code} onChange={(event) => setRollupForm((current) => ({ ...current, measure_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
             <label title="Optional measure used only when Aggregation is WEIGHTED_AVG.">Weight measure code<input list="dimension-measure-code-examples" placeholder="Example: POPULATION_WEIGHT, AREA_WEIGHT" value={rollupForm.weight_measure_code} onChange={(event) => setRollupForm((current) => ({ ...current, weight_measure_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
+            <p className="drawer-help-text">Weight is an optional numeric coefficient for weighted-average rollups. It is not a formula; leave it blank for normal SUM, AVG, MIN, MAX, and parent-child total checks.</p>
             <datalist id="dimension-measure-code-examples">
               <option value="VALUE" />
               <option value="POPULATION_TOTAL" />
@@ -1037,10 +1013,27 @@ export function DimensionLibraryPage() {
                 </button>
               </div>
               {rollupChildren.map((child, index) => (
-                <div className="form-grid three compact-grid" key={index}>
+                <div className="form-grid three compact-grid rollup-child-editor" key={index}>
                   <label className="form-field">Child member<select value={child.member_code} onChange={(event) => setRollupChildren((current) => current.map((item, childIndex) => childIndex === index ? { ...item, member_code: event.target.value } : item))}>{memberOptions(members)}</select></label>
                   <label className="form-field">Order<input type="number" value={child.child_order} onChange={(event) => setRollupChildren((current) => current.map((item, childIndex) => childIndex === index ? { ...item, child_order: Number(event.target.value) } : item))} /></label>
                   <label className="form-field" title="Optional numeric weight used by weighted average rollups. Leave blank for SUM/AVG/MIN/MAX.">Weight<input type="number" placeholder="Example: 1.0" value={child.child_weight} onChange={(event) => setRollupChildren((current) => current.map((item, childIndex) => childIndex === index ? { ...item, child_weight: event.target.value } : item))} /></label>
+                  <button
+                    className="icon-button danger rollup-child-remove"
+                    type="button"
+                    title="Remove child"
+                    aria-label="Remove rollup child"
+                    onClick={() =>
+                      setRollupChildren((current) =>
+                        current.length > 1
+                          ? current
+                              .filter((_, childIndex) => childIndex !== index)
+                              .map((item, childIndex) => ({ ...item, child_order: childIndex + 1 }))
+                          : [{ ...emptyRollupChild }],
+                      )
+                    }
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               ))}
             </div>

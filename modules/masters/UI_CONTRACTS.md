@@ -113,3 +113,20 @@ Validation:
 - Global Indicators page must list global indicators by selected/derived `unit_code` and locale using `/masters/global-indicators`.
 - Global Indicators page must support search, status filter, create, edit, activate/deactivate where supported by the API, and a compact detail panel.
 - Global indicator create/edit must use the right-side drawer pattern and must require framework edition, global indicator code, indicator number, localized name, and active status.
+
+## Data Field / Measure Library Contract
+
+- Data Field Library must be available under the Data Fields module and must manage governed indicator measures as schedulable data fields.
+- Data Field Library must use a full-width table, compact row height, and viewport-aware scrolling for 1366x768.
+- Filters must include source/ministry/department, periodicity, UOM, status/availability, required grain / collection key, and free-text search.
+- Row click must open a dedicated Data Field profile/detail workspace, not a cramped side panel. The detail workspace must provide tabs for Overview, Source Mapping, Periodicity, Required Grain, Used In, and History.
+- Data Field create/edit/deactivate must use the existing indicator-version measure routes and stable `version_code` / `measure_code` values.
+- Source Mapping must allow one measure to map to multiple source organizations using stable `organization_code`.
+- Periodicity Mapping must allow measure-level collection cadence using stable `periodicity_code`.
+- Required Grain mapping must support multiple collection keys per measure. Supported key references include dimension member/member set, geography, and time period using stable codes.
+- Required Grain must be displayed as the submission coordinate structure, for example `State + Time Period + Locality -> Measure Value` or `State + Time Period + Locality + Sex -> Measure Value`.
+- Mapping forms must open in the shared right-side drawer pattern and use searchable dropdowns. Do not render mapping forms inline below the table.
+- UI must disable Save when a searchable dropdown has typed text but no selected stable-code record.
+- Data Field list rows must not require one detail API call per visible row; source, UOM, periodicity, default grain, availability, usage count, and last approved/reference period should come from the list endpoint once API supports it.
+- Data collection scheduling UX must explain the resolution order: measure mapping, indicator source assignment fallback, approved template/request override, then blocked dispatch if required context is missing.
+- Do not use localized names as keys. Use `measure_code`, `version_code`, `organization_code`, `periodicity_code`, `uom_code`, `dimension_code`, `member_code`, `member_set_code`, geography code, and time-period code.

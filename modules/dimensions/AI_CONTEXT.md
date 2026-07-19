@@ -19,7 +19,8 @@ DIMENSION_LIBRARY_API_INTEGRATED
 - UI create flows use governed Dimensions mutation APIs where available.
 - Current screen follows the Framework-style workflow pattern: KPI cards, filters, a single tabbed workflow card, and right-side drawer forms.
 - Tab sequence: Dimensions, Members, Hierarchy, Member Sets, Rollups, Aliases.
-- Geography and time-period specialized workflows are not separate left-nav pages yet; they should be added inside the Dimension Library workflow unless governance later approves separate pages.
+- Geography and Time Periods now have specialized left-nav pages. Dimension Library excludes those specialized catalogs from the generic list where the specialized page provides the clearer workflow.
+- Time Periods supports immutable used reporting sequences. Admins must copy used sequences as a new cycle/version before changing ordered periods.
 
 ## Scope
 - Dimension definitions, members, member sets, geographies, and time periods.

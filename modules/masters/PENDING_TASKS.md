@@ -6,6 +6,9 @@
 |---|---|---|---|
 | Integrate Unit of Measurement (UOM) page with Masters API | UI | COMPLETE_LOCAL_BUILD_DEV_LIST_EVIDENCE | v0.1.1 |
 | Capture UOM create/update UI runtime evidence | UI/API/Testing | PENDING | v0.1.1 |
+| Implement Data Field Library list/profile after DB/API data-field endpoints are available | UI | COMPLETE_LOCAL_BUILD_VERIFIED | cross-module v0.1.0 |
+| Implement Data Field source, periodicity, and grain mapping drawers with searchable dropdowns | UI | COMPLETE_LOCAL_BUILD_VERIFIED | cross-module v0.1.0 |
+| Capture live DEV UI runtime evidence for Data Field mapping save/unmap/restore | UI/API/Testing | PENDING | cross-module v0.1.0 |
 
 ## WP-2026-012 Unit-Scoped Framework Edition Ownership
 

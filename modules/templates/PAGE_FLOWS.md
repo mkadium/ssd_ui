@@ -2,52 +2,66 @@
 
 | Flow ID | Flow | Status |
 |---|---|---|
-| TEMPLATES-FLOW-001 | Template list to detail/version | SAMPLE_DATA_READY |
-| TEMPLATES-FLOW-002 | Version to render-contract preview | SAMPLE_DATA_READY |
-| TEMPLATES-FLOW-003 | Draft designer UX shell, blocked from persistence | INTERACTIVE_SAMPLE_READY |
-| TEMPLATES-FLOW-004 | Full template design walkthrough from blank canvas to generated data-entry render | INTERACTIVE_SAMPLE_READY |
+| TEMPLATES-FLOW-001 | Template Library list/filter/select | API_BACKED_FOUNDATION |
+| TEMPLATES-FLOW-002 | Create template definition | API_BACKED_FOUNDATION |
+| TEMPLATES-FLOW-003 | Create template version | API_BACKED_FOUNDATION |
+| TEMPLATES-FLOW-004 | Open Template Studio from selected version | API_BACKED_FOUNDATION |
+| TEMPLATES-FLOW-005 | Drag/drop Structure builder with live preview | UI_FOUNDATION |
+| TEMPLATES-FLOW-006 | Recipient/source-specific view rules | PENDING_DETAILED_UI |
+| TEMPLATES-FLOW-007 | Preview/publish readiness | PARTIAL_PREVIEW_FOUNDATION |
+| TEMPLATES-FLOW-008 | Edit Studio reload from saved draft and formula output state | READY_FOR_LIVE_SMOKE |
 
-## Implemented Template Management Flow
+## Template Library Flow
 
-1. Authenticated user opens `/templates`.
-2. App Shell unit selector defines working unit scope.
-3. User searches and filters template definitions by template, indicator, source, and status.
-4. User opens detail, designer, or delete visual modal state from row actions.
-5. User creates a draft template by selecting owning unit and national indicator before designer work begins.
-6. Designer tab opens a blank Excel-like canvas.
-7. Designer opens with one merged frozen indicator context row: indicator code, name, measure, source, unit, and periodicity.
-8. User single-clicks a cell to edit it like Excel.
-9. User types a search term such as `area` and sees full-text matches from sample indicator, dimension, and measure objects.
-10. User selects a suggestion, which opens the options panel with the selected object and remaining configuration.
-11. While typing, the active cell shows an inline ghost completion like an IDE. Enter or Tab accepts the first match and opens options.
-12. User can double-click any cell to open the options panel without typing first.
-13. Options remain open while the user clicks other canvas cells; closing is explicit.
-14. User can open the designer in full-page mode for a larger canvas workspace.
-15. User can move with arrow keys, select with Space, start editing with Enter, and exit edit mode with Enter/Escape.
-16. User can open a live JSON structure modal from the designer toolbar to inspect how the current template maps to data-entry rows, columns, measures, and editable cells.
-17. User can choose geography scope: national-only rows, state rows, national+state rows, national+state+district rows, or hierarchy columns for national-only, national+state, and national+state+district.
-18. Hierarchy-column geography renders as row-axis columns such as Location, State, and District, so the user can build India -> State -> District style templates.
-19. User can switch row/column alignment while options are open; the selected dimension moves between row axes and column axes without duplicating old rows.
-20. If Time is moved to rows while Geography is already a row axis, rows become State x Time.
-21. If Area Type is also added to rows, rows become State x Time x Area Type.
-22. User can bind time as merged year headers and bind area type under each year dynamically.
-23. Area Type binding regenerates a clean year -> total/rural/urban header structure and merges row-axis headers over the required header rows.
-24. Gender binding regenerates the full time -> area_type -> gender nested header structure, so both Female and Male appear under every area/year combination.
-25. Merged headers and bound values occupy the full visual width and height of the cell or merged span.
-26. Geography keeps the row-axis header label as Location even after Time, Area Type, Gender, or Measure is selected in the options panel.
-27. User can Shift-click to select a range, then merge, unmerge, freeze, mark cells editable, or apply horizontal/vertical alignment.
-28. Selecting a cell inside a bound group selects the related range so options can be changed for that group.
-29. User can unbind the selected dimension or measure group from the options panel; the grid rebuilds from the remaining axes.
-30. User can resize columns and rows by dragging handles on canvas headers.
-31. User can right-click column or row headers to insert a column or row into the canvas.
-32. User can undo/redo canvas changes from toolbar buttons or Ctrl+Z/Ctrl+Y.
-33. User previews object values and clicks Bind values; the selected object is written into the actual canvas.
-34. User can bind manually or use Auto-build to generate the full example: Geography rows, Time merged headers, Area Type headers, Gender subgroup headers, and editable Indicator Value cells.
-35. User previews the data-entry render that department users will fill.
-36. User can validate/save the draft and mark it active in local UI state for walkthrough purposes.
-37. Contract tab shows stable public version, axis, measure, cell, render-element, and validation-ref information for UI handoff.
+1. User opens `/template/library`.
+2. UI loads templates using selected unit and locale.
+3. User searches and filters by template name, code, description, and status.
+4. User selects a template row.
+5. UI opens a right-side template profile drawer.
+6. UI lazily loads template versions for the selected row and reuses the cached version list during the same session.
+7. User may create a template definition from the drawer.
+8. User may create a draft template version from the selected template profile.
+9. User opens Studio for a selected version.
 
-## Integration Boundary
+## Template Studio Edit Flow
 
-- Draft creation, binding, validation, publish, and delete are local sample-data interactions only.
-- Real persistence must use governed Templates API mutation contracts once approved.
+1. User opens `/template/studio`.
+2. If route contains `template_code` and `version_code`, the Studio loads that version.
+3. If route has no selected version, user selects template and version in the left Studio panel.
+4. Structure is the default working step. Separate Validation and Indicator Mapping wizard steps are removed from the visible sequence.
+5. Existing builder zones, cell mappings, preview settings, validation UI state, and generated output columns reload from the saved studio draft when available.
+
+## Template Structure Builder Flow
+
+1. User opens the Structure step.
+2. UI shows the left Data Library.
+3. Data Library exposes General dimension member sets, Geography member sets, Time-period reporting sequence sets, and Measures/Data Fields.
+4. User drags library items into one of four zones:
+   - Separate Into Tabs By
+   - Each Row Represents
+   - Show Across Columns
+   - Fields To Fill
+5. UI loads member-set items for dropped dimension/geography/time sets.
+6. User may also drop directly on preview row headers, column headers, or editable cells.
+7. Direct preview drops update the matching structure zone.
+8. Live preview table updates automatically.
+9. User may adjust preview settings such as codes, zebra rows, compact cells, and editable-cell highlighting.
+10. If a time-period set is used, the template stores it as a governed `TIME_PERIOD` axis reference.
+11. Template Studio can create a new time-period reporting sequence set for a future cycle.
+12. User may open Settings to add generated Compute, Calculated, or Rollup values to Fields To Fill.
+13. Generated values appear as non-editable preview columns and repeat under each active column group, such as every selected year.
+14. Rollup choices come from existing dimension rollup rules for selected structure dimensions.
+15. Save Draft persists the visible builder state and compute/calculated/rollup output definitions so Edit Studio can repopulate the prior design.
+
+## Time-Period Loose-End Closure
+
+- A new year/cycle must not be handled by editing a used period set.
+- A new year/cycle must create a new time-period set/version, even when some or all members overlap with the previous set.
+- Template axis references the selected set by public `member_set_code`.
+- Requests and Data Entry must later resolve exact collection periods from request context when behavior is `FROM_REQUEST`.
+
+## Pending Flows
+
+- Full production hardening for axes, measures, cells, binding groups, render elements, and axis-member bindings.
+- Recipient view rules based on measure source assignment, officer assignment, periodicity, and grain.
+- Publish action with readiness checks.

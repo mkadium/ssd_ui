@@ -1,10 +1,32 @@
 # RELEASE NOTES
 
+## Latest Update
+
+- Fixed Template Studio column validation save behavior so UI preview column keys are not sent as real `cell_code` values.
+- Fixed Template Studio validation binding for Data Field measures by auto-registering the selected measure as a template-version measure before creating the validation binding.
+- Added Template Studio Settings drawer structure for Compute, Calculated, and Rollup configuration.
+- Added formula-token picker behavior from deduplicated editable preview columns.
+- Fixed formula-token picker so generated computed/calculated/rollup columns are not shown again as editable input columns.
+- Fixed Template Studio error toast behavior so error messages auto-dismiss after a short delay.
+- Removed separate `Validation (optional)` and `Indicator Mapping` wizard steps from Template Studio.
+- Wired Template Studio Save Draft to persist/reload builder state and compute/calculated/rollup formula outputs after API restart from latest code.
+- Kept provider-time formula execution as a later governed Data Entry/Validation integration.
+
 | Field | Value |
 |---|---|
 | Module | Templates UI |
-| Status | TEMPLATE_MANAGEMENT_CANVAS_FIX |
-| Last Updated | 2026-06-01 |
+| Status | FRONTEND_API_BACKED_FOUNDATION |
+| Last Updated | 2026-07-19 |
+
+## v0.2.0
+- Added API-backed Template Library at `/template/library`.
+- Added API-backed Template Studio foundation at `/template/studio`.
+- Added template definition and template version create drawers.
+- Added governed Template Studio step sequence. Current visible Studio sequence is structure, recipients, preview, and publish.
+- Implemented the first governed Structure step for `TIME_PERIOD` axes.
+- Added `FROM_REQUEST`, `CONTRIBUTOR_SELECT`, and `FIXED_SET` behavior guidance for time-period handling.
+- Enforced UI guidance that used/published time-period sets are referenced from templates and not edited inside Template Studio.
+- Added render-contract preview foundation for selected template versions.
 
 ## v0.1.1
 - Fixed Template Designer canvas axis rebinding behavior.

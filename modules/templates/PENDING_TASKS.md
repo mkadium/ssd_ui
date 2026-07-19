@@ -6,3 +6,4 @@
 | Implement read-only template render contract preview | UI Team | DONE_SAMPLE_DATA | v0.1.0 |
 | Implement Template Designer sample-data UX shell | UI Team | DONE_SAMPLE_DATA | v0.1.0 |
 | Define designer save/publish API needs for governance/API | UI Team | PENDING | v0.1.0 |
+| Define durable formula/calculation DB/API contract for provider-time computation | Governance/API/DB/UI | PENDING | v0.2.0 |

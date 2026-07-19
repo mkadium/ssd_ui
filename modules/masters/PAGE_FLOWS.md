@@ -7,6 +7,7 @@
 | MASTERS-FLOW-003 | Reference Masters by category | IMPLEMENTED_SAMPLE_DATA |
 | MASTERS-FLOW-004 | Organization/officer/source assignment inspection | IMPLEMENTED_SAMPLE_DATA |
 | MASTERS-FLOW-005 | Framework hierarchy creation affordances and mapping coverage drilldown | IMPLEMENTED_SAMPLE_DATA |
+| MASTERS-FLOW-006 | Data Field Library source, periodicity, and grain mapping | IMPLEMENTED_LOCAL_BUILD_VERIFIED |
 
 ## Implemented Framework Setup Flow
 
@@ -36,3 +37,18 @@
 3. Each tab has table-specific stats, search, table, row action buttons, and modal create/edit/delete states.
 4. Officer forms map the officer to a ministry/department/division via organization selection.
 5. Measure forms reference Units through `unit_code`.
+
+## Implemented Data Field Library Flow
+
+1. Authenticated user opens `/data-fields/library`.
+2. Page loads a table-ready list of measures/data fields for the selected or derived unit context using `GET /masters/data-fields`.
+3. User filters by source/ministry/department, periodicity, UOM, availability/status, grain, or text search.
+4. User clicks a data-field row and opens the full Data Field detail workspace at `/data-fields/library?measure={measure_code}` using `GET /masters/data-fields/{measure_code}`.
+5. Overview tab shows name, code, indicator/version context, UOM, status, default source, periodicity, required grain summary, usage, and last approved/reference period.
+6. Source Mapping tab maps one measure to one or more source organizations using searchable organization dropdowns.
+7. Periodicity tab maps the measure to collection/reporting periodicity using searchable periodicity dropdowns.
+8. Required Grain tab maps one or more collection keys to the measure, such as geography, time period, locality member set, or another dimension/member set.
+9. Used In tab shows template/request/reporting usage when API supports it.
+10. History tab shows mapping changes returned by the detail API, or a clean empty state when none exists.
+11. Save is allowed only after dropdown selections resolve to stable codes.
+12. Data Field create/edit/deactivate uses the existing indicator-version measure APIs before source, periodicity, and required-grain mappings are configured.
