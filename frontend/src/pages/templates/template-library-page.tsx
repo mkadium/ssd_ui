@@ -1,14 +1,20 @@
-import { Edit3, FileSpreadsheet, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Edit3, FileSpreadsheet, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   createTemplate,
   createTemplateVersion,
+  getTemplateStudioDraft,
+  listTemplateFormulaOutputs,
   listTemplates,
   listTemplateVersions,
+  saveTemplateStudioDraft,
+  setTemplateVersionStatus,
   updateTemplate,
   updateTemplateVersion,
+  upsertTemplateFormulaOutput,
   type TemplateDefinition,
+  type TemplateFormulaOutput,
   type TemplateVersion,
 } from "../../api/templates.api";
 import { getSelectedLocale, getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
@@ -30,6 +36,7 @@ const emptyVersionForm = {
   is_current: false,
   subtitle: "",
   instructions: "",
+  clone_source_version_code: "",
 };
 
 function textValue(value: unknown) {
@@ -42,6 +49,10 @@ function compactCode(value: string) {
 
 function templateName(template: TemplateDefinition) {
   return template.name ?? template.template_name ?? template.template_code ?? "-";
+}
+
+function versionTitle(version: TemplateVersion) {
+  return version.title ?? version.version_code ?? "Template version";
 }
 
 function formatDate(value: unknown) {
@@ -183,13 +194,62 @@ export function TemplateLibraryPage() {
     if (!selectedTemplate?.template_code) return;
     const nextNumber = Math.max(0, ...versions.map((version) => Number(version.version_number ?? 0))) + 1;
     const baseCode = compactCode(selectedTemplate.template_code);
+    const sourceVersion =
+      versions.find((version) => version.version_code === selectedTemplate.current_version_code) ??
+      versions.find((version) => version.is_current) ??
+      versions[0];
     setVersionForm({
       ...emptyVersionForm,
       version_code: `${baseCode}_V${nextNumber}`,
       title: `${templateName(selectedTemplate)} v${nextNumber}`,
       version_number: nextNumber,
+      clone_source_version_code: sourceVersion?.version_code ?? "",
     });
     setDrawer("version");
+  }
+
+  async function cloneVersionDesign(sourceVersionCode: string, targetVersionCode: string) {
+    if (!sourceVersionCode || !targetVersionCode || sourceVersionCode === targetVersionCode) return;
+    const [draftResult, formulasResult] = await Promise.allSettled([
+      getTemplateStudioDraft(sourceVersionCode),
+      listTemplateFormulaOutputs(sourceVersionCode),
+    ]);
+
+    if (draftResult.status === "fulfilled" && draftResult.value.data?.studio_state) {
+      await saveTemplateStudioDraft(targetVersionCode, {
+        unit_code: getSelectedUnitCode(),
+        studio_state: {
+          ...draftResult.value.data.studio_state,
+          cloned_from_version_code: sourceVersionCode,
+          savedAt: new Date().toISOString(),
+        },
+        updated_by: "ui-template-version-clone",
+      });
+    }
+
+    if (formulasResult.status === "fulfilled") {
+      const formulas = formulasResult.value.data ?? [];
+      await Promise.all(
+        formulas.map((formula: TemplateFormulaOutput, index: number) =>
+          upsertTemplateFormulaOutput(targetVersionCode, {
+            formula_code: formula.formula_code ?? `CLONED_FORMULA_${index + 1}`,
+            formula_name: formula.formula_name ?? formula.formula_code ?? `Cloned formula ${index + 1}`,
+            formula_type: formula.formula_type ?? "COMPUTE",
+            expression_text: formula.expression_text ?? "",
+            unit_code: getSelectedUnitCode(),
+            output_uom_code: formula.output_uom_code ?? null,
+            function_code: formula.function_code ?? null,
+            source_column_keys: formula.source_column_keys ?? [],
+            render_metadata: {
+              ...(formula.render_metadata ?? {}),
+              cloned_from_version_code: sourceVersionCode,
+            },
+            sort_order: formula.sort_order ?? index + 1,
+            is_active: formula.is_active !== false,
+          }),
+        ),
+      );
+    }
   }
 
   async function saveTemplate(event: FormEvent) {
@@ -269,7 +329,10 @@ export function TemplateLibraryPage() {
         subtitle: versionForm.subtitle.trim() || undefined,
         instructions: versionForm.instructions.trim() || undefined,
       });
-      setNotice("Template version saved.");
+      if (versionForm.clone_source_version_code) {
+        await cloneVersionDesign(versionForm.clone_source_version_code, versionCode);
+      }
+      setNotice(versionForm.clone_source_version_code ? "Template version cloned. Opening Studio..." : "Template version saved.");
       setDrawer(null);
       setVersionCache((current) => {
         const next = { ...current };
@@ -277,8 +340,40 @@ export function TemplateLibraryPage() {
         return next;
       });
       await loadVersions(selectedTemplate.template_code, true);
+      navigate(
+        `/template/studio?template_code=${encodeURIComponent(selectedTemplate.template_code)}&version_code=${encodeURIComponent(
+          versionCode,
+        )}&step=structure`,
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Template version could not be saved.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function retireVersion(version: TemplateVersion) {
+    if (!version.version_code || !selectedTemplate?.template_code) return;
+    const confirmed = window.confirm(`Retire ${versionTitle(version)}? This keeps audit history but removes it from active use.`);
+    if (!confirmed) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      await setTemplateVersionStatus(version.version_code, {
+        unit_code: getSelectedUnitCode(),
+        status: "RETIRED",
+        is_current: false,
+      });
+      setNotice("Template version retired.");
+      setVersionCache((current) => {
+        const next = { ...current };
+        delete next[selectedTemplate.template_code ?? ""];
+        return next;
+      });
+      await loadVersions(selectedTemplate.template_code, true);
+      await loadTemplates();
+    } catch (retireError) {
+      setError(retireError instanceof Error ? retireError.message : "Template version could not be retired.");
     } finally {
       setIsSaving(false);
     }
@@ -459,10 +554,9 @@ export function TemplateLibraryPage() {
                 <p>No versions yet. Create a draft version before opening Studio.</p>
               ) : (
                 versions.map((version) => (
-                  <button
+                  <div
                     key={version.version_code}
                     className="template-version-card"
-                    type="button"
                     onClick={() =>
                       navigate(
                         `/template/studio?template_code=${encodeURIComponent(selectedTemplate.template_code ?? "")}&version_code=${encodeURIComponent(
@@ -480,7 +574,20 @@ export function TemplateLibraryPage() {
                       <em>{version.status}</em>
                       {version.is_current && <b>Current</b>}
                     </span>
-                  </button>
+                    <button
+                      className="icon-button danger"
+                      type="button"
+                      disabled={isSaving}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void retireVersion(version);
+                      }}
+                      aria-label={`Retire ${versionTitle(version)}`}
+                      title="Retire version"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -533,7 +640,21 @@ export function TemplateLibraryPage() {
             <label>Version title *<input required value={versionForm.title} onChange={(event) => setVersionForm((form) => ({ ...form, title: event.target.value }))} /></label>
             <label>Version code *<input required value={versionForm.version_code} onChange={(event) => setVersionForm((form) => ({ ...form, version_code: compactCode(event.target.value) }))} /></label>
             <label>Version number<input type="number" min={1} value={versionForm.version_number} onChange={(event) => setVersionForm((form) => ({ ...form, version_number: Number(event.target.value) }))} /></label>
-            <label>Status<select value={versionForm.status} onChange={(event) => setVersionForm((form) => ({ ...form, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option></select></label>
+            <label>
+              Clone bindings from
+              <select
+                value={versionForm.clone_source_version_code}
+                onChange={(event) => setVersionForm((form) => ({ ...form, clone_source_version_code: event.target.value }))}
+              >
+                <option value="">Start empty</option>
+                {versions.map((version) => (
+                  <option key={version.version_code} value={version.version_code}>
+                    {versionTitle(version)} - {version.version_code}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>Status<input value="DRAFT" readOnly /></label>
             <label>Subtitle<input value={versionForm.subtitle} onChange={(event) => setVersionForm((form) => ({ ...form, subtitle: event.target.value }))} /></label>
             <label>Instructions<textarea value={versionForm.instructions} onChange={(event) => setVersionForm((form) => ({ ...form, instructions: event.target.value }))} /></label>
             <label className="checkbox-row"><input type="checkbox" checked={versionForm.is_current} onChange={(event) => setVersionForm((form) => ({ ...form, is_current: event.target.checked }))} /> Mark as current version</label>

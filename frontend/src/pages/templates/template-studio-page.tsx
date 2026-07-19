@@ -27,6 +27,7 @@ import {
   listTemplateMeasures,
   listTemplates,
   listTemplateVersions,
+  publishTemplateVersion,
   saveTemplateStudioDraft,
   updateTemplateAxis,
   upsertTemplateFormulaOutput,
@@ -314,6 +315,7 @@ export function TemplateStudioPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isVersionLoading, setIsVersionLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const versionHydratedRef = useRef(false);
   const autosaveTimerRef = useRef<number | undefined>(undefined);
 
@@ -1267,7 +1269,7 @@ export function TemplateStudioPage() {
   async function saveStructureDraft() {
     if (!selectedVersion?.version_code) {
       setError("Select a template version before saving structure.");
-      return;
+      return false;
     }
     setIsSaving(true);
     setError("");
@@ -1309,8 +1311,10 @@ export function TemplateStudioPage() {
       await persistComputedColumns(selectedVersion.version_code);
       await saveDraftSnapshot({ silent: true });
       setNotice("Template structure draft saved.");
+      return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Template structure could not be saved.");
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -1319,6 +1323,44 @@ export function TemplateStudioPage() {
   function goNext() {
     const index = steps.findIndex((step) => step.code === activeStep);
     setActiveStep(steps[Math.min(steps.length - 1, index + 1)].code);
+  }
+
+  async function publishCurrentVersion() {
+    if (!selectedVersion?.version_code) {
+      setError("Select a template version before publishing.");
+      return;
+    }
+    setIsPublishing(true);
+    setError("");
+    try {
+      const saved = await saveStructureDraft();
+      if (!saved) return;
+      await publishTemplateVersion(selectedVersion.version_code, {
+        unit_code: getSelectedUnitCode(),
+        publish_notes: "Published from Template Studio after structure preview review.",
+      });
+      setNotice("Template version published successfully.");
+      if (selectedTemplate?.template_code) {
+        await loadVersions(selectedTemplate.template_code);
+      }
+    } catch (publishError) {
+      const message = publishError instanceof Error ? publishError.message : "";
+      if (message.includes("approved data contract") || message.includes("API request failed: 400")) {
+        setError("Publish blocked. Complete Recipients mapping first: every editable measure needs one active primary data provider.");
+      } else {
+        setError(message || "Template version could not be published.");
+      }
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  function handlePrimaryAction() {
+    if (activeStep === "publish") {
+      void publishCurrentVersion();
+      return;
+    }
+    goNext();
   }
 
   function goBack() {
@@ -1336,8 +1378,10 @@ export function TemplateStudioPage() {
         <div className="toolbar-actions">
           <button className="secondary-button compact" type="button" onClick={() => navigate("/template/library")}>Library</button>
           <button className="secondary-button compact" type="button" onClick={() => void loadAll()} disabled={isStudioHydrating}><RefreshCw size={13} /> Refresh</button>
-          <button className="secondary-button compact" type="button" onClick={() => void saveStructureDraft()} disabled={isSaving || isStudioHydrating}><Save size={13} /> Save</button>
-          <button className="primary-button compact" type="button" onClick={goNext} disabled={isStudioHydrating}><CheckCircle2 size={13} /> Done</button>
+          <button className="secondary-button compact" type="button" onClick={() => void saveStructureDraft()} disabled={isSaving || isPublishing || isStudioHydrating}><Save size={13} /> Save</button>
+          <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating}>
+            <CheckCircle2 size={13} /> {activeStep === "publish" ? (isPublishing ? "Publishing" : "Publish") : "Done"}
+          </button>
         </div>
       </div>
 
@@ -1565,8 +1609,10 @@ export function TemplateStudioPage() {
       </div>
 
       <div className="sticky-form-footer">
-        <button className="ghost-button" type="button" onClick={goBack} disabled={isStudioHydrating}>Back</button>
-        <button className="primary-button compact" type="button" onClick={goNext} disabled={isStudioHydrating}>Continue</button>
+        <button className="ghost-button" type="button" onClick={goBack} disabled={isPublishing || isStudioHydrating}>Back</button>
+        <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating}>
+          {activeStep === "publish" ? (isPublishing ? "Publishing" : "Publish") : "Continue"}
+        </button>
       </div>
 
       {validationDrawer && (

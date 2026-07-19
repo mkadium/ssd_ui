@@ -136,6 +136,18 @@ export type TemplateVersionPayload = {
   instructions?: string;
 };
 
+export type TemplatePublishPayload = {
+  unit_code: string;
+  publish_notes?: string | null;
+  effective_from?: string | null;
+};
+
+export type TemplateVersionStatusPayload = {
+  unit_code: string;
+  status: string;
+  is_current?: boolean;
+};
+
 export type TemplateAxisPayload = {
   axis_code: string;
   axis_role: string;
@@ -275,6 +287,22 @@ export async function createTemplateVersion(templateCode: string, payload: Templ
 export async function updateTemplateVersion(templateCode: string, versionCode: string, payload: TemplateVersionPayload) {
   const result = await apiPatch<DetailResponse<TemplateVersion>, TemplateVersionPayload>(
     `/templates/${encodeURIComponent(templateCode)}/versions/${encodeURIComponent(versionCode)}${query({ locale: getSelectedLocale() })}`,
+    payload,
+  );
+  return result.data;
+}
+
+export async function publishTemplateVersion(versionCode: string, payload: TemplatePublishPayload) {
+  const result = await apiPost<DetailResponse<TemplateVersion>, TemplatePublishPayload>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/publish${query({ locale: getSelectedLocale() })}`,
+    payload,
+  );
+  return result.data;
+}
+
+export async function setTemplateVersionStatus(versionCode: string, payload: TemplateVersionStatusPayload) {
+  const result = await apiPatch<DetailResponse<TemplateVersion>, TemplateVersionStatusPayload>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/status${query({ locale: getSelectedLocale() })}`,
     payload,
   );
   return result.data;
