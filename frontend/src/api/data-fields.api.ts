@@ -18,6 +18,9 @@ export type DataFieldListItem = {
   data_field_name?: string;
   measure_name?: string;
   name?: string;
+  display_name?: string;
+  localized_name?: string;
+  label?: string;
   description?: string | null;
   national_indicator_code?: string;
   indicator_code?: string;
@@ -48,6 +51,10 @@ export type DataFieldListItem = {
   status?: string | null;
   used_in_count?: number | string | null;
   usage_count?: number | string | null;
+  used_in_templates?: number | string | null;
+  published_indicator_count?: number | string | null;
+  mapped_indicator_count?: number | string | null;
+  indicator_usage_count?: number | string | null;
   last_approved?: string | null;
   last_approved_period?: string | null;
   reference_period?: string | null;
@@ -89,6 +96,9 @@ export type DataFieldDetail = DataFieldListItem & {
   source_mappings?: DataFieldMapping[];
   periodicity_mappings?: DataFieldMapping[];
   grain_mappings?: DataFieldMapping[];
+  source_officers?: DataFieldMapping[];
+  source_officer_mappings?: DataFieldMapping[];
+  template_grain_usage?: DataFieldMapping[];
   used_in?: DataFieldMapping[];
   history?: DataFieldMapping[];
 };
@@ -139,7 +149,7 @@ export type DataFieldGrainMappingPayload = {
 
 function dataFieldQuery(params: Record<string, string | number | undefined | null> = {}) {
   const query = new URLSearchParams({
-    locale: getSelectedLocale(),
+    locale: String(params.locale ?? getSelectedLocale()),
     unit_code: getSelectedUnitCode(),
   });
 
@@ -152,10 +162,11 @@ function dataFieldQuery(params: Record<string, string | number | undefined | nul
   return query;
 }
 
-export async function listDataFields(params: { limit?: number; offset?: number } = {}) {
+export async function listDataFields(params: { limit?: number; offset?: number; locale?: string } = {}) {
   const query = dataFieldQuery({
     limit: params.limit ?? 500,
     offset: params.offset ?? 0,
+    locale: params.locale,
   });
   const result = await apiGet<ListResponse<DataFieldListItem>>(`/masters/data-fields?${query}`);
   return result.data;

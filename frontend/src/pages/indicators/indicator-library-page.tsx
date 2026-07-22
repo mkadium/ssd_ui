@@ -7,6 +7,7 @@ import {
   getIndicator,
   listGlobalIndicators,
   listIndicators,
+  saveFrameworkIndicatorMapping,
   saveGlobalIndicatorMapping,
   saveSourceAssignment,
   saveSourceOfficerAssignment,
@@ -20,10 +21,18 @@ import {
   type IndicatorListItem,
   type IndicatorMeasure,
   type IndicatorMetadataDetail,
+  type PublishedTemplateUsage,
   type IndicatorSourceAssignment,
+  type IndicatorSourceOfficerAssignment,
   type IndicatorVersion,
 } from "../../api/indicators.api";
-import { listFrameworkEditions, type FrameworkEdition } from "../../api/framework.api";
+import {
+  getFrameworkHierarchy,
+  listFrameworkEditions,
+  type FrameworkEdition,
+  type FrameworkHierarchy,
+  type FrameworkNode,
+} from "../../api/framework.api";
 import { listMasterRecords, type MasterRecord } from "../../api/masters-reference.api";
 import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
 import { useSearchParams } from "react-router-dom";
@@ -39,6 +48,8 @@ type IndicatorCreateForm = {
   description: string;
   status: string;
   color_value: string;
+  parent_node_code: string;
+  target_node_code: string;
 };
 
 function textValue(value: unknown): string {
@@ -141,6 +152,120 @@ function dedupeSourceAssignments(records: IndicatorSourceAssignment[]) {
   });
 }
 
+function sourceAssignmentKey(record: Pick<IndicatorSourceAssignment, "source_organization_code" | "assignment_role">) {
+  return [record.source_organization_code ?? "", record.assignment_role ?? "PRIMARY_SOURCE"].join("|").toUpperCase();
+}
+
+function officersForSourceAssignment(assignment: IndicatorSourceAssignment, officers: IndicatorSourceOfficerAssignment[]) {
+  const key = sourceAssignmentKey(assignment);
+  return officers.filter((officer) => sourceAssignmentKey(officer) === key);
+}
+
+function sourceAssignmentTitle(item: IndicatorSourceAssignment | IndicatorSourceOfficerAssignment) {
+  const ministry = item.ministry_name ?? item.ministry_organization_code;
+  const department = item.department_organization_name ?? item.source_organization_name ?? item.source_organization_code;
+  if (ministry && department && String(ministry) !== String(department)) {
+    return `${textValue(ministry)} / ${textValue(department)}`;
+  }
+  return textValue(department ?? ministry);
+}
+
+function usageSourceTitle(item: PublishedTemplateUsage) {
+  const ministry = item.ministry_name ?? item.ministry_organization_code;
+  const department = item.department_organization_name ?? item.source_organization_name ?? item.source_organization_code;
+  if (ministry && department && String(ministry) !== String(department)) {
+    return `${textValue(ministry)} / ${textValue(department)}`;
+  }
+  return textValue(department ?? ministry);
+}
+
+function usageKey(item: PublishedTemplateUsage, suffix = "") {
+  return [
+    item.template_code ?? "",
+    item.version_code ?? "",
+    item.template_measure_code ?? item.measure_code ?? "",
+    item.source_organization_code ?? "",
+    item.access_role ?? "",
+    suffix,
+  ].join("|");
+}
+
+function uniquePublishedUsage(records: PublishedTemplateUsage[], keySelector: (record: PublishedTemplateUsage) => string) {
+  const seen = new Set<string>();
+  return records.filter((record) => {
+    const key = keySelector(record);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function indicatorTargetNodes(hierarchy?: FrameworkHierarchy | null): FrameworkNode[] {
+  if (!hierarchy) return [];
+  const mappingLevels = hierarchy.levels.filter((level) => level.is_active !== false && level.allows_indicator_mapping);
+  const fallbackLevel = hierarchy.levels
+    .filter((level) => level.is_active !== false)
+    .sort((left, right) => Number(right.level_number ?? 0) - Number(left.level_number ?? 0))[0];
+  const allowedLevelCodes = new Set((mappingLevels.length ? mappingLevels : fallbackLevel ? [fallbackLevel] : []).map((level) => level.level_code));
+  return hierarchy.nodes
+    .filter((node) => node.is_active !== false && allowedLevelCodes.has(node.level_code))
+    .sort((left, right) => {
+      const leftNumber = left.node_number ?? left.node_code;
+      const rightNumber = right.node_number ?? right.node_code;
+      return String(leftNumber).localeCompare(String(rightNumber), undefined, { numeric: true });
+    });
+}
+
+function parentNodeForTarget(targetNodeCode: string, hierarchy?: FrameworkHierarchy | null): FrameworkNode | undefined {
+  const relationship = hierarchy?.relationships.find(
+    (candidate) => candidate.is_active !== false && candidate.child_node_code === targetNodeCode,
+  );
+  return relationship ? hierarchy?.nodes.find((candidate) => candidate.node_code === relationship.parent_node_code) : undefined;
+}
+
+function indicatorParentNodes(hierarchy?: FrameworkHierarchy | null): FrameworkNode[] {
+  const targets = indicatorTargetNodes(hierarchy);
+  const parentCodes = new Set(
+    targets
+      .map((target) => parentNodeForTarget(target.node_code, hierarchy)?.node_code)
+      .filter((nodeCode): nodeCode is string => Boolean(nodeCode)),
+  );
+  return hierarchy?.nodes
+    .filter((node) => node.is_active !== false && parentCodes.has(node.node_code))
+    .sort((left, right) => {
+      const leftNumber = left.node_number ?? left.node_code;
+      const rightNumber = right.node_number ?? right.node_code;
+      return String(leftNumber).localeCompare(String(rightNumber), undefined, { numeric: true });
+    }) ?? [];
+}
+
+function indicatorTargetsForParent(parentNodeCode: string, hierarchy?: FrameworkHierarchy | null): FrameworkNode[] {
+  const targets = indicatorTargetNodes(hierarchy);
+  if (!parentNodeCode) return targets;
+  const childCodes = new Set(
+    hierarchy?.relationships
+      .filter((relationship) => relationship.is_active !== false && relationship.parent_node_code === parentNodeCode)
+      .map((relationship) => relationship.child_node_code) ?? [],
+  );
+  return targets.filter((target) => childCodes.has(target.node_code));
+}
+
+function frameworkNodeOptionLabel(node: FrameworkNode, hierarchy?: FrameworkHierarchy | null): string {
+  const parentRelationship = hierarchy?.relationships.find((relationship) => relationship.child_node_code === node.node_code);
+  const parent = parentRelationship
+    ? hierarchy?.nodes.find((candidate) => candidate.node_code === parentRelationship.parent_node_code)
+    : undefined;
+  const prefix = node.node_number ? `${node.node_number} - ` : "";
+  const parentText = parent ? `${parent.node_number ?? parent.node_code} / ` : "";
+  return `${parentText}${prefix}${node.name ?? node.short_name ?? node.node_code}`;
+}
+
+function levelNameForNode(node?: FrameworkNode, hierarchy?: FrameworkHierarchy | null): string {
+  if (!node) return "Level";
+  const level = hierarchy?.levels.find((candidate) => candidate.level_code === node.level_code);
+  return level?.name ?? node.level_code;
+}
+
 export function IndicatorLibraryPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [indicators, setIndicators] = useState<IndicatorListItem[]>([]);
@@ -159,6 +284,7 @@ export function IndicatorLibraryPage() {
   const [globalIndicators, setGlobalIndicators] = useState<GlobalIndicatorListItem[]>([]);
   const [officers, setOfficers] = useState<MasterRecord[]>([]);
   const [activeFramework, setActiveFramework] = useState<FrameworkEdition | null>(null);
+  const [frameworkHierarchy, setFrameworkHierarchy] = useState<FrameworkHierarchy | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingIndicatorCode, setEditingIndicatorCode] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -169,6 +295,8 @@ export function IndicatorLibraryPage() {
     description: "",
     status: "DRAFT",
     color_value: "#e91d3d",
+    parent_node_code: "",
+    target_node_code: "",
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
@@ -237,6 +365,13 @@ export function IndicatorLibraryPage() {
   const activeCount = indicators.filter((indicator) => normalizeStatus(indicator) === "ACTIVE").length;
   const mappedGlobalCount = indicators.filter((indicator) => Boolean(indicator.global_indicator_code)).length;
   const sourcedCount = indicators.filter((indicator) => Boolean(indicator.source_organization_code)).length;
+  const parentNodeOptions = useMemo(() => indicatorParentNodes(frameworkHierarchy), [frameworkHierarchy]);
+  const targetNodeOptions = useMemo(
+    () => (parentNodeOptions.length > 0 && !createForm.parent_node_code ? [] : indicatorTargetsForParent(createForm.parent_node_code, frameworkHierarchy)),
+    [createForm.parent_node_code, frameworkHierarchy, parentNodeOptions.length],
+  );
+  const targetNodeLabel = levelNameForNode(targetNodeOptions[0], frameworkHierarchy);
+  const parentNodeLabel = levelNameForNode(parentNodeOptions[0], frameworkHierarchy);
 
   async function loadPage() {
     setIsLoading(true);
@@ -258,18 +393,24 @@ export function IndicatorLibraryPage() {
       setUoms(uomResponse.data);
       setGlobalIndicators(globalResponse.data);
       setOfficers(officerResponse.data);
-      setActiveFramework(
+      const nextFramework =
         frameworkResponse.data.find((edition) => edition.is_active && edition.status !== "INACTIVE") ??
           frameworkResponse.data.find((edition) => edition.is_active) ??
           frameworkResponse.data[0] ??
-          null,
-      );
+          null;
+      const hierarchyResponse = nextFramework?.framework_code
+        ? await getFrameworkHierarchy(nextFramework.framework_code, nextFramework.edition_code).catch(() => null)
+        : null;
+
+      setActiveFramework(nextFramework);
+      setFrameworkHierarchy(hierarchyResponse?.data ?? null);
 
       setSelectedCode("");
       setDetailCache({});
     } catch {
       setIndicators([]);
       setDetailCache({});
+      setFrameworkHierarchy(null);
       setSelectedCode("");
       setError("Indicator records could not be loaded. Please refresh or try again later.");
     } finally {
@@ -305,6 +446,10 @@ export function IndicatorLibraryPage() {
       setError("Indicator name is required.");
       return;
     }
+    if (!createForm.target_node_code) {
+      setError("Select the parent and target before saving the indicator.");
+      return;
+    }
     setIsSaving(true);
     setError("");
     try {
@@ -322,9 +467,38 @@ export function IndicatorLibraryPage() {
         color_method: createForm.color_value.trim() ? "HEX" : undefined,
       };
       if (editingIndicatorCode) {
+        const previousDetail = detailCache[editingIndicatorCode];
+        const previousMapping = firstFrameworkMapping(previousDetail);
         await updateIndicator(editingIndicatorCode, payload);
+        if (
+          createForm.target_node_code &&
+          previousMapping?.mapped_node?.node_code &&
+          previousMapping.mapped_node.node_code !== createForm.target_node_code
+        ) {
+          await saveFrameworkIndicatorMapping({
+            framework_code: activeFramework.framework_code,
+            edition_code: activeFramework.edition_code,
+            node_code: previousMapping.mapped_node.node_code,
+            national_indicator_code: editingIndicatorCode,
+            mapping_type: previousMapping.mapping_type ?? "PRIMARY",
+            is_active: false,
+          });
+        }
       } else {
-        await createIndicator(payload);
+        const response = await createIndicator(payload);
+        const overview = overviewOf(response.data);
+        payload.national_indicator_code = overview.national_indicator_code ?? payload.national_indicator_code;
+      }
+      const savedIndicatorCode = editingIndicatorCode || payload.national_indicator_code || createForm.national_indicator_code.trim();
+      if (createForm.target_node_code && savedIndicatorCode) {
+        await saveFrameworkIndicatorMapping({
+          framework_code: activeFramework.framework_code,
+          edition_code: activeFramework.edition_code,
+          node_code: createForm.target_node_code,
+          national_indicator_code: savedIndicatorCode,
+          mapping_type: "PRIMARY",
+          is_active: true,
+        });
       }
       setIsCreateOpen(false);
       setEditingIndicatorCode("");
@@ -335,6 +509,8 @@ export function IndicatorLibraryPage() {
         description: "",
         status: "DRAFT",
         color_value: "#e91d3d",
+        parent_node_code: "",
+        target_node_code: "",
       });
       await loadPage();
     } catch (createError) {
@@ -353,12 +529,18 @@ export function IndicatorLibraryPage() {
       description: "",
       status: "DRAFT",
       color_value: "#e91d3d",
+      parent_node_code: "",
+      target_node_code: "",
     });
     setIsCreateOpen(true);
   }
 
   function openEditDrawer(detail: IndicatorDetail) {
     const overview = overviewOf(detail);
+    const frameworkMapping = firstFrameworkMapping(detail);
+    const parentNode = frameworkMapping?.mapped_node?.node_code
+      ? parentNodeForTarget(frameworkMapping.mapped_node.node_code, frameworkHierarchy)
+      : undefined;
     setEditingIndicatorCode(overview.national_indicator_code ?? "");
     setCreateForm({
       national_indicator_code: overview.national_indicator_code ?? "",
@@ -367,6 +549,8 @@ export function IndicatorLibraryPage() {
       description: overview.description ?? "",
       status: overview.status ?? "DRAFT",
       color_value: overview.color_value ?? "#e91d3d",
+      parent_node_code: parentNode?.node_code ?? "",
+      target_node_code: frameworkMapping?.mapped_node?.node_code ?? "",
     });
     setIsCreateOpen(true);
   }
@@ -638,6 +822,51 @@ export function IndicatorLibraryPage() {
                   <input value={activeFramework?.edition_code ?? ""} readOnly />
                 </label>
               </div>
+              <div className="form-grid two">
+                <label className="form-field">
+                  <span>{parentNodeOptions.length ? parentNodeLabel : "Parent level"}</span>
+                  <select
+                    value={createForm.parent_node_code}
+                    onChange={(event) =>
+                      setCreateForm((current) => ({
+                        ...current,
+                        parent_node_code: event.target.value,
+                        target_node_code: "",
+                      }))
+                    }
+                    disabled={parentNodeOptions.length === 0}
+                  >
+                    <option value="">
+                      {parentNodeOptions.length ? `Select ${parentNodeLabel.toLowerCase()}` : "No parent level available"}
+                    </option>
+                    {parentNodeOptions.map((node) => (
+                      <option value={node.node_code} key={node.node_code}>
+                        {frameworkNodeOptionLabel(node, frameworkHierarchy)}
+                      </option>
+                    ))}
+                  </select>
+                  <small>Loaded from the selected unit's active framework hierarchy.</small>
+                </label>
+                <label className="form-field">
+                  <span>{targetNodeLabel} *</span>
+                  <select
+                    value={createForm.target_node_code}
+                    onChange={(event) => setCreateForm((current) => ({ ...current, target_node_code: event.target.value }))}
+                    required
+                    disabled={targetNodeOptions.length === 0}
+                  >
+                    <option value="">
+                      {targetNodeOptions.length ? `Select ${targetNodeLabel.toLowerCase()}` : "No indicator-mappable level available"}
+                    </option>
+                    {targetNodeOptions.map((node) => (
+                      <option value={node.node_code} key={node.node_code}>
+                        {frameworkNodeOptionLabel(node, frameworkHierarchy)}
+                      </option>
+                    ))}
+                  </select>
+                  <small>This creates the framework-indicator mapping for the indicator.</small>
+                </label>
+              </div>
               <label className="form-field">
                 <span>Indicator code</span>
                 <input
@@ -707,12 +936,41 @@ export function IndicatorLibraryPage() {
 
 function buildIndicatorRow(indicator: IndicatorListItem, detail?: IndicatorDetail, organizations: MasterRecord[] = []) {
   const overview = overviewOf(detail);
-  const source = firstSource(detail);
-  const resolvedSource = resolveSourceHierarchy(source, organizations);
-  const measure = firstMeasure(detail);
-  const version = firstVersion(detail);
   const metadata = firstMetadata(detail);
   const globalMapping = firstGlobalMapping(detail);
+  const publishedUsage = (detail?.published_template_usage ?? []).find(
+    (item) =>
+      item.source_organization_code ||
+      item.source_organization_name ||
+      item.uom_code ||
+      item.uom_name ||
+      item.unit_code ||
+      item.periodicity_code ||
+      item.periodicity_name,
+  );
+  const publishedMinistry =
+    indicator.source_organization_name ??
+    publishedUsage?.ministry_name ??
+    publishedUsage?.ministry_organization_code ??
+    indicator.source_organization_code;
+  const publishedDepartment =
+    indicator.department_organization_name ??
+    publishedUsage?.department_organization_name ??
+    publishedUsage?.department_organization_code ??
+    indicator.department_organization_code;
+  const publishedUom =
+    indicator.unit_of_measure_name ??
+    indicator.uom_name ??
+    publishedUsage?.uom_name ??
+    publishedUsage?.uom_code ??
+    publishedUsage?.unit_code ??
+    indicator.unit_of_measure_code ??
+    indicator.uom_code;
+  const publishedPeriodicity =
+    indicator.periodicity_name ??
+    publishedUsage?.periodicity_name ??
+    publishedUsage?.periodicity_code ??
+    indicator.periodicity_code;
 
   return {
     indicatorCode: indicator.national_indicator_code || overview.national_indicator_code || "-",
@@ -721,29 +979,14 @@ function buildIndicatorRow(indicator: IndicatorListItem, detail?: IndicatorDetai
     globalCode: indicator.global_indicator_code || globalMapping?.global_indicator_code || "",
     globalNumber: indicator.global_indicator_number || globalMapping?.global_indicator_number || "",
     globalName: indicator.global_indicator_name || globalMapping?.global_indicator_name || "",
-    ministry:
-      indicator.source_organization_name ||
-      resolvedSource.ministry ||
-      source?.source_organization_code ||
-      "-",
-    department:
-      indicator.department_organization_name ||
-      source?.department_organization_name ||
-      resolvedSource.department ||
-      "-",
-    sourceCode: indicator.source_organization_code || source?.source_organization_code || "",
-    departmentCode: indicator.department_organization_code || "",
-    uom:
-      indicator.unit_of_measure_name ||
-      indicator.uom_name ||
-      indicator.unit_of_measure_code ||
-      indicator.uom_code ||
-      measure?.unit_code ||
-      version?.unit_of_measure_code ||
-      "-",
-    uomCode: indicator.unit_of_measure_code || indicator.uom_code || measure?.unit_code || version?.unit_of_measure_code || "",
-    periodicity: indicator.periodicity_name || indicator.periodicity_code || source?.periodicity_code || "-",
-    periodicityCode: indicator.periodicity_code || source?.periodicity_code || "",
+    ministry: publishedMinistry || "-",
+    department: publishedDepartment || "-",
+    sourceCode: indicator.source_organization_code || publishedUsage?.source_organization_code || "",
+    departmentCode: indicator.department_organization_code || publishedUsage?.department_organization_code || "",
+    uom: publishedUom || "-",
+    uomCode: indicator.unit_of_measure_code || indicator.uom_code || publishedUsage?.uom_code || publishedUsage?.unit_code || "",
+    periodicity: publishedPeriodicity || "-",
+    periodicityCode: indicator.periodicity_code || publishedUsage?.periodicity_code || "",
     lastUpdated: indicator.last_updated || indicator.updated_at || metadata?.latest_data_availability || "-",
   };
 }
@@ -831,10 +1074,65 @@ function IndicatorDetailPage({
   const [isMappingSaving, setIsMappingSaving] = useState("");
   const [mappingNotice, setMappingNotice] = useState("");
   const overview = overviewOf(detail);
-  const source = firstSource(detail);
-  const resolvedSource = resolveSourceHierarchy(source, organizations);
-  const sourceMinistry = resolvedSource.ministry ?? source?.source_organization_code;
-  const sourceDepartment = resolvedSource.department;
+  const publishedTemplateUsage = useMemo(() => detail.published_template_usage ?? [], [detail.published_template_usage]);
+  const publishedSourceUsage = useMemo(
+    () =>
+      uniquePublishedUsage(
+        publishedTemplateUsage.filter((item) => item.source_organization_code || item.source_organization_name),
+        (item) => [
+          item.template_code ?? "",
+          item.version_code ?? "",
+          item.source_organization_code ?? "",
+          item.access_role ?? "",
+          item.provider_mode ?? "",
+        ].join("|"),
+      ),
+    [publishedTemplateUsage],
+  );
+  const publishedPeriodicityUsage = useMemo(
+    () =>
+      uniquePublishedUsage(
+        publishedTemplateUsage.filter((item) => item.periodicity_code || item.periodicity_name),
+        (item) => [item.template_code ?? "", item.version_code ?? "", item.periodicity_code ?? item.periodicity_name ?? ""].join("|"),
+      ),
+    [publishedTemplateUsage],
+  );
+  const publishedUomUsage = useMemo(
+    () =>
+      uniquePublishedUsage(
+        publishedTemplateUsage.filter((item) => item.uom_code || item.uom_name || item.unit_code),
+        (item) => [item.template_code ?? "", item.version_code ?? "", item.uom_code ?? item.unit_code ?? item.uom_name ?? ""].join("|"),
+      ),
+    [publishedTemplateUsage],
+  );
+  const publishedMeasureUsage = useMemo(
+    () =>
+      uniquePublishedUsage(
+        publishedTemplateUsage.filter((item) => item.template_measure_code || item.measure_code || item.source_measure_code),
+        (item) => [
+          item.template_code ?? "",
+          item.version_code ?? "",
+          item.template_measure_code ?? item.measure_code ?? item.source_measure_code ?? "",
+          item.source_organization_code ?? "",
+        ].join("|"),
+      ),
+    [publishedTemplateUsage],
+  );
+  const publishedOfficerUsage = useMemo(
+    () =>
+      publishedTemplateUsage.flatMap((item) =>
+        (item.officers ?? []).map((officer) => ({
+          usage: item,
+          officer,
+        })),
+      ),
+    [publishedTemplateUsage],
+  );
+  const publishedPrimaryUsage = publishedTemplateUsage[0];
+  const sourceMinistry = publishedSourceUsage[0]?.ministry_name ?? publishedSourceUsage[0]?.ministry_organization_code;
+  const sourceDepartment = publishedSourceUsage[0]?.department_organization_name ?? publishedSourceUsage[0]?.department_organization_code;
+  const sourceUom = publishedUomUsage[0]?.uom_name ?? publishedUomUsage[0]?.uom_code ?? publishedUomUsage[0]?.unit_code;
+  const sourcePeriodicity = publishedPeriodicityUsage[0]?.periodicity_name ?? publishedPeriodicityUsage[0]?.periodicity_code;
   const measure = firstMeasure(detail);
   const version = firstVersion(detail);
   const metadata = firstMetadata(detail);
@@ -861,8 +1159,8 @@ function IndicatorDetailPage({
       metadata?.computation_description ??
         noteValue(notes, ["computation", "formula", "calculation_method", "computation_formula"]),
     ],
-    ["Unit of Measurement", measure?.unit_code ?? version?.unit_of_measure_code],
-    ["Periodicity", source?.periodicity_code ?? overview.periodicity_code],
+    ["Unit of Measurement", sourceUom],
+    ["Periodicity", sourcePeriodicity],
     ["Level of Disaggregation", noteValue(notes, ["level_of_disaggregation", "disaggregation_level"])],
     ["Type of Disaggregation", noteValue(notes, ["type_of_disaggregation", "disaggregation_type"])],
     ["Mapping with Global Indicator", globalMapping?.global_indicator_number ?? globalMapping?.global_indicator_code],
@@ -875,13 +1173,13 @@ function IndicatorDetailPage({
       mapping_type: frameworkMapping?.mapping_type ?? "PRIMARY",
       global_indicator_code: globalMapping?.global_indicator_code ?? "",
       global_mapping_type: globalMapping?.mapping_type ?? "DIRECT",
-      source_organization_code: source?.source_organization_code ?? "",
-      officer_code: source?.officer_code ?? "",
-      officer_label: source?.officer_display_name ?? "",
+      source_organization_code: publishedPrimaryUsage?.source_organization_code ?? "",
+      officer_code: "",
+      officer_label: "",
       recipient_type: "TO",
       contact_role: "NODAL_OFFICER",
-      periodicity_code: source?.periodicity_code ?? "",
-      assignment_role: source?.assignment_role ?? "PRIMARY_SOURCE",
+      periodicity_code: publishedPrimaryUsage?.periodicity_code ?? "",
+      assignment_role: publishedPrimaryUsage?.access_role ?? "PRIMARY_SOURCE",
       measure_code: measure?.measure_code ?? "",
       measure_name: textValue(measure?.name === "-" ? "" : measure?.name ?? measure?.measure_code ?? ""),
       measure_unit_code: measure?.unit_code ?? version?.unit_of_measure_code ?? "",
@@ -891,18 +1189,18 @@ function IndicatorDetailPage({
     setMappingNotice("");
     setMappingPanel("");
   }, [detail]);
-
-  const sourceAssignments = useMemo(() => dedupeSourceAssignments(detail.sources ?? detail.source_assignments ?? []), [detail.sources, detail.source_assignments]);
-  const sourceOfficers = useMemo(() => detail.source_officers ?? [], [detail.source_officers]);
+  const sourceAssignments = useMemo(() => dedupeSourceAssignments([]), []);
+  const sourceOfficers = useMemo(() => [], []);
   const selectedGlobalIndicator = globalIndicators.find((record) => record.global_indicator_code === mappingForm.global_indicator_code);
   const selectedSourceOrganization = organizations.find((record) => String(record.organization_code) === mappingForm.source_organization_code);
   const selectedPeriodicity = !mappingForm.periodicity_code || periodicities.some((record) => String(record.periodicity_code) === mappingForm.periodicity_code);
   const selectedMeasure = (detail.measures ?? []).find((item) => item.measure_code === mappingForm.measure_code);
   const selectedUom = !mappingForm.measure_unit_code || uoms.some((record) => String(record.uom_code) === mappingForm.measure_unit_code);
   const selectedOfficer = officers.find((record) => officerOptionLabel(record) === mappingForm.officer_label);
+  const selectedOfficerSourceAssignment = sourceAssignments.find((record) => record.source_organization_code === mappingForm.source_organization_code);
   const canSaveGlobalMapping = Boolean(frameworkCode && editionCode && indicatorCode && selectedGlobalIndicator && !isMappingSaving);
   const canSaveSourceAssignment = Boolean(frameworkCode && editionCode && indicatorCode && selectedSourceOrganization && selectedPeriodicity && !isMappingSaving);
-  const canSaveSourceOfficer = Boolean(indicatorCode && selectedSourceOrganization && selectedOfficer && !isMappingSaving);
+  const canSaveSourceOfficer = Boolean(indicatorCode && selectedOfficerSourceAssignment && selectedOfficer && !isMappingSaving);
   const canSaveMeasure = Boolean(currentVersionCode && selectedMeasure && selectedUom && !isMappingSaving);
 
   async function runMappingSave(action: string, work: () => Promise<unknown>) {
@@ -945,12 +1243,12 @@ function IndicatorDetailPage({
         </div>
       </section>
 
-      <section className="indicator-summary-grid">
-        <DetailMetric label="Data Source Ministry" value={sourceMinistry} />
-        <DetailMetric label="Department / Division" value={sourceDepartment} />
-        <DetailMetric label="Unit" value={measure?.unit_code ?? version?.unit_of_measure_code} />
-        <DetailMetric label="Periodicity" value={source?.periodicity_code ?? overview.periodicity_code} />
-      </section>
+        <section className="indicator-summary-grid">
+          <DetailMetric label="Data Source Ministry" value={sourceMinistry} />
+          <DetailMetric label="Department / Division" value={sourceDepartment} />
+          <DetailMetric label="Unit" value={sourceUom} />
+          <DetailMetric label="Periodicity" value={sourcePeriodicity} />
+        </section>
 
       <div className={`indicator-detail-layout ${activeTab === "mapping" ? "mapping-active" : ""}`}>
         <section className="indicator-official-metadata">
@@ -1017,194 +1315,132 @@ function IndicatorDetailPage({
                 title="Source Assignment"
                 id="source-map"
                 tone="source"
-                action={
-                  <button className="secondary-button compact" type="button" onClick={() => setMappingPanel("source")}>
-                    Map Source
-                  </button>
-                }
               >
-                {sourceAssignments.length ? (
-                  sourceAssignments.map((item) => (
+                <div className="drawer-info-note">
+                  Read-only. Source ownership must come from published template usage and template/data-field provider policy, not direct edits on this indicator page.
+                </div>
+                {publishedSourceUsage.length ? (
+                  publishedSourceUsage.map((item) => (
                     <MappingListRow
-                      key={`${item.source_organization_code}-${item.assignment_role}-${item.periodicity_code}`}
-                      title={textValue(item.source_organization_name ?? item.source_organization_code)}
+                      key={usageKey(item, "source")}
+                      title={usageSourceTitle(item)}
                       meta={[
-                        item.assignment_role,
-                        item.periodicity_name ?? item.periodicity_code,
-                        item.is_active === false ? "Inactive" : "Active",
+                        item.template_name ?? item.template_code,
+                        item.version_title ?? item.version_code,
+                        item.source_organization_code,
+                        item.access_role,
+                        item.is_primary_provider ? "Primary provider" : undefined,
+                        item.can_enter_data ? "Data entry" : undefined,
                       ]}
-                      onUnmap={() =>
-                        void runMappingSave("source-off", () =>
-                          saveSourceAssignment({
-                            framework_code: frameworkCode,
-                            edition_code: editionCode,
-                            national_indicator_code: indicatorCode,
-                            source_organization_code: item.source_organization_code ?? "",
-                            assignment_role: item.assignment_role ?? "PRIMARY_SOURCE",
-                            is_active: false,
-                          }),
-                        )
-                      }
-                      disabled={!frameworkCode || !editionCode || !indicatorCode || !item.source_organization_code || Boolean(isMappingSaving)}
                     />
                   ))
                 ) : (
-                  <div className="detail-empty">No source assignment returned by API.</div>
+                  <div className="detail-empty">No published template-derived source usage is available yet.</div>
                 )}
               </InfoSection>
               <InfoSection
                 title="Periodicity"
                 id="periodicity-map"
                 tone="periodicity"
-                action={
-                  <button className="secondary-button compact" type="button" onClick={() => setMappingPanel("periodicity")}>
-                    Map Periodicity
-                  </button>
-                }
               >
-                {sourceAssignments.length ? (
-                  sourceAssignments.map((item) => (
+                <div className="drawer-info-note">
+                  Read-only. Periodicity is resolved through published template/request scheduling context.
+                </div>
+                {publishedPeriodicityUsage.length ? (
+                  publishedPeriodicityUsage.map((item) => (
                     <MappingListRow
-                      key={`${item.source_organization_code}-${item.assignment_role}-${item.periodicity_code}-periodicity`}
+                      key={usageKey(item, "periodicity")}
                       title={textValue(item.periodicity_name ?? item.periodicity_code)}
-                      meta={[item.source_organization_name ?? item.source_organization_code, item.assignment_role, item.is_active === false ? "Inactive" : "Active"]}
-                      onUnmap={() =>
-                        void runMappingSave("periodicity-off", () =>
-                          saveSourceAssignment({
-                            framework_code: frameworkCode,
-                            edition_code: editionCode,
-                            national_indicator_code: indicatorCode,
-                            source_organization_code: item.source_organization_code ?? "",
-                            assignment_role: item.assignment_role ?? "PRIMARY_SOURCE",
-                            periodicity_code: undefined,
-                            is_active: true,
-                          }),
-                        )
-                      }
-                      disabled={
-                        !frameworkCode ||
-                        !editionCode ||
-                        !indicatorCode ||
-                        !item.source_organization_code ||
-                        !item.periodicity_code ||
-                        Boolean(isMappingSaving)
-                      }
+                      meta={[item.template_name ?? item.template_code, item.version_title ?? item.version_code, usageSourceTitle(item)]}
                     />
                   ))
                 ) : (
-                  <div className="detail-empty">Map a source assignment before assigning periodicity.</div>
+                  <div className="detail-empty">No published template-derived periodicity usage is available yet.</div>
                 )}
               </InfoSection>
               <InfoSection
                 title="Source Officer Assignment"
                 id="source-officer-map"
                 tone="officer"
-                action={
-                  <button className="secondary-button compact" type="button" onClick={() => setMappingPanel("sourceOfficer")}>
-                    Map Officer Recipient
-                  </button>
-                }
               >
-                {sourceOfficers.length ? (
-                  sourceOfficers.map((item) => (
-                    <MappingListRow
-                      key={`${item.source_organization_code}-${item.assignment_role}-${item.recipient_type}-${item.email_address}`}
-                      title={textValue(item.officer_display_name ?? item.display_name)}
-                      badge={item.recipient_type}
-                      meta={[
-                        item.source_organization_name,
-                        item.assignment_role,
-                        item.periodicity_name ?? item.periodicity_code,
-                        item.contact_role,
-                        item.email_address,
-                      ]}
-                      onUnmap={() =>
-                        void runMappingSave("source-officer-off", () =>
-                          saveSourceOfficerAssignment({
-                            national_indicator_code: indicatorCode,
-                            source_organization_code: item.source_organization_code ?? "",
-                            assignment_role: item.assignment_role ?? "PRIMARY_SOURCE",
-                            officer_code: item.officer_code ?? "",
-                            recipient_type: item.recipient_type ?? "TO",
-                            contact_role: item.contact_role ?? "NODAL_OFFICER",
-                            is_active: false,
-                          }),
-                        )
-                      }
-                      disabled={!indicatorCode || !item.source_organization_code || !item.officer_code || Boolean(isMappingSaving)}
-                    />
-                  ))
+                <div className="drawer-info-note">
+                  Read-only. Officer recipients must be shown from published template/source provider usage when that read model is available.
+                </div>
+                {publishedSourceUsage.length ? (
+                  publishedSourceUsage.map((usage) => {
+                    const officersForAssignment = publishedOfficerUsage.filter(
+                      (item) => item.usage.source_organization_code === usage.source_organization_code && item.usage.template_measure_code === usage.template_measure_code,
+                    );
+                    return (
+                      <div className="source-officer-group" key={`${usageKey(usage, "officers")}`}>
+                        <div className="source-officer-group-header">
+                          <strong>{usageSourceTitle(usage)}</strong>
+                          <span>{textValue(usage.template_name ?? usage.template_code)} / {textValue(usage.measure_name ?? usage.template_measure_code)}</span>
+                        </div>
+                        {officersForAssignment.length ? (
+                          officersForAssignment.map((item) => (
+                            <MappingListRow
+                              key={`${usageKey(item.usage, "officer")}-${item.officer.recipient_type}-${item.officer.email_address}`}
+                              title={textValue(item.officer.officer_display_name ?? item.officer.display_name)}
+                              badge={item.officer.recipient_type}
+                              meta={[item.officer.contact_role, item.officer.email_address, item.officer.is_active === false ? "Inactive" : "Active"]}
+                            />
+                          ))
+                        ) : (
+                          <div className="detail-empty compact-empty">No published template-derived officer recipients available for this source.</div>
+                        )}
+                      </div>
+                    );
+                  })
                 ) : (
-                  <div className="detail-empty">No officer recipients mapped.</div>
+                  <div className="detail-empty">No published template-derived officer usage is available yet.</div>
                 )}
               </InfoSection>
               <InfoSection
                 title="Unit of Measurement"
                 id="uom-map"
                 tone="uom"
-                action={
-                  <button className="secondary-button compact" type="button" onClick={() => setMappingPanel("uom")}>
-                    Map UOM
-                  </button>
-                }
               >
-                <DetailField label="Indicator version UOM" value={version?.unit_of_measure_code} />
-                {measure?.measure_code ? (
-                  <MappingListRow
-                    title={textValue(measure.unit_code ?? version?.unit_of_measure_code)}
-                    meta={[measure.measure_code, measure.name, measure.value_type]}
-                    onUnmap={() =>
-                      void runMappingSave("uom-off", () =>
-                        updateIndicatorMeasure(currentVersionCode, measure.measure_code ?? "", {
-                          measure_code: measure.measure_code,
-                          name: measure.name || measure.measure_code || "Measure",
-                          value_type: measure.value_type,
-                          aggregation_type: measure.aggregation_type,
-                          is_required: Boolean(measure.is_required ?? true),
-                          is_active: true,
-                        }),
-                      )
-                    }
-                    disabled={!currentVersionCode || !measure.measure_code || Boolean(isMappingSaving)}
-                  />
+                <div className="drawer-info-note">
+                  Read-only. UOM shown here must reflect measures used by published template versions.
+                </div>
+                {publishedUomUsage.length ? (
+                  publishedUomUsage.map((item) => (
+                    <MappingListRow
+                      key={usageKey(item, "uom")}
+                      title={textValue(item.uom_name ?? item.uom_code ?? item.unit_code)}
+                      meta={[item.template_name ?? item.template_code, item.measure_name ?? item.template_measure_code, item.value_type]}
+                    />
+                  ))
                 ) : (
-                  <div className="detail-empty">No measure UOM mapping returned by API.</div>
+                  <div className="detail-empty">No published template-derived UOM usage is available yet.</div>
                 )}
               </InfoSection>
               <InfoSection
                 title="Measures"
                 id="measure-map"
                 tone="measure"
-                action={
-                  <button className="secondary-button compact" type="button" onClick={() => setMappingPanel("measure")}>
-                    Map Measure
-                  </button>
-                }
               >
-                {(detail.measures ?? []).length ? (
-                  (detail.measures ?? []).map((item) => (
+                <div className="drawer-info-note">
+                  Read-only. Operational measure usage is finalized by Template Studio and published template versions.
+                </div>
+                {publishedMeasureUsage.length ? (
+                  publishedMeasureUsage.map((item) => (
                     <MappingListRow
-                      key={item.measure_code}
-                      title={textValue(item.name ?? item.measure_code)}
-                      meta={[item.measure_code, item.value_type, item.unit_code, item.aggregation_type, item.is_active === false ? "Inactive" : "Active"]}
-                      onUnmap={() =>
-                        void runMappingSave("measure-off", () =>
-                          updateIndicatorMeasure(currentVersionCode, item.measure_code ?? "", {
-                            measure_code: item.measure_code,
-                            name: item.name || item.measure_code || "Measure",
-                            unit_code: item.unit_code,
-                            value_type: item.value_type,
-                            aggregation_type: item.aggregation_type,
-                            is_required: Boolean(item.is_required ?? true),
-                            is_active: false,
-                          }),
-                        )
-                      }
-                      disabled={!currentVersionCode || !item.measure_code || Boolean(isMappingSaving)}
+                      key={usageKey(item, "measure")}
+                      title={textValue(item.measure_name ?? item.template_measure_code ?? item.measure_code)}
+                      meta={[
+                        item.template_name ?? item.template_code,
+                        item.template_measure_code ?? item.measure_code,
+                        item.source_measure_code,
+                        item.value_type,
+                        item.uom_name ?? item.uom_code ?? item.unit_code,
+                        item.aggregation_type,
+                      ]}
                     />
                   ))
                 ) : (
-                  <div className="detail-empty">No measures returned by API.</div>
+                  <div className="detail-empty">No published template-derived measure usage is available yet.</div>
                 )}
               </InfoSection>
               {mappingPanel && (
@@ -1213,19 +1449,7 @@ function IndicatorDetailPage({
                   <header>
                     <div>
                       <span>Indicator mapping</span>
-                      <h4>
-                        {mappingPanel === "global"
-                          ? "Global Indicator"
-                          : mappingPanel === "source"
-                            ? "Source Assignment"
-                            : mappingPanel === "periodicity"
-                              ? "Periodicity"
-                              : mappingPanel === "sourceOfficer"
-                                ? "Source Officer Assignment"
-                            : mappingPanel === "uom"
-                              ? "Unit of Measurement"
-                              : "Measure"}
-                      </h4>
+                      <h4>Global Indicator</h4>
                     </div>
                     <button className="icon-action" type="button" onClick={() => setMappingPanel("")}>
                       x
@@ -1307,381 +1531,6 @@ function IndicatorDetailPage({
                     </div>
                   )}
 
-                  {mappingPanel === "source" && (
-                    <div className="mapping-drawer-body">
-                      <datalist id="source-organization-options">
-                        {organizations.map((record) => (
-                          <option
-                            value={String(record.organization_code)}
-                            key={String(record.organization_code)}
-                            label={optionLabel(record, "organization_code", ["name", "organization_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>Source organization *</span>
-                        <input
-                          list="source-organization-options"
-                          value={mappingForm.source_organization_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, source_organization_code: event.target.value }))}
-                          placeholder="Search source/ministry/department"
-                        />
-                        {!selectedSourceOrganization && mappingForm.source_organization_code && <em>Select an exact source from the list.</em>}
-                      </label>
-                      <label>
-                        <span>Periodicity</span>
-                        <input
-                          list="periodicity-options"
-                          value={mappingForm.periodicity_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, periodicity_code: event.target.value }))}
-                          placeholder="Search periodicity"
-                        />
-                        {!selectedPeriodicity && mappingForm.periodicity_code && <em>Select an exact periodicity from the list.</em>}
-                      </label>
-                      <datalist id="periodicity-options">
-                        {periodicities.map((record) => (
-                          <option
-                            value={String(record.periodicity_code)}
-                            key={String(record.periodicity_code)}
-                            label={optionLabel(record, "periodicity_code", ["name", "periodicity_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>Assignment role</span>
-                        <select
-                          value={mappingForm.assignment_role}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, assignment_role: event.target.value }))}
-                        >
-                          <option value="PRIMARY_SOURCE">PRIMARY_SOURCE</option>
-                          <option value="SECONDARY_SOURCE">SECONDARY_SOURCE</option>
-                          <option value="REVIEW_SOURCE">REVIEW_SOURCE</option>
-                        </select>
-                      </label>
-                      <div className="mapping-action-row always-visible">
-                        <button
-                          className="primary-button compact"
-                          type="button"
-                          disabled={!canSaveSourceAssignment}
-                          onClick={() =>
-                            void runMappingSave("source", () =>
-                              saveSourceAssignment({
-                                framework_code: frameworkCode,
-                                edition_code: editionCode,
-                                national_indicator_code: indicatorCode,
-                                source_organization_code: mappingForm.source_organization_code,
-                                periodicity_code: mappingForm.periodicity_code || undefined,
-                                assignment_role: mappingForm.assignment_role,
-                                is_active: true,
-                              }),
-                            )
-                          }
-                        >
-                          {isMappingSaving === "source" ? "Saving..." : "Save"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {mappingPanel === "periodicity" && (
-                    <div className="mapping-drawer-body">
-                      <div className="drawer-info-note">
-                        Periodicity is stored on the indicator source assignment. Select the source assignment and then assign its reporting periodicity.
-                      </div>
-                      <datalist id="source-organization-options-periodicity">
-                        {organizations.map((record) => (
-                          <option
-                            value={String(record.organization_code)}
-                            key={String(record.organization_code)}
-                            label={optionLabel(record, "organization_code", ["name", "organization_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>Source organization *</span>
-                        <input
-                          list="source-organization-options-periodicity"
-                          value={mappingForm.source_organization_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, source_organization_code: event.target.value }))}
-                          placeholder="Search source/ministry/department"
-                        />
-                        {!selectedSourceOrganization && mappingForm.source_organization_code && <em>Select an exact source from the list.</em>}
-                      </label>
-                      <label>
-                        <span>Assignment role</span>
-                        <select
-                          value={mappingForm.assignment_role}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, assignment_role: event.target.value }))}
-                        >
-                          <option value="PRIMARY_SOURCE">PRIMARY_SOURCE</option>
-                          <option value="SECONDARY_SOURCE">SECONDARY_SOURCE</option>
-                          <option value="REVIEW_SOURCE">REVIEW_SOURCE</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>Periodicity *</span>
-                        <input
-                          list="periodicity-options-periodicity"
-                          value={mappingForm.periodicity_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, periodicity_code: event.target.value }))}
-                          placeholder="Search periodicity"
-                        />
-                        {!selectedPeriodicity && mappingForm.periodicity_code && <em>Select an exact periodicity from the list.</em>}
-                      </label>
-                      <datalist id="periodicity-options-periodicity">
-                        {periodicities.map((record) => (
-                          <option
-                            value={String(record.periodicity_code)}
-                            key={String(record.periodicity_code)}
-                            label={optionLabel(record, "periodicity_code", ["name", "periodicity_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <div className="mapping-action-row always-visible">
-                        <button
-                          className="primary-button compact"
-                          type="button"
-                          disabled={!canSaveSourceAssignment || !mappingForm.periodicity_code}
-                          onClick={() =>
-                            void runMappingSave("periodicity", () =>
-                              saveSourceAssignment({
-                                framework_code: frameworkCode,
-                                edition_code: editionCode,
-                                national_indicator_code: indicatorCode,
-                                source_organization_code: mappingForm.source_organization_code,
-                                periodicity_code: mappingForm.periodicity_code,
-                                assignment_role: mappingForm.assignment_role,
-                                is_active: true,
-                              }),
-                            )
-                          }
-                        >
-                          {isMappingSaving === "periodicity" ? "Saving..." : "Save periodicity"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {mappingPanel === "sourceOfficer" && (
-                    <div className="mapping-drawer-body">
-                      <div className="drawer-info-note">
-                        Officer recipients are stored separately from source assignment ownership. Select an officer already maintained in Masters / Officers.
-                      </div>
-                      <datalist id="source-organization-options-officer">
-                        {organizations.map((record) => (
-                          <option
-                            value={String(record.organization_code)}
-                            key={String(record.organization_code)}
-                            label={optionLabel(record, "organization_code", ["name", "organization_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>Source organization *</span>
-                        <input
-                          list="source-organization-options-officer"
-                          value={mappingForm.source_organization_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, source_organization_code: event.target.value }))}
-                          placeholder="Search source/ministry/department"
-                        />
-                        {!selectedSourceOrganization && mappingForm.source_organization_code && <em>Select an exact source from the list.</em>}
-                      </label>
-                      <label>
-                        <span>Assignment role</span>
-                        <select
-                          value={mappingForm.assignment_role}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, assignment_role: event.target.value }))}
-                        >
-                          <option value="PRIMARY_SOURCE">PRIMARY_SOURCE</option>
-                          <option value="SECONDARY_SOURCE">SECONDARY_SOURCE</option>
-                          <option value="REVIEW_SOURCE">REVIEW_SOURCE</option>
-                        </select>
-                      </label>
-                      <datalist id="officer-options">
-                        {officers.map((record) => (
-                          <option
-                            value={officerOptionLabel(record)}
-                            key={String(record.officer_code)}
-                            label={textValue(record.email)}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>Officer *</span>
-                        <input
-                          list="officer-options"
-                          value={mappingForm.officer_label}
-                          onChange={(event) =>
-                            setMappingForm((current) => {
-                              const selected = officers.find((record) => officerOptionLabel(record) === event.target.value);
-                              return {
-                                ...current,
-                                officer_label: event.target.value,
-                                officer_code: selected ? String(selected.officer_code) : "",
-                              };
-                            })
-                          }
-                          placeholder="Search officer"
-                        />
-                        {!selectedOfficer && mappingForm.officer_label && <em>Select an exact officer from the list.</em>}
-                      </label>
-                      <label>
-                        <span>Recipient type</span>
-                        <select
-                          value={mappingForm.recipient_type}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, recipient_type: event.target.value }))}
-                        >
-                          <option value="TO">TO</option>
-                          <option value="CC">CC</option>
-                          <option value="BCC">BCC</option>
-                          <option value="REPLY_TO">REPLY_TO</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>Contact role</span>
-                        <select
-                          value={mappingForm.contact_role}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, contact_role: event.target.value }))}
-                        >
-                          <option value="NODAL_OFFICER">NODAL_OFFICER</option>
-                          <option value="REVIEWER">REVIEWER</option>
-                          <option value="ESCALATION">ESCALATION</option>
-                          <option value="OBSERVER">OBSERVER</option>
-                          <option value="OTHER">OTHER</option>
-                        </select>
-                      </label>
-                      <div className="mapping-action-row always-visible">
-                        <button
-                          className="primary-button compact"
-                          type="button"
-                          disabled={!canSaveSourceOfficer}
-                          onClick={() =>
-                            void runMappingSave("source-officer", () =>
-                              saveSourceOfficerAssignment({
-                                national_indicator_code: indicatorCode,
-                                source_organization_code: mappingForm.source_organization_code,
-                                assignment_role: mappingForm.assignment_role,
-                                officer_code: selectedOfficer ? String(selectedOfficer.officer_code) : mappingForm.officer_code,
-                                recipient_type: mappingForm.recipient_type,
-                                contact_role: mappingForm.contact_role,
-                                is_active: true,
-                              }),
-                            )
-                          }
-                        >
-                          {isMappingSaving === "source-officer" ? "Saving..." : "Save officer recipient"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {(mappingPanel === "uom" || mappingPanel === "measure") && (
-                    <div className="mapping-drawer-body">
-                      {mappingPanel === "measure" && (
-                        <>
-                          <datalist id="measure-options">
-                            {(detail.measures ?? []).map((item) => (
-                              <option value={item.measure_code} key={item.measure_code} label={textValue(item.name ?? item.measure_code)} />
-                            ))}
-                          </datalist>
-                          <label>
-                            <span>Measure *</span>
-                            <input
-                              list="measure-options"
-                              value={mappingForm.measure_code}
-                              onChange={(event) => {
-                                const nextMeasure = (detail.measures ?? []).find((item) => item.measure_code === event.target.value);
-                                setMappingForm((current) => ({
-                                  ...current,
-                                  measure_code: event.target.value,
-                                  measure_name: nextMeasure?.name ?? "",
-                                  measure_unit_code: nextMeasure?.unit_code ?? current.measure_unit_code,
-                                  value_type: nextMeasure?.value_type ?? current.value_type,
-                                  aggregation_type: nextMeasure?.aggregation_type ?? current.aggregation_type,
-                                }));
-                              }}
-                              placeholder="Search measure"
-                            />
-                            {!selectedMeasure && mappingForm.measure_code && <em>Select an exact measure from the list.</em>}
-                          </label>
-                        </>
-                      )}
-                      <datalist id="uom-options">
-                        {uoms.map((record) => (
-                          <option
-                            value={String(record.uom_code)}
-                            key={String(record.uom_code)}
-                            label={optionLabel(record, "uom_code", ["name", "uom_name"])}
-                          />
-                        ))}
-                      </datalist>
-                      <label>
-                        <span>UOM</span>
-                        <input
-                          list="uom-options"
-                          value={mappingForm.measure_unit_code}
-                          onChange={(event) => setMappingForm((current) => ({ ...current, measure_unit_code: event.target.value }))}
-                          placeholder="Search UOM"
-                        />
-                        {!selectedUom && mappingForm.measure_unit_code && <em>Select an exact UOM from the list.</em>}
-                      </label>
-                      {mappingPanel === "measure" && (
-                        <>
-                          <label>
-                            <span>Value type</span>
-                            <select
-                              value={mappingForm.value_type}
-                              onChange={(event) => setMappingForm((current) => ({ ...current, value_type: event.target.value }))}
-                            >
-                              <option value="NUMERIC">NUMERIC</option>
-                              <option value="INTEGER">INTEGER</option>
-                              <option value="TEXT">TEXT</option>
-                              <option value="BOOLEAN">BOOLEAN</option>
-                              <option value="DATE">DATE</option>
-                            </select>
-                          </label>
-                          <label>
-                            <span>Aggregation type</span>
-                            <select
-                              value={mappingForm.aggregation_type}
-                              onChange={(event) => setMappingForm((current) => ({ ...current, aggregation_type: event.target.value }))}
-                            >
-                              <option value="NONE">NONE</option>
-                              <option value="SUM">SUM</option>
-                              <option value="AVG">AVG</option>
-                              <option value="MIN">MIN</option>
-                              <option value="MAX">MAX</option>
-                              <option value="COUNT">COUNT</option>
-                            </select>
-                          </label>
-                        </>
-                      )}
-                      <div className="mapping-action-row always-visible">
-                        <button
-                          className="primary-button compact"
-                          type="button"
-                          disabled={mappingPanel === "measure" ? !canSaveMeasure : !currentVersionCode || !measure?.measure_code || !selectedUom || Boolean(isMappingSaving)}
-                          onClick={() =>
-                            void runMappingSave("measure", () => {
-                              const measureToSave = selectedMeasure ?? measure;
-                              const payload = {
-                                measure_code: measureToSave?.measure_code,
-                                name: measureToSave?.name || measureToSave?.measure_code || "Measure",
-                                unit_code: mappingForm.measure_unit_code || undefined,
-                                value_type: mappingForm.value_type,
-                                aggregation_type: mappingForm.aggregation_type,
-                                is_required: true,
-                                is_active: true,
-                              };
-                              return updateIndicatorMeasure(currentVersionCode, measureToSave?.measure_code ?? mappingForm.measure_code, payload);
-                            })
-                          }
-                        >
-                          {isMappingSaving === "measure" ? "Saving..." : "Save"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </aside>
                 </div>
               )}

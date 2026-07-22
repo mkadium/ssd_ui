@@ -88,6 +88,10 @@ export type IndicatorSourceAssignment = {
   source_organization_name?: string;
   department_organization_code?: string;
   department_organization_name?: string;
+  parent_organization_code?: string;
+  parent_organization_name?: string;
+  ministry_organization_code?: string;
+  ministry_name?: string;
   officer_code?: string;
   officer_display_name?: string;
   periodicity_code?: string;
@@ -100,6 +104,12 @@ export type IndicatorSourceOfficerAssignment = {
   national_indicator_code?: string;
   source_organization_code?: string;
   source_organization_name?: string;
+  department_organization_code?: string;
+  department_organization_name?: string;
+  parent_organization_code?: string;
+  parent_organization_name?: string;
+  ministry_organization_code?: string;
+  ministry_name?: string;
   assignment_role?: string;
   periodicity_code?: string;
   periodicity_name?: string;
@@ -150,6 +160,53 @@ export type GlobalIndicatorMapping = {
   status?: string;
   tier_code?: string;
   is_active?: boolean;
+};
+
+export type PublishedTemplateUsage = {
+  template_code?: string;
+  template_name?: string;
+  template_status?: string;
+  owning_unit_code?: string;
+  version_code?: string;
+  version_number?: number;
+  version_title?: string;
+  version_status?: string;
+  national_indicator_code?: string;
+  indicator_number?: string;
+  template_measure_code?: string;
+  source_measure_code?: string;
+  measure_code?: string;
+  measure_name?: string;
+  value_type?: string;
+  unit_code?: string;
+  uom_code?: string;
+  uom_name?: string;
+  aggregation_type?: string;
+  is_editable?: boolean;
+  is_required?: boolean;
+  access_role?: string;
+  provider_mode?: string;
+  can_enter_data?: boolean;
+  can_view_data?: boolean;
+  can_view_other_measure_data?: boolean;
+  can_view_after_submission?: boolean;
+  is_primary_provider?: boolean;
+  policy_required?: boolean;
+  policy_metadata?: Record<string, unknown>;
+  source_organization_code?: string;
+  source_organization_name?: string;
+  source_organization_type?: string;
+  parent_organization_code?: string;
+  parent_organization_name?: string;
+  ministry_organization_code?: string;
+  ministry_name?: string;
+  department_organization_code?: string;
+  department_organization_name?: string;
+  periodicity_code?: string;
+  periodicity_name?: string;
+  cell_count?: number;
+  officers?: IndicatorSourceOfficerAssignment[];
+  updated_at?: string;
 };
 
 export type GlobalIndicatorListItem = {
@@ -234,6 +291,7 @@ export type IndicatorDetail = {
   sources?: IndicatorSourceAssignment[];
   source_assignments?: IndicatorSourceAssignment[];
   source_officers?: IndicatorSourceOfficerAssignment[];
+  published_template_usage?: PublishedTemplateUsage[];
 } & IndicatorListItem;
 
 export type NationalIndicatorPayload = {

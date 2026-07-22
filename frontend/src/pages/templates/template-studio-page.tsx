@@ -3,23 +3,29 @@ import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "rea
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   listDimensionManagementRows,
+  listDimensionMembers,
   listDimensionMemberSetMembers,
   listDimensionMemberSets,
+  listGeographies,
   listAllTimePeriods,
   listTimePeriodSetPeriods,
   listTimePeriodSets,
   createTimePeriodSet,
   listDimensionRollupRules,
   type DimensionManagementRow,
+  type DimensionMember,
   type DimensionMemberSet,
   type DimensionMemberSetItem,
   type DimensionRollupRule,
+  type Geography,
   type TimePeriod,
 } from "../../api/dimensions.api";
-import { listDataFields, type DataFieldListItem } from "../../api/data-fields.api";
+import { getDataFieldDetail, listDataFields, type DataFieldDetail, type DataFieldListItem, type DataFieldMapping } from "../../api/data-fields.api";
+import { listMasterRecords, type MasterRecord } from "../../api/masters-reference.api";
 import {
   createTemplateMeasure,
   createTemplateAxis,
+  deactivateTemplateMeasure,
   getTemplateRenderContract,
   getTemplateStudioDraft,
   listTemplateAxes,
@@ -31,6 +37,7 @@ import {
   saveTemplateStudioDraft,
   updateTemplateAxis,
   upsertTemplateFormulaOutput,
+  upsertTemplateMeasureAccessPolicy,
   type TemplateAxis,
   type TemplateDefinition,
   type TemplateMeasure,
@@ -39,12 +46,13 @@ import {
   type TemplateVersion,
 } from "../../api/templates.api";
 import { upsertValidationRule, upsertValidationRuleBinding } from "../../api/validation.api";
-import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { getSelectedLocale, getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
 
 type StudioStep = "setup" | "structure" | "recipients" | "preview" | "publish";
 type DropZone = "tabsBy" | "rowRepresents" | "columns" | "fields";
 type LibraryTab = "dimensions" | "geography" | "time" | "measures";
-type LibraryItemType = "DIMENSION_SET" | "GEOGRAPHY_SET" | "TIME_SET" | "MEASURE";
+type LibraryMode = "sets" | "members";
+type LibraryItemType = "DIMENSION_SET" | "DIMENSION_MEMBER" | "GEOGRAPHY_SET" | "GEOGRAPHY_MEMBER" | "TIME_SET" | "TIME_MEMBER" | "MEASURE";
 
 type LibraryItem = {
   id: string;
@@ -64,9 +72,28 @@ type LibraryItem = {
 };
 
 type BuilderState = Record<DropZone, LibraryItem[]>;
+type ColumnLevel = {
+  id: string;
+  label: string;
+  items: LibraryItem[];
+};
+type RowLevel = {
+  id: string;
+  label: string;
+  items: LibraryItem[];
+};
 type PeriodSelection = { code: string; name: string };
 type PreviewLabel = { code: string; label: string };
-type PreviewColumn = PreviewLabel & { groupCode?: string; groupLabel?: string; generatedMeasure?: LibraryItem };
+type PreviewRow = PreviewLabel & {
+  path?: PreviewLabel[];
+};
+type PreviewColumn = PreviewLabel & {
+  groupCode?: string;
+  groupLabel?: string;
+  generatedMeasure?: LibraryItem;
+  path?: PreviewLabel[];
+};
+type PreviewHeaderCell = PreviewLabel & { colSpan: number };
 type ColumnValidationConfig = {
   requirement: "REQUIRED" | "OPTIONAL";
   numericBehavior: "NON_NEGATIVE" | "MIN_MAX" | "MIN_ONLY" | "MAX_ONLY";
@@ -83,6 +110,32 @@ type ComputedColumnDraft = {
   outputUom: string;
   mode: SettingsTab;
   functionCode?: string;
+  showInDataEntry?: boolean;
+  showInPreview?: boolean;
+  showInPublishedOutput?: boolean;
+};
+type BilingualLabelScope = "geography" | "dimensions" | "measures";
+type RecipientReadiness = "READY" | "MISSING_SOURCE" | "MISSING_PERIODICITY" | "MISSING_GRAIN" | "MISSING_OFFICER";
+type RecipientSourceGroup = {
+  key: string;
+  sourceCode: string;
+  sourceName: string;
+  departmentName: string;
+  measureCodes: string[];
+  measureLabels: string[];
+  assignedColumnLabels: string[];
+  dataEntryColumnLabels: string[];
+  generatedColumnLabels: string[];
+  periodicities: string[];
+  grains: string[];
+  officers: string[];
+  readiness: RecipientReadiness;
+};
+type PublishCheckStatus = "PASS" | "WARN" | "BLOCK";
+type PublishCheck = {
+  label: string;
+  status: PublishCheckStatus;
+  detail: string;
 };
 
 const steps: { code: StudioStep; label: string; optional?: boolean }[] = [
@@ -111,6 +164,59 @@ function textValue(value: unknown) {
   return value === undefined || value === null || value === "" ? "-" : String(value);
 }
 
+function compactList(values: Array<string | null | undefined>, fallback = "-") {
+  const unique = Array.from(
+    new Set(
+      values
+        .map((value) => textValue(value).trim())
+        .filter((value) => value && value !== "-"),
+    ),
+  );
+  return unique.length ? unique : [fallback];
+}
+
+function mappingText(mapping: DataFieldMapping, keys: string[], fallback = "-") {
+  for (const key of keys) {
+    const value = mapping[key];
+    const text = textValue(value).trim();
+    if (text && text !== "-") return text;
+  }
+  return fallback;
+}
+
+function activeMappings(mappings?: DataFieldMapping[] | null) {
+  return (mappings ?? []).filter((mapping) => mapping.is_active !== false);
+}
+
+function mappingString(mapping: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = mapping[key];
+    const text = textValue(value).trim();
+    if (text && text !== "-") return text;
+  }
+  return "";
+}
+
+function officerLabel(record: Record<string, unknown>) {
+  const recipientType = mappingString(record, ["recipient_type", "recipient_role", "delivery_type", "officer_role"]);
+  const name = mappingString(record, ["officer_display_name", "display_name", "officer_name", "name"]);
+  const email = mappingString(record, ["officer_email", "email", "email_address", "recipient_email", "to_email", "cc_email", "bcc_email"]);
+  return [recipientType, name || email].filter(Boolean).join(": ") || "Officer mapping pending";
+}
+
+function sourceCodeFromMapping(mapping: DataFieldMapping, fallback = "") {
+  return mappingText(mapping, ["source_organization_code", "organization_code"], fallback);
+}
+
+function recordCode(record: Record<string, unknown>, key: string) {
+  return String(record[key] ?? "").trim();
+}
+
+function recordName(record?: Record<string, unknown>) {
+  if (!record) return "";
+  return mappingString(record, ["name", "organization_name", "display_name", "short_name", "organization_code"]);
+}
+
 function templateName(template?: TemplateDefinition | null) {
   return template?.name ?? template?.template_name ?? template?.template_code ?? "-";
 }
@@ -119,32 +225,77 @@ function normalizeCode(value?: string | null) {
   return String(value ?? "").trim().toUpperCase();
 }
 
+function isCodeLike(value: string, code?: string | null) {
+  const normalizedValue = normalizeCode(value);
+  const normalizedCode = normalizeCode(code ?? "");
+  return Boolean(normalizedValue && normalizedCode && normalizedValue === normalizedCode);
+}
+
+function firstDisplayName(candidates: Array<string | null | undefined>, code?: string | null) {
+  for (const candidate of candidates) {
+    const value = textValue(candidate);
+    if (!value || value === "-" || isCodeLike(value, code)) continue;
+    return value;
+  }
+  return "-";
+}
+
 function itemName(item: DimensionMemberSetItem) {
-  return textValue(item.member_name ?? item.member_code);
+  const row = item as DimensionMemberSetItem & {
+    display_label?: string | null;
+    localized_label?: string | null;
+    label?: string | null;
+  };
+  return firstDisplayName(
+    [
+      row.localized_name,
+      row.localized_label,
+      row.display_name,
+      row.display_label,
+      row.name,
+      row.alias_value,
+      row.member_name,
+      row.short_name,
+    ],
+    item.member_code,
+  );
 }
 
 function previewItemLabel(item: DimensionMemberSetItem): PreviewLabel {
-  const row = item as DimensionMemberSetItem & { display_name?: string | null; name?: string | null };
   const code = textValue(item.member_code);
   return {
     code,
-    label: textValue(item.member_name ?? row.display_name ?? row.name ?? item.member_code),
+    label: itemName(item) !== "-" ? itemName(item) : code,
   };
 }
 
 function measureName(item: DataFieldListItem | TemplateMeasure) {
-  return textValue(
-    (item as DataFieldListItem).data_field_name ??
-      (item as DataFieldListItem).measure_name ??
-      (item as TemplateMeasure).label ??
-      item.measure_code,
+  const field = item as DataFieldListItem;
+  const measure = item as TemplateMeasure;
+  const code = field.measure_code ?? measure.measure_code ?? field.data_field_code;
+  const name = firstDisplayName(
+    [
+      field.localized_name,
+      field.display_name,
+      field.label,
+      field.data_field_name,
+      field.measure_name,
+      field.name,
+      measure.label,
+    ],
+    code,
   );
+  return name !== "-" ? name : textValue(code);
 }
 
 function isGeneralDimension(row: DimensionManagementRow) {
   const code = normalizeCode(row.dimension_code);
   const type = normalizeCode(row.dimension_type);
   return code && !["GEOGRAPHY", "LOCATION", "TIME_PERIOD"].includes(code) && ["GENERAL", "GENERIC", "CUSTOM", ""].includes(type);
+}
+
+function isMemberItem(item: LibraryItem) {
+  return item.type === "DIMENSION_MEMBER" || item.type === "GEOGRAPHY_MEMBER" || item.type === "TIME_MEMBER";
 }
 
 function maxPreviewItems(items: DimensionMemberSetItem[] | undefined, fallback: string): PreviewLabel[] {
@@ -191,6 +342,139 @@ function safeBuilderState(value: unknown): BuilderState {
   };
 }
 
+function makeColumnLevel(index: number, items: LibraryItem[] = []): ColumnLevel {
+  return {
+    id: `column-level-${index + 1}`,
+    label: `Level ${index + 1}`,
+    items,
+  };
+}
+
+function makeRowLevel(index: number, items: LibraryItem[] = []): RowLevel {
+  return {
+    id: `row-level-${index + 1}`,
+    label: `Level ${index + 1}`,
+    items,
+  };
+}
+
+function reindexColumnLevels(levels: ColumnLevel[]): ColumnLevel[] {
+  const next = levels.length ? levels : [makeColumnLevel(0)];
+  return next.map((level, index) => ({
+    id: `column-level-${index + 1}`,
+    label: `Level ${index + 1}`,
+    items: level.items,
+  }));
+}
+
+function reindexRowLevels(levels: RowLevel[]): RowLevel[] {
+  const next = levels.length ? levels : [makeRowLevel(0)];
+  return next.map((level, index) => ({
+    id: `row-level-${index + 1}`,
+    label: `Level ${index + 1}`,
+    items: level.items,
+  }));
+}
+
+function safeColumnLevels(value: unknown, fallbackColumns: LibraryItem[] = []): ColumnLevel[] {
+  if (Array.isArray(value)) {
+    const levels = value
+      .map((level, index) => {
+        const raw = level as { id?: string; label?: string; items?: unknown };
+        const items = Array.isArray(raw.items)
+          ? raw.items.map(normalizeLibraryItem).filter((item): item is LibraryItem => Boolean(item))
+          : [];
+        return {
+          id: raw.id || `column-level-${index + 1}`,
+          label: raw.label || `Level ${index + 1}`,
+          items,
+        };
+      })
+      .filter((level) => level.items.length > 0 || level.id === "column-level-1");
+    if (levels.length > 0) return reindexColumnLevels(levels);
+  }
+  return reindexColumnLevels([makeColumnLevel(0, fallbackColumns)]);
+}
+
+function safeRowLevels(value: unknown, fallbackRows: LibraryItem[] = []): RowLevel[] {
+  if (Array.isArray(value)) {
+    const levels = value
+      .map((level, index) => {
+        const raw = level as { id?: string; label?: string; items?: unknown };
+        const items = Array.isArray(raw.items)
+          ? raw.items.map(normalizeLibraryItem).filter((item): item is LibraryItem => Boolean(item))
+          : [];
+        return {
+          id: raw.id || `row-level-${index + 1}`,
+          label: raw.label || `Level ${index + 1}`,
+          items,
+        };
+      })
+      .filter((level) => level.items.length > 0 || level.id === "row-level-1");
+    if (levels.length > 0) return reindexRowLevels(levels);
+  }
+  return reindexRowLevels([makeRowLevel(0, fallbackRows)]);
+}
+
+function hasColumnLevelContent(levels: ColumnLevel[]) {
+  return levels.some((level) => level.items.length > 0);
+}
+
+function hasRowLevelContent(levels: RowLevel[]) {
+  return levels.some((level) => level.items.length > 0);
+}
+
+function cartesianPreviewColumns(levelRows: PreviewLabel[][]): PreviewColumn[] {
+  if (!levelRows.length) return [];
+  return levelRows.reduce<PreviewColumn[]>((current, rows) => {
+    if (!current.length) return rows.map((row) => ({ ...row, path: [row] }));
+    return current.flatMap((parent) =>
+      rows.map((row) => ({
+        code: `${parent.code}:${row.code}`,
+        label: row.label,
+        groupCode: parent.code,
+        groupLabel: parent.label,
+        path: [...(parent.path ?? [{ code: parent.code, label: parent.label }]), row],
+      })),
+    );
+  }, []);
+}
+
+function cartesianPreviewRows(levelRows: PreviewLabel[][]): PreviewRow[] {
+  if (!levelRows.length) return [];
+  return levelRows.reduce<PreviewRow[]>((current, rows) => {
+    if (!current.length) return rows.map((row) => ({ ...row, path: [row] }));
+    return current.flatMap((parent) =>
+      rows.map((row) => ({
+        code: `${parent.code}:${row.code}`,
+        label: row.label,
+        path: [...(parent.path ?? [{ code: parent.code, label: parent.label }]), row],
+      })),
+    );
+  }, []);
+}
+
+function groupedHeaderRows(columns: PreviewColumn[], levelCount: number): PreviewHeaderCell[][] {
+  if (!levelCount) return [];
+  return Array.from({ length: levelCount }, (_, levelIndex) => {
+    const cells: (PreviewHeaderCell & { groupKey: string })[] = [];
+    columns.forEach((column) => {
+      const part = column.path?.[levelIndex] ?? { code: column.code, label: column.label };
+      const previous = cells[cells.length - 1];
+      const groupKey = (column.path ?? [{ code: column.code, label: column.label }])
+        .slice(0, levelIndex + 1)
+        .map((pathPart) => `${pathPart.code}:${pathPart.label}`)
+        .join(">");
+      if (previous && previous.groupKey === groupKey) {
+        previous.colSpan += 1;
+      } else {
+        cells.push({ ...part, colSpan: 1, groupKey });
+      }
+    });
+    return cells.map(({ groupKey: _groupKey, ...cell }) => cell);
+  });
+}
+
 function safeRecordOfLibraryItems(value: unknown): Record<string, LibraryItem> {
   if (!value || typeof value !== "object") return {};
   return Object.entries(value as Record<string, unknown>).reduce<Record<string, LibraryItem>>((next, [key, item]) => {
@@ -204,7 +488,13 @@ function safeComputedColumns(value: unknown): ComputedColumnDraft[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => item as ComputedColumnDraft)
-    .filter((item) => item && item.code && item.label && item.formula && ["compute", "calculated", "rollup"].includes(item.mode));
+    .filter((item) => item && item.code && item.label && item.formula && ["compute", "calculated", "rollup"].includes(item.mode))
+    .map((item) => ({
+      ...item,
+      showInDataEntry: Boolean(item.showInDataEntry),
+      showInPreview: item.showInPreview !== false,
+      showInPublishedOutput: item.showInPublishedOutput !== false,
+    }));
 }
 
 function safeValidationMap(value: unknown): Record<string, ColumnValidationConfig> {
@@ -217,11 +507,19 @@ function safeValidationMap(value: unknown): Record<string, ColumnValidationConfi
 
 function safePreviewSettings(value: unknown) {
   const settings = value as Partial<typeof defaultPreviewSettings>;
+  const bilingualLabels = settings?.bilingualLabels as Partial<typeof defaultPreviewSettings.bilingualLabels> | undefined;
   return {
     showCodes: Boolean(settings?.showCodes),
     zebraRows: settings?.zebraRows !== false,
     compactCells: settings?.compactCells !== false,
     editablePreview: settings?.editablePreview !== false,
+    showAllRecipientColumns: Boolean(settings?.showAllRecipientColumns),
+    bilingualLabels: {
+      locale: typeof bilingualLabels?.locale === "string" ? bilingualLabels.locale : "hi-IN",
+      geography: Boolean(bilingualLabels?.geography),
+      dimensions: Boolean(bilingualLabels?.dimensions),
+      measures: Boolean(bilingualLabels?.measures),
+    },
   };
 }
 
@@ -247,8 +545,17 @@ function hasDraftContent(
   mappedCells: Record<string, LibraryItem>,
   validations: Record<string, ColumnValidationConfig>,
   generatedColumns: ComputedColumnDraft[],
+  levels: ColumnLevel[] = [],
+  rowLevels: RowLevel[] = [],
 ) {
-  return hasBuilderContent(state) || Object.keys(mappedCells).length > 0 || Object.keys(validations).length > 0 || generatedColumns.length > 0;
+  return (
+    hasBuilderContent(state) ||
+    hasColumnLevelContent(levels) ||
+    hasRowLevelContent(rowLevels) ||
+    Object.keys(mappedCells).length > 0 ||
+    Object.keys(validations).length > 0 ||
+    generatedColumns.length > 0
+  );
 }
 
 const defaultPreviewSettings = {
@@ -256,16 +563,42 @@ const defaultPreviewSettings = {
   zebraRows: true,
   compactCells: true,
   editablePreview: true,
+  showAllRecipientColumns: false,
+  bilingualLabels: {
+    locale: "hi-IN",
+    geography: false,
+    dimensions: false,
+    measures: false,
+  },
 };
+
+type TemplateDataLibraryCache = {
+  dimensionSets: LibraryItem[];
+  dimensionMembers: LibraryItem[];
+  geographySets: LibraryItem[];
+  geographyMembers: LibraryItem[];
+  timeSets: LibraryItem[];
+  timeMembers: LibraryItem[];
+  dataFields: LibraryItem[];
+  allTimePeriods: TimePeriod[];
+};
+
+const templateDataLibraryCache = new Map<string, TemplateDataLibraryCache>();
+
+function dataLibraryCacheKey() {
+  return `${getSelectedUnitCode()}|${getSelectedLocale()}`;
+}
 
 export function TemplateStudioPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [activeStep, setActiveStep] = useState<StudioStep>(() => {
-    const step = params.get("step") as StudioStep | null;
-    return step && step !== "setup" && steps.some((item) => item.code === step) ? step : "structure";
-  });
+  const [activeStep, setActiveStep] = useState<StudioStep>("structure");
   const [activeLibraryTab, setActiveLibraryTab] = useState<LibraryTab>("dimensions");
+  const [libraryModes, setLibraryModes] = useState<Record<Exclude<LibraryTab, "measures">, LibraryMode>>({
+    dimensions: "sets",
+    geography: "sets",
+    time: "sets",
+  });
   const [librarySearch, setLibrarySearch] = useState("");
   const [templates, setTemplates] = useState<TemplateDefinition[]>([]);
   const [versions, setVersions] = useState<TemplateVersion[]>([]);
@@ -273,12 +606,28 @@ export function TemplateStudioPage() {
   const [measures, setMeasures] = useState<TemplateMeasure[]>([]);
   const [renderContract, setRenderContract] = useState<TemplateRenderContract | null>(null);
   const [dimensionSets, setDimensionSets] = useState<LibraryItem[]>([]);
+  const [dimensionMembers, setDimensionMembers] = useState<LibraryItem[]>([]);
   const [geographySets, setGeographySets] = useState<LibraryItem[]>([]);
+  const [geographyMembers, setGeographyMembers] = useState<LibraryItem[]>([]);
   const [timeSets, setTimeSets] = useState<LibraryItem[]>([]);
+  const [timeMembers, setTimeMembers] = useState<LibraryItem[]>([]);
   const [dataFields, setDataFields] = useState<LibraryItem[]>([]);
+  const [dataFieldDetails, setDataFieldDetails] = useState<Record<string, DataFieldDetail>>({});
+  const [sourceOfficersByOrg, setSourceOfficersByOrg] = useState<Record<string, MasterRecord[]>>({});
+  const [organizationRecords, setOrganizationRecords] = useState<MasterRecord[]>([]);
+  const [selectedRecipientSource, setSelectedRecipientSource] = useState("ALL");
   const [allTimePeriods, setAllTimePeriods] = useState<TimePeriod[]>([]);
   const [memberCache, setMemberCache] = useState<Record<string, DimensionMemberSetItem[]>>({});
+  const [secondaryMemberLabelCache, setSecondaryMemberLabelCache] = useState<Record<string, Record<string, string>>>({});
+  const [secondaryMeasureLabelCache, setSecondaryMeasureLabelCache] = useState<Record<string, string>>({});
+  const [isSecondaryLabelLoading, setIsSecondaryLabelLoading] = useState(false);
   const [builder, setBuilder] = useState<BuilderState>(emptyBuilder);
+  const [rowLevels, setRowLevels] = useState<RowLevel[]>(() => [makeRowLevel(0)]);
+  const [activeRowLevelId, setActiveRowLevelId] = useState("row-level-1");
+  const [rowLevelItemsOpen, setRowLevelItemsOpen] = useState(false);
+  const [columnLevels, setColumnLevels] = useState<ColumnLevel[]>(() => [makeColumnLevel(0)]);
+  const [activeColumnLevelId, setActiveColumnLevelId] = useState("column-level-1");
+  const [columnLevelItemsOpen, setColumnLevelItemsOpen] = useState(false);
   const [cellMap, setCellMap] = useState<Record<string, LibraryItem>>({});
   const [timeSetDrawerOpen, setTimeSetDrawerOpen] = useState(false);
   const [validationDrawer, setValidationDrawer] = useState<{
@@ -313,7 +662,10 @@ export function TemplateStudioPage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLibraryLoading, setIsLibraryLoading] = useState(true);
+  const [isRecipientLoading, setIsRecipientLoading] = useState(false);
   const [isVersionLoading, setIsVersionLoading] = useState(false);
+  const [isPreviewHydrating, setIsPreviewHydrating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const versionHydratedRef = useRef(false);
@@ -328,13 +680,16 @@ export function TemplateStudioPage() {
     () => versions.find((version) => version.version_code === selectedVersionCode) ?? versions[0] ?? null,
     [selectedVersionCode, versions],
   );
-  const isStudioHydrating = isLoading || isVersionLoading || Boolean(selectedVersion?.version_code && !versionHydratedRef.current);
+  const isSelectedVersionFrozen = ["ACTIVE", "PUBLISHED"].includes(normalizeCode(selectedVersion?.status));
+  const isStudioHydrating = isVersionLoading || Boolean(selectedVersion?.version_code && !versionHydratedRef.current);
+  const isShellLoading = isLoading && templates.length === 0;
 
   const libraryItems = useMemo(() => {
+    const activeMode = activeLibraryTab === "measures" ? "sets" : libraryModes[activeLibraryTab];
     const byTab: Record<LibraryTab, LibraryItem[]> = {
-      dimensions: dimensionSets,
-      geography: geographySets,
-      time: timeSets,
+      dimensions: activeMode === "members" ? dimensionMembers : dimensionSets,
+      geography: activeMode === "members" ? geographyMembers : geographySets,
+      time: activeMode === "members" ? timeMembers : timeSets,
       measures: dataFields,
     };
     const q = librarySearch.trim().toLowerCase();
@@ -345,24 +700,113 @@ export function TemplateStudioPage() {
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q)),
     );
-  }, [activeLibraryTab, dataFields, dimensionSets, geographySets, librarySearch, timeSets]);
+  }, [
+    activeLibraryTab,
+    dataFields,
+    dimensionMembers,
+    dimensionSets,
+    geographyMembers,
+    geographySets,
+    libraryModes,
+    librarySearch,
+    timeMembers,
+    timeSets,
+  ]);
 
-  const previewRows = useMemo(() => {
-    const rowItem = builder.rowRepresents[0];
-    if (!rowItem) return ["Row 1", "Row 2", "Row 3", "Row 4", "Row 5"].map((label) => ({ code: label, label }));
-    return maxPreviewItems(memberCache[rowItem.id], rowItem.label);
-  }, [builder.rowRepresents, memberCache]);
+  function bilingualScopeForItem(item: LibraryItem): BilingualLabelScope | null {
+    if (item.type === "GEOGRAPHY_SET" || item.type === "GEOGRAPHY_MEMBER") return "geography";
+    if (item.type === "DIMENSION_SET" || item.type === "DIMENSION_MEMBER") return "dimensions";
+    if (item.type === "MEASURE") return "measures";
+    return null;
+  }
 
-  const previewColumnGroups = useMemo(() => {
+  function isBilingualEnabled(item: LibraryItem) {
+    const scope = bilingualScopeForItem(item);
+    return scope ? Boolean(previewSettings.bilingualLabels[scope]) : false;
+  }
+
+  function bilingualText(primary: string, secondary?: string | null) {
+    const cleanPrimary = textValue(primary);
+    const cleanSecondary = textValue(secondary);
+    if (!cleanSecondary || cleanSecondary === "-" || cleanSecondary === cleanPrimary) return cleanPrimary;
+    return `${cleanSecondary} / ${cleanPrimary}`;
+  }
+
+  function libraryItemLabel(item: LibraryItem) {
+    if (!isBilingualEnabled(item)) return item.label;
+    if (item.type === "MEASURE") return bilingualText(item.label, secondaryMeasureLabelCache[item.code]);
+    return bilingualText(item.label, secondaryMemberLabelCache[item.id]?.[item.code]);
+  }
+
+  function previewLabelsForItem(item: LibraryItem): PreviewLabel[] {
+    if (isMemberItem(item)) {
+      const label = isBilingualEnabled(item) ? bilingualText(item.label, secondaryMemberLabelCache[item.id]?.[item.code]) : item.label;
+      return [{ code: item.code, label }];
+    }
+    const rows = maxPreviewItems(memberCache[item.id], item.label);
+    if (!isBilingualEnabled(item)) return rows;
+    const secondaryLabels = secondaryMemberLabelCache[item.id] ?? {};
+    return rows.map((row) => ({
+      ...row,
+      label: bilingualText(row.label, secondaryLabels[row.code]),
+    }));
+  }
+
+  const activeRowLevels = useMemo(() => {
+    const levelsWithItems = rowLevels.filter((level) => level.items.length > 0);
+    if (levelsWithItems.length) return levelsWithItems;
+    return builder.rowRepresents.length ? [makeRowLevel(0, builder.rowRepresents)] : [];
+  }, [builder.rowRepresents, rowLevels]);
+
+  const previewRowLevelRows = useMemo(() => {
+    return activeRowLevels
+      .map((level) =>
+        level.items.flatMap((item) => {
+          if (item.type === "MEASURE") return [];
+          return previewLabelsForItem(item);
+        }),
+      )
+      .filter((rows) => rows.length > 0);
+  }, [activeRowLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache]);
+
+  const previewRows = useMemo<PreviewRow[]>(() => {
+    if (previewRowLevelRows.length) return cartesianPreviewRows(previewRowLevelRows);
+    return ["Row 1", "Row 2", "Row 3", "Row 4", "Row 5"].map((label) => ({ code: label, label, path: [{ code: label, label }] }));
+  }, [previewRowLevelRows]);
+
+  const activeColumnLevels = useMemo(() => {
+    const levelsWithItems = columnLevels.filter((level) => level.items.length > 0);
+    if (levelsWithItems.length) return levelsWithItems;
+    return builder.columns.length ? [makeColumnLevel(0, builder.columns)] : [];
+  }, [builder.columns, columnLevels]);
+
+  const previewColumnLevelRows = useMemo(() => {
+    return activeColumnLevels
+      .map((level) =>
+        level.items.flatMap((item) => {
+          if (item.type === "MEASURE") return [{ code: item.code, label: libraryItemLabel(item) }];
+          return previewLabelsForItem(item);
+        }),
+      )
+      .filter((rows) => rows.length > 0);
+  }, [activeColumnLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache, secondaryMeasureLabelCache]);
+
+  const previewColumnGroups = useMemo<PreviewColumn[]>(() => {
+    if (previewColumnLevelRows.length) return cartesianPreviewColumns(previewColumnLevelRows);
     const sourceFields = builder.fields.filter((field) => !field.generatedMode);
-    const columnItems = builder.columns.length ? builder.columns : sourceFields;
-    if (!columnItems.length) return ["Column", "Column", "Column"].map((label) => ({ code: label, label }));
-    return columnItems.flatMap((item) => {
-      if (item.type === "MEASURE") return [{ code: item.code, label: item.label }];
-      const members = maxPreviewItems(memberCache[item.id], item.label);
-      return members.slice(0, 5);
-    });
-  }, [builder.columns, builder.fields, memberCache]);
+    if (sourceFields.length) {
+      return sourceFields.map((field) => ({
+        code: field.code,
+        label: libraryItemLabel(field),
+        path: [{ code: field.code, label: libraryItemLabel(field) }],
+      }));
+    }
+    return ["Column", "Column", "Column"].map((label, index) => ({
+      code: `${label}_${index + 1}`,
+      label,
+      path: [{ code: `${label}_${index + 1}`, label }],
+    }));
+  }, [builder.fields, previewColumnLevelRows, previewSettings.bilingualLabels, secondaryMeasureLabelCache]);
 
   const generatedFieldColumns = useMemo(
     () => builder.fields.filter((field) => Boolean(field.generatedMode)),
@@ -371,8 +815,8 @@ export function TemplateStudioPage() {
 
   const previewTabItems = useMemo(() => {
     if (!builder.tabsBy.length) return [];
-    return builder.tabsBy.flatMap((item) => maxPreviewItems(memberCache[item.id], item.label));
-  }, [builder.tabsBy, memberCache]);
+    return builder.tabsBy.flatMap((item) => previewLabelsForItem(item));
+  }, [builder.tabsBy, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache]);
 
   const previewColumns = useMemo<PreviewColumn[]>(() => {
     return previewColumnGroups.flatMap((group) => {
@@ -382,22 +826,40 @@ export function TemplateStudioPage() {
             label: tab.label,
             groupCode: group.code,
             groupLabel: group.label,
+            path: [...(group.path ?? [{ code: group.code, label: group.label }]), tab],
           }))
-        : [{ ...group }];
+        : [{ ...group, path: group.path ?? [{ code: group.code, label: group.label }] }];
       const generatedColumns = generatedFieldColumns.map((field) => ({
         code: `${group.code}:${field.code}`,
         label: field.label,
         groupCode: group.code,
         groupLabel: group.label,
         generatedMeasure: field,
+        path: [...(group.path ?? [{ code: group.code, label: group.label }]), { code: field.code, label: field.label }],
       }));
       return [...baseColumns, ...generatedColumns];
     });
   }, [generatedFieldColumns, previewColumnGroups, previewTabItems]);
 
-  const columnsPerGroup = Math.max(1, (previewTabItems.length || 1) + generatedFieldColumns.length);
+  const previewStructuralHeaderDepth = useMemo(() => {
+    return previewColumns.reduce((maxDepth, column) => Math.max(maxDepth, (column.path?.length ?? 1) - 1), 0);
+  }, [previewColumns]);
 
-  const previewColumnMinWidth = Math.max(760, 148 + previewColumns.length * 168);
+  const previewHeaderRows = useMemo(
+    () => groupedHeaderRows(previewColumns, previewStructuralHeaderDepth),
+    [previewColumns, previewStructuralHeaderDepth],
+  );
+
+  const previewRowHeaderCount = Math.max(1, previewRowLevelRows.length);
+  const previewColumnMinWidth = Math.max(760, previewRowHeaderCount * 132 + previewColumns.length * 168);
+  const activeCellMapKeys = useMemo(() => {
+    const keys = new Set<string>();
+    previewColumns.forEach((column, index) => keys.add(measureColumnKey(column, index)));
+    previewRows.forEach((_, rowIndex) => {
+      previewColumns.forEach((__, columnIndex) => keys.add(`${rowIndex}:${columnIndex}`));
+    });
+    return keys;
+  }, [previewColumns, previewRows]);
   const periodFrequencyOptions = useMemo(() => {
     const options = new Map<string, string>();
     allTimePeriods.forEach((period) => {
@@ -461,6 +923,302 @@ export function TemplateStudioPage() {
     return Array.from(deduped.values());
   }, [builder.fields, cellMap, previewColumns, previewSettings.showCodes]);
 
+  const editableMeasureItems = useMemo(() => {
+    const deduped = new Map<string, LibraryItem>();
+    builder.fields
+      .filter((field) => field.type === "MEASURE" && !field.generatedMode)
+      .forEach((field) => deduped.set(normalizeCode(field.sourceMeasureCode ?? field.code), field));
+    Object.entries(cellMap)
+      .filter(([key]) => activeCellMapKeys.has(key))
+      .map(([, field]) => field)
+      .filter((field) => field.type === "MEASURE" && !field.generatedMode)
+      .forEach((field) => deduped.set(normalizeCode(field.sourceMeasureCode ?? field.code), field));
+    return Array.from(deduped.values());
+  }, [activeCellMapKeys, builder.fields, cellMap]);
+
+  const templateGrainLabels = useMemo(() => {
+    const levelLabel = (items: LibraryItem[]) =>
+      items
+        .map((item) => libraryItemLabel(item))
+        .map((label) => label.trim())
+        .filter(Boolean)
+        .join("/");
+    const labels = [
+      ...builder.tabsBy.map((item) => libraryItemLabel(item)).filter(Boolean),
+      ...activeColumnLevels.map((level) => levelLabel(level.items)).filter(Boolean),
+      ...activeRowLevels.map((level) => levelLabel(level.items)).filter(Boolean),
+    ];
+    const grainPath = labels.join(" - ");
+    return grainPath ? [grainPath] : ["Template grain not configured"];
+  }, [activeColumnLevels, activeRowLevels, builder.tabsBy, previewSettings.bilingualLabels, secondaryMemberLabelCache, secondaryMeasureLabelCache]);
+
+  const editableTemplateColumns = useMemo(() => {
+    const columns = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        measureCode: string;
+        measureLabel: string;
+        uom: string;
+      }
+    >();
+    previewColumns.forEach((column, index) => {
+      if (column.generatedMeasure) return;
+      const measure = measureForColumn(index);
+      if (!measure) return;
+      const measureCode = normalizeCode(measure.sourceMeasureCode ?? measure.code);
+      const columnLabel = previewSettings.showCodes ? column.code : column.label;
+      const key = `${measureCode}:${measureColumnKey(column, index)}`;
+      if (columns.has(key)) return;
+      columns.set(key, {
+        key,
+        label: columnLabel,
+        measureCode,
+        measureLabel: libraryItemLabel(measure),
+        uom: measure.badge || "UOM",
+      });
+    });
+    return Array.from(columns.values());
+  }, [builder.fields, cellMap, previewColumns, previewSettings.showCodes, previewSettings.bilingualLabels, secondaryMeasureLabelCache]);
+
+  const generatedDataEntryColumns = useMemo(() => {
+    const computedByCode = computedColumns.reduce<Record<string, ComputedColumnDraft>>((next, column) => {
+      next[normalizeCode(column.code)] = column;
+      return next;
+    }, {});
+    return generatedFieldColumns.map((field) => {
+      const column = computedByCode[normalizeCode(field.code)];
+      return {
+        code: field.code,
+        label: field.label,
+        mode: field.generatedMode ?? column?.mode ?? "compute",
+        uom: field.badge || column?.outputUom || "Calculated",
+        showInDataEntry: Boolean(column?.showInDataEntry),
+      };
+    });
+  }, [computedColumns, generatedFieldColumns]);
+
+  const organizationByCode = useMemo(() => {
+    const map = new Map<string, MasterRecord>();
+    organizationRecords.forEach((record) => {
+      const code = normalizeCode(recordCode(record, "organization_code"));
+      if (code) map.set(code, record);
+    });
+    return map;
+  }, [organizationRecords]);
+
+  function resolveSourceDisplay(source: DataFieldMapping, detail?: DataFieldDetail) {
+    const sourceCode = sourceCodeFromMapping(source, detail?.source_organization_code ?? "");
+    const normalizedSourceCode = normalizeCode(sourceCode);
+    const sourceRecord = organizationByCode.get(normalizedSourceCode);
+    const parentCode =
+      mappingString(source, ["parent_organization_code", "ministry_organization_code"]) ||
+      recordCode(sourceRecord ?? {}, "parent_organization_code") ||
+      "";
+    const parentRecord = organizationByCode.get(normalizeCode(parentCode));
+    const mappedOrgName =
+      recordName(sourceRecord) ||
+      mappingText(source, ["department_organization_name", "source_organization_name", "organization_name"], detail?.source_organization_name ?? sourceCode);
+    const parentOrgName =
+      recordName(parentRecord) ||
+      mappingString(source, ["parent_organization_name", "ministry_name"]);
+    if (parentCode && parentOrgName && normalizeCode(parentCode) !== normalizedSourceCode) {
+      return {
+        sourceName: parentOrgName,
+        departmentName: mappedOrgName,
+      };
+    }
+    const explicitDepartmentCode = mappingString(source, ["department_organization_code"]);
+    const explicitDepartmentName = mappingString(source, ["department_organization_name", "department_name"]);
+    if (explicitDepartmentCode && explicitDepartmentName && normalizeCode(explicitDepartmentCode) !== normalizedSourceCode) {
+      return {
+        sourceName: mappingText(source, ["source_organization_name", "organization_name", "ministry_name"], detail?.source_organization_name ?? sourceCode),
+        departmentName: explicitDepartmentName,
+      };
+    }
+    return {
+      sourceName: mappingText(source, ["source_organization_name", "organization_name", "ministry_name"], mappedOrgName || "Source not mapped"),
+      departmentName: "-",
+    };
+  }
+
+  const recipientSourceCodes = useMemo(() => {
+    const codes = new Map<string, string>();
+    editableMeasureItems.forEach((measure) => {
+      const measureCode = normalizeCode(measure.sourceMeasureCode ?? measure.code);
+      const detail = dataFieldDetails[measureCode];
+      activeMappings(detail?.source_mappings ?? detail?.source_organizations).forEach((source) => {
+        const sourceCode = sourceCodeFromMapping(source);
+        const normalizedSourceCode = normalizeCode(sourceCode);
+        if (normalizedSourceCode) codes.set(normalizedSourceCode, sourceCode);
+      });
+    });
+    return Array.from(codes.values());
+  }, [dataFieldDetails, editableMeasureItems]);
+
+  const recipientGroups = useMemo<RecipientSourceGroup[]>(() => {
+    const groups = new Map<string, RecipientSourceGroup>();
+    editableMeasureItems.forEach((measure) => {
+      const measureCode = normalizeCode(measure.sourceMeasureCode ?? measure.code);
+      if (!measureCode) return;
+      const detail = dataFieldDetails[measureCode];
+      const sources = activeMappings(detail?.source_mappings ?? detail?.source_organizations);
+      const periodicities = activeMappings(detail?.periodicity_mappings ?? detail?.periodicities);
+      const assignedColumns = editableTemplateColumns.filter((column) => column.measureCode === measureCode);
+      const allEditableColumnLabels = editableTemplateColumns.map((column) => `${column.label} (${column.measureLabel})`);
+      const assignedColumnLabels = assignedColumns.map((column) => `${column.label} (${column.uom})`);
+      const visibleGeneratedColumnLabels = generatedDataEntryColumns
+        .filter((column) => column.showInDataEntry)
+        .map((column) => `${column.label} (${column.mode.toUpperCase()} | ${column.uom})`);
+      const sourceRows = sources.length ? sources : [{} as DataFieldMapping];
+      sourceRows.forEach((source) => {
+        const sourceCode = sourceCodeFromMapping(source, detail?.source_organization_code ?? "MISSING_SOURCE");
+        const normalizedSourceCode = normalizeCode(sourceCode);
+        const { sourceName, departmentName } = resolveSourceDisplay(source, detail);
+        const key = `${sourceCode}:${departmentName}`;
+        const existing =
+          groups.get(key) ??
+          {
+            key,
+            sourceCode,
+            sourceName,
+            departmentName,
+            measureCodes: [],
+            measureLabels: [],
+            assignedColumnLabels: [],
+            dataEntryColumnLabels: [],
+            generatedColumnLabels: [],
+            periodicities: [],
+            grains: [],
+            officers: [],
+            readiness: "READY" as RecipientReadiness,
+          };
+        existing.measureCodes = compactList([...existing.measureCodes, measureCode]);
+        existing.measureLabels = compactList([...existing.measureLabels, libraryItemLabel(measure)]);
+        existing.assignedColumnLabels = compactList([...existing.assignedColumnLabels, ...assignedColumnLabels]);
+        existing.dataEntryColumnLabels = compactList([
+          ...existing.dataEntryColumnLabels,
+          ...(previewSettings.showAllRecipientColumns ? allEditableColumnLabels : assignedColumnLabels),
+          ...visibleGeneratedColumnLabels,
+        ]);
+        existing.generatedColumnLabels = compactList([...existing.generatedColumnLabels, ...visibleGeneratedColumnLabels]);
+        existing.periodicities = compactList([
+          ...existing.periodicities,
+          ...periodicities.map((item) => mappingText(item, ["periodicity_name", "periodicity_code", "mapping_role"])),
+          detail?.periodicity_name,
+        ]);
+        existing.grains = compactList([...existing.grains, ...templateGrainLabels]);
+        const embeddedOfficerLabels = [
+          officerLabel(source),
+          ...activeMappings((detail?.source_officers as DataFieldMapping[] | undefined) ?? (detail?.source_officer_mappings as DataFieldMapping[] | undefined))
+            .filter((officer) => normalizeCode(sourceCodeFromMapping(officer, mappingText(officer, ["assigned_source_organization_code", "mapped_source_organization_code"]))) === normalizedSourceCode)
+            .map((officer) => officerLabel(officer)),
+        ].filter((label) => label !== "Officer mapping pending");
+        const fallbackOfficerLabels = (sourceOfficersByOrg[normalizedSourceCode] ?? []).map((officer) => officerLabel(officer));
+        const officerLabels = compactList([...embeddedOfficerLabels, ...fallbackOfficerLabels], "Officer mapping pending");
+        existing.officers = compactList([...existing.officers, ...officerLabels]);
+        if (!sources.length) existing.readiness = "MISSING_SOURCE";
+        else if (!periodicities.length && !detail?.periodicity_name) existing.readiness = "MISSING_PERIODICITY";
+        else if (!activeRowLevels.length && !activeColumnLevels.length && !builder.tabsBy.length) existing.readiness = "MISSING_GRAIN";
+        else if (officerLabels.length === 1 && officerLabels[0] === "Officer mapping pending") existing.readiness = "MISSING_OFFICER";
+        groups.set(key, existing);
+      });
+    });
+    return Array.from(groups.values()).sort((a, b) => a.sourceName.localeCompare(b.sourceName));
+  }, [
+    activeColumnLevels.length,
+    activeRowLevels.length,
+    builder.tabsBy.length,
+    dataFieldDetails,
+    editableMeasureItems,
+    editableTemplateColumns,
+    generatedDataEntryColumns,
+    organizationByCode,
+    previewSettings.bilingualLabels,
+    previewSettings.showAllRecipientColumns,
+    secondaryMeasureLabelCache,
+    sourceOfficersByOrg,
+    templateGrainLabels,
+  ]);
+
+  const recipientSourceOptions = useMemo(() => {
+    return recipientGroups.map((group) => ({
+      value: group.key,
+      label: `${group.sourceName}${group.departmentName && group.departmentName !== "-" ? ` / ${group.departmentName}` : ""}`,
+    }));
+  }, [recipientGroups]);
+
+  const visibleRecipientGroups = useMemo(() => {
+    if (selectedRecipientSource === "ALL") return recipientGroups;
+    return recipientGroups.filter((group) => group.key === selectedRecipientSource);
+  }, [recipientGroups, selectedRecipientSource]);
+
+  const publishChecks = useMemo<PublishCheck[]>(() => {
+    const missingSourceMeasures = editableMeasureItems.filter((measure) => {
+      const measureCode = normalizeCode(measure.sourceMeasureCode ?? measure.code);
+      const detail = dataFieldDetails[measureCode];
+      return activeMappings(detail?.source_mappings ?? detail?.source_organizations).length === 0;
+    });
+    const checks: PublishCheck[] = [
+      {
+        label: "Template version",
+        status: selectedVersion?.version_code ? "PASS" : "BLOCK",
+        detail: selectedVersion?.version_code ? textValue(selectedVersion.title ?? selectedVersion.version_code) : "Select a template version.",
+      },
+      {
+        label: "Row structure",
+        status: activeRowLevels.length ? "PASS" : "BLOCK",
+        detail: activeRowLevels.length ? `${activeRowLevels.length} row level(s) configured.` : "Add at least one row level.",
+      },
+      {
+        label: "Column structure",
+        status: activeColumnLevels.length ? "PASS" : "WARN",
+        detail: activeColumnLevels.length ? `${activeColumnLevels.length} column level(s) configured.` : "No column levels. This is valid only for simple row-only forms.",
+      },
+      {
+        label: "Editable measures",
+        status: editableMeasureItems.length ? "PASS" : "BLOCK",
+        detail: editableMeasureItems.length ? `${editableMeasureItems.length} measure(s) selected.` : "Add at least one Data Field / Measure.",
+      },
+      {
+        label: "Recipients",
+        status: missingSourceMeasures.length ? "BLOCK" : recipientGroups.length ? "PASS" : "WARN",
+        detail: missingSourceMeasures.length
+          ? `Missing active primary source/provider mapping: ${missingSourceMeasures.map((item) => item.code).join(", ")}`
+          : recipientGroups.length
+            ? `${recipientGroups.length} source group(s) derived from measure mappings.`
+            : "No recipients derived yet.",
+      },
+      {
+        label: "Validation",
+        status: Object.keys(columnValidations).length ? "PASS" : "WARN",
+        detail: Object.keys(columnValidations).length ? `${Object.keys(columnValidations).length} column validation(s) configured.` : "Validation is optional and can be added later.",
+      },
+      {
+        label: "Generated outputs",
+        status: computedColumns.length ? "PASS" : "WARN",
+        detail: computedColumns.length ? `${computedColumns.length} computed/calculated/rollup output(s) configured.` : "No generated output columns configured.",
+      },
+    ];
+    return checks;
+  }, [
+    activeColumnLevels.length,
+    activeRowLevels.length,
+    columnValidations,
+    computedColumns.length,
+    dataFieldDetails,
+    editableMeasureItems,
+    recipientGroups.length,
+    selectedVersion?.title,
+    selectedVersion?.version_code,
+  ]);
+
+  const publishBlockers = useMemo(
+    () => publishChecks.filter((check) => check.status === "BLOCK"),
+    [publishChecks],
+  );
+
   const computeSuggestions = useMemo(() => {
     const query =
       computeColumnSearch.trim().toLowerCase() ||
@@ -484,7 +1242,13 @@ export function TemplateStudioPage() {
       setSelectedVersionCode("");
       setRenderContract(null);
       setBuilder(emptyBuilder);
-      void loadAll();
+      setRowLevels([makeRowLevel(0)]);
+      setActiveRowLevelId("row-level-1");
+      setMemberCache({});
+      setDataFieldDetails({});
+      setSecondaryMemberLabelCache({});
+      setSecondaryMeasureLabelCache({});
+      void loadAll({ forceLibrary: true });
     };
     window.addEventListener(UNIT_CHANGED_EVENT, refresh);
     window.addEventListener(LOCALE_CHANGED_EVENT, refresh);
@@ -508,6 +1272,8 @@ export function TemplateStudioPage() {
       setMeasures([]);
       setRenderContract(null);
       setBuilder(emptyBuilder);
+      setRowLevels([makeRowLevel(0)]);
+      setActiveRowLevelId("row-level-1");
       setCellMap({});
       setColumnValidations({});
       setAvailableValidations({});
@@ -525,14 +1291,114 @@ export function TemplateStudioPage() {
   }, [selectedVersion?.version_code]);
 
   useEffect(() => {
-    if (!selectedVersion?.version_code || !versionHydratedRef.current || isLoading || isVersionLoading) return undefined;
-    if (!hasDraftContent(builder, cellMap, columnValidations, computedColumns)) return undefined;
+    if (!selectedVersion?.version_code || isSelectedVersionFrozen || !versionHydratedRef.current || isLoading || isVersionLoading || isPreviewHydrating) return undefined;
+    if (!hasDraftContent(builder, cellMap, columnValidations, computedColumns, columnLevels, rowLevels)) return undefined;
     window.clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = window.setTimeout(() => {
       void saveDraftSnapshot({ silent: true });
     }, 1800);
     return () => window.clearTimeout(autosaveTimerRef.current);
-  }, [activeStep, builder, cellMap, columnValidations, computedColumns, previewSettings, selectedVersion?.version_code, isLoading, isVersionLoading]);
+  }, [activeStep, builder, cellMap, columnLevels, rowLevels, columnValidations, computedColumns, previewSettings, selectedVersion?.version_code, isSelectedVersionFrozen, isLoading, isVersionLoading, isPreviewHydrating]);
+
+  useEffect(() => {
+    if (!["recipients", "preview", "publish"].includes(activeStep)) return undefined;
+    const missingMeasures = editableMeasureItems
+      .map((measure) => normalizeCode(measure.sourceMeasureCode ?? measure.code))
+      .filter((code) => code && !dataFieldDetails[code]);
+    const uniqueMissing = Array.from(new Set(missingMeasures));
+    if (!uniqueMissing.length) return undefined;
+    let cancelled = false;
+    setIsRecipientLoading(true);
+    Promise.all(
+      uniqueMissing.map(async (measureCode) => {
+        const detail = await getDataFieldDetail(measureCode);
+        return [measureCode, detail] as const;
+      }),
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        setDataFieldDetails((current) => {
+          const next = { ...current };
+          entries.forEach(([measureCode, detail]) => {
+            next[measureCode] = detail;
+          });
+          return next;
+        });
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "Recipient mappings could not be loaded.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsRecipientLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStep, dataFieldDetails, editableMeasureItems]);
+
+  useEffect(() => {
+    if (!["recipients", "preview", "publish"].includes(activeStep) || organizationRecords.length) return undefined;
+    let cancelled = false;
+    listMasterRecords({ endpoint: "/masters/organizations" })
+      .then((response) => {
+        if (!cancelled) setOrganizationRecords(response.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setOrganizationRecords([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStep, organizationRecords.length]);
+
+  useEffect(() => {
+    if (selectedRecipientSource === "ALL") return;
+    if (!recipientGroups.some((group) => group.key === selectedRecipientSource)) {
+      setSelectedRecipientSource("ALL");
+    }
+  }, [recipientGroups, selectedRecipientSource]);
+
+  useEffect(() => {
+    if (!["recipients", "preview", "publish"].includes(activeStep)) return undefined;
+    const missingSourceCodes = recipientSourceCodes.filter((code) => !sourceOfficersByOrg[normalizeCode(code)]);
+    if (!missingSourceCodes.length) return undefined;
+    let cancelled = false;
+    Promise.all(
+      missingSourceCodes.map(async (sourceCode) => {
+        const response = await listMasterRecords({
+          endpoint: "/masters/officers",
+          params: { organization_code: sourceCode },
+        });
+        return [sourceCode, response.data ?? []] as const;
+      }),
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        setSourceOfficersByOrg((current) => {
+          const next = { ...current };
+          entries.forEach(([sourceCode, officers]) => {
+            next[normalizeCode(sourceCode)] = officers.filter((officer) => officer.is_active !== false);
+          });
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSourceOfficersByOrg((current) => {
+            const next = { ...current };
+            missingSourceCodes.forEach((sourceCode) => {
+              next[normalizeCode(sourceCode)] = [];
+            });
+            return next;
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStep, recipientSourceCodes, sourceOfficersByOrg]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -553,7 +1419,41 @@ export function TemplateStudioPage() {
   useEffect(() => {
     if (!settingsDrawerOpen || settingsTab !== "rollup") return;
     void loadAvailableRollups();
-  }, [builder.columns, builder.rowRepresents, builder.tabsBy, settingsDrawerOpen, settingsTab]);
+  }, [builder.columns, builder.rowRepresents, builder.tabsBy, rowLevels, columnLevels, settingsDrawerOpen, settingsTab]);
+
+  useEffect(() => {
+    const enabledItems = [
+      ...builder.tabsBy,
+      ...builder.rowRepresents,
+      ...builder.columns,
+      ...rowLevels.flatMap((level) => level.items),
+      ...columnLevels.flatMap((level) => level.items),
+    ].filter((item) => isBilingualEnabled(item));
+    const needsMeasures = previewSettings.bilingualLabels.measures && builder.fields.some((item) => item.type === "MEASURE");
+    if (!enabledItems.length && !needsMeasures) return undefined;
+    let cancelled = false;
+    setIsSecondaryLabelLoading(true);
+    void Promise.all([
+      ...enabledItems.map((item) => loadSecondaryMembersForItem(item)),
+      needsMeasures ? loadSecondaryMeasureLabels() : Promise.resolve(),
+    ]).finally(() => {
+      if (!cancelled) setIsSecondaryLabelLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    builder.tabsBy,
+    builder.rowRepresents,
+    builder.columns,
+    builder.fields,
+    rowLevels,
+    columnLevels,
+    previewSettings.bilingualLabels.geography,
+    previewSettings.bilingualLabels.dimensions,
+    previewSettings.bilingualLabels.measures,
+    previewSettings.bilingualLabels.locale,
+  ]);
 
   function changeLibraryTab(tab: LibraryTab) {
     setLibrarySearch("");
@@ -564,31 +1464,84 @@ export function TemplateStudioPage() {
     const next = new URLSearchParams(params);
     if (selectedTemplate?.template_code) next.set("template_code", selectedTemplate.template_code);
     if (selectedVersion?.version_code) next.set("version_code", selectedVersion.version_code);
-    next.set("step", activeStep);
+    next.delete("step");
     setParams(next, { replace: true });
-  }, [activeStep, selectedTemplate?.template_code, selectedVersion?.version_code]);
+  }, [selectedTemplate?.template_code, selectedVersion?.version_code]);
 
-  async function loadAll() {
+  async function loadAll(options: { forceLibrary?: boolean } = {}) {
     setIsLoading(true);
     setError("");
     try {
-      const [templateResponse, dimensionResponse, geographySetResponse, timeSetResponse, timePeriodResponse, dataFieldResponse] =
+      const templateResponse = await listTemplates({ limit: 200 });
+      const nextTemplates = templateResponse.data ?? [];
+      setTemplates(nextTemplates);
+      setSelectedTemplateCode((current) => current || nextTemplates[0]?.template_code || "");
+      void loadDataLibrary({ force: options.forceLibrary });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Template Designer data could not be loaded.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function applyDataLibraryCache(cache: TemplateDataLibraryCache) {
+    setDimensionSets(cache.dimensionSets);
+    setDimensionMembers(cache.dimensionMembers);
+    setGeographySets(cache.geographySets);
+    setGeographyMembers(cache.geographyMembers);
+    setTimeSets(cache.timeSets);
+    setTimeMembers(cache.timeMembers);
+    setDataFields(cache.dataFields);
+    setAllTimePeriods(cache.allTimePeriods);
+  }
+
+  async function loadDataLibrary(options: { force?: boolean } = {}) {
+    const cacheKey = dataLibraryCacheKey();
+    const cached = templateDataLibraryCache.get(cacheKey);
+    if (cached && !options.force) {
+      applyDataLibraryCache(cached);
+      setIsLibraryLoading(false);
+      return;
+    }
+
+    setIsLibraryLoading(true);
+    try {
+      const [dimensionResponse, geographySetResponse, geographyResponse, timeSetResponse, timePeriodResponse, dataFieldResponse] =
         await Promise.all([
-          listTemplates({ limit: 200 }),
           listDimensionManagementRows({ limit: 300, offset: 0 }),
           listDimensionMemberSets("GEOGRAPHY").catch(() => ({ data: [] })),
+          listGeographies({ limit: 500, offset: 0 }).catch(() => ({ data: [] })),
           listTimePeriodSets(),
           listAllTimePeriods().catch(() => ({ data: [] })),
           listDataFields({ limit: 500, offset: 0 }),
         ]);
 
-      const nextTemplates = templateResponse.data ?? [];
       const nextDimensions = (dimensionResponse.data?.rows ?? []).filter(isGeneralDimension);
-      setTemplates(nextTemplates);
-      setAllTimePeriods(timePeriodResponse.data ?? []);
-      setSelectedTemplateCode((current) => current || nextTemplates[0]?.template_code || "");
-      setDataFields(
-        (dataFieldResponse.data ?? []).map((field) => ({
+      const setResults = await Promise.all(
+        nextDimensions.map(async (dimension: DimensionManagementRow) => {
+          const dimensionCode = dimension.dimension_code ?? "";
+          if (!dimensionCode) return [];
+          const response = await listDimensionMemberSets(dimensionCode).catch(() => ({ data: [] }));
+          return (response.data ?? []).map((set) => mapSetToLibraryItem(set, "DIMENSION_SET", dimensionCode, dimension));
+        }),
+      );
+      const memberResults = await Promise.all(
+        nextDimensions.map(async (dimension: DimensionManagementRow) => {
+          const dimensionCode = dimension.dimension_code ?? "";
+          if (!dimensionCode) return [];
+          const response = await listDimensionMembers(dimensionCode, 500).catch(() => ({ data: [] }));
+          return (response.data ?? []).map((member) => mapDimensionMemberToLibraryItem(member, dimension));
+        }),
+      );
+      const cache: TemplateDataLibraryCache = {
+        dimensionSets: setResults.flat(),
+        dimensionMembers: memberResults.flat(),
+        geographySets: (geographySetResponse.data ?? []).map((set) => mapSetToLibraryItem(set, "GEOGRAPHY_SET", "GEOGRAPHY")),
+        geographyMembers: (geographyResponse.data ?? []).map(mapGeographyToLibraryItem),
+        timeSets: (timeSetResponse.data ?? []).map((set) => mapSetToLibraryItem(set, "TIME_SET", "TIME_PERIOD")),
+        timeMembers: (timePeriodResponse.data ?? []).map(mapTimePeriodToLibraryItem),
+        allTimePeriods: timePeriodResponse.data ?? [],
+        dataFields: (dataFieldResponse.data ?? []).map((field) => ({
           id: `MEASURE:${field.measure_code}`,
           type: "MEASURE",
           code: field.measure_code ?? "",
@@ -601,53 +1554,14 @@ export function TemplateStudioPage() {
           measureUnitCode: field.uom_code ?? field.unit_code ?? null,
           aggregationType: field.aggregation_type ?? "SUM",
         })),
-      );
-
-      const setResults = await Promise.all(
-        nextDimensions.map(async (dimension: DimensionManagementRow) => {
-          const dimensionCode = dimension.dimension_code ?? "";
-          if (!dimensionCode) return [];
-          const response = await listDimensionMemberSets(dimensionCode).catch(() => ({ data: [] }));
-          return enrichSetItems(
-            (response.data ?? []).map((set) => mapSetToLibraryItem(set, "DIMENSION_SET", dimensionCode, dimension)),
-          );
-        }),
-      );
-      const nextDimensionSets = setResults.flat();
-      const nextGeographySets = await enrichSetItems(
-        (geographySetResponse.data ?? []).map((set) => mapSetToLibraryItem(set, "GEOGRAPHY_SET", "GEOGRAPHY")),
-      );
-      const nextTimeSets = await enrichSetItems(
-        (timeSetResponse.data ?? []).map((set) => mapSetToLibraryItem(set, "TIME_SET", "TIME_PERIOD")),
-      );
-      setDimensionSets(nextDimensionSets);
-      setGeographySets(nextGeographySets);
-      setTimeSets(nextTimeSets);
+      };
+      templateDataLibraryCache.set(cacheKey, cache);
+      applyDataLibraryCache(cache);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Template Designer data could not be loaded.");
+      setError(loadError instanceof Error ? loadError.message : "Template Studio Data Library could not be loaded.");
     } finally {
-      setIsLoading(false);
+      setIsLibraryLoading(false);
     }
-  }
-
-  async function enrichSetItems(items: LibraryItem[]) {
-    const enriched = await Promise.all(
-      items.map(async (item) => {
-        if (item.memberCount && item.memberCount > 0) return item;
-        try {
-          const response =
-            item.type === "TIME_SET"
-              ? await listTimePeriodSetPeriods(item.code)
-              : await listDimensionMemberSetMembers(item.code, 500);
-          const rows = response.data ?? [];
-          setMemberCache((current) => ({ ...current, [item.id]: current[item.id] ?? rows }));
-          return { ...item, memberCount: rows.length, badge: `${rows.length} items` };
-        } catch {
-          return item;
-        }
-      }),
-    );
-    return enriched;
   }
 
   async function loadVersions(templateCode: string) {
@@ -672,10 +1586,13 @@ export function TemplateStudioPage() {
 
   async function refreshTimeSetLibrary() {
     const response = await listTimePeriodSets();
-    const nextTimeSets = await enrichSetItems(
-      (response.data ?? []).map((set) => mapSetToLibraryItem(set, "TIME_SET", "TIME_PERIOD")),
-    );
+    const nextTimeSets = (response.data ?? []).map((set) => mapSetToLibraryItem(set, "TIME_SET", "TIME_PERIOD"));
     setTimeSets(nextTimeSets);
+    const cacheKey = dataLibraryCacheKey();
+    const cached = templateDataLibraryCache.get(cacheKey);
+    if (cached) {
+      templateDataLibraryCache.set(cacheKey, { ...cached, timeSets: nextTimeSets });
+    }
   }
 
   async function loadVersionDesign(versionCode: string) {
@@ -691,24 +1608,49 @@ export function TemplateStudioPage() {
       setMeasures(measureResponse.data ?? []);
       setRenderContract(contractResponse.data);
       setBuilder(emptyBuilder);
+      setRowLevels([makeRowLevel(0)]);
+      setActiveRowLevelId("row-level-1");
+      setColumnLevels([makeColumnLevel(0)]);
+      setActiveColumnLevelId("column-level-1");
       setCellMap({});
       setColumnValidations({});
       setAvailableValidations({});
       setComputedColumns([]);
       setPreviewSettings(defaultPreviewSettings);
+      setIsPreviewHydrating(false);
       const draftPayload = draftResponse.data as (TemplateStudioDraft & { data?: TemplateStudioDraft; studio_state?: unknown }) | null;
       const studioState = safeStudioState(draftPayload?.studio_state ?? draftPayload?.data?.studio_state);
       if (studioState && Object.keys(studioState).length > 0) {
         if (isBuilderState(studioState.builder)) {
           const nextBuilder = safeBuilderState(studioState.builder);
-          setBuilder(nextBuilder);
-          await Promise.all([...nextBuilder.tabsBy, ...nextBuilder.rowRepresents, ...nextBuilder.columns].map((item) => loadMembersForItem(item)));
+          const nextRowLevels = safeRowLevels(studioState.rowLevels, nextBuilder.rowRepresents);
+          const nextColumnLevels = safeColumnLevels(studioState.columnLevels, nextBuilder.columns);
+          const levelOneRows = nextRowLevels[0]?.items ?? nextBuilder.rowRepresents;
+          const levelOneColumns = nextColumnLevels[0]?.items ?? nextBuilder.columns;
+          const compatibleBuilder = { ...nextBuilder, rowRepresents: levelOneRows, columns: levelOneColumns };
+          setBuilder(compatibleBuilder);
+          setRowLevels(nextRowLevels);
+          setActiveRowLevelId(nextRowLevels[0]?.id ?? "row-level-1");
+          setColumnLevels(nextColumnLevels);
+          setActiveColumnLevelId(nextColumnLevels[0]?.id ?? "column-level-1");
+          const previewMemberItems = [
+            ...compatibleBuilder.tabsBy,
+            ...compatibleBuilder.rowRepresents,
+            ...nextRowLevels.flatMap((level) => level.items),
+            ...nextColumnLevels.flatMap((level) => level.items),
+          ];
+          if (previewMemberItems.length > 0) {
+            setIsPreviewHydrating(true);
+            void Promise.all(previewMemberItems.map((item) => loadMembersForItem(item))).finally(() => setIsPreviewHydrating(false));
+          }
         }
         if (studioState.cellMap && typeof studioState.cellMap === "object") {
           setCellMap(safeRecordOfLibraryItems(studioState.cellMap));
         }
         if (studioState.columnValidations && typeof studioState.columnValidations === "object") {
-          setAvailableValidations(safeValidationMap(studioState.columnValidations));
+          const nextValidations = safeValidationMap(studioState.columnValidations);
+          setColumnValidations(nextValidations);
+          setAvailableValidations(nextValidations);
         }
         if (Array.isArray(studioState.computedColumns)) {
           setComputedColumns(safeComputedColumns(studioState.computedColumns));
@@ -719,6 +1661,13 @@ export function TemplateStudioPage() {
       } else {
         const nextComputedColumns = (formulaResponse.data ?? []).map((formula) => {
           const mode = String(formula.formula_type ?? "COMPUTE").toLowerCase();
+          const metadata = (formula.render_metadata ?? {}) as {
+            visibility?: {
+              show_in_data_entry?: boolean;
+              show_in_preview?: boolean;
+              show_in_published_output?: boolean;
+            };
+          };
           return {
             code: formula.formula_code ?? "",
             label: formula.formula_name ?? formula.formula_code ?? "Generated value",
@@ -726,6 +1675,9 @@ export function TemplateStudioPage() {
             outputUom: formula.output_uom_code ?? "Calculated",
             mode: mode === "calculated" || mode === "rollup" ? mode : "compute",
             functionCode: formula.function_code ?? undefined,
+            showInDataEntry: Boolean(metadata.visibility?.show_in_data_entry),
+            showInPreview: metadata.visibility?.show_in_preview !== false,
+            showInPublishedOutput: metadata.visibility?.show_in_published_output !== false,
           } satisfies ComputedColumnDraft;
         });
         setComputedColumns(nextComputedColumns);
@@ -755,13 +1707,199 @@ export function TemplateStudioPage() {
     };
   }
 
+  function mapDimensionMemberToLibraryItem(member: DimensionMember, dimension: DimensionManagementRow): LibraryItem {
+    const dimensionCode = dimension.dimension_code ?? member.dimension_code ?? "";
+    const code = member.member_code ?? "";
+    const dimensionName = dimension.dimension_name ?? dimension.name ?? dimensionCode;
+    const label = firstDisplayName([member.name, member.short_name], code);
+    return {
+      id: `DIMENSION_MEMBER:${dimensionCode}:${code}`,
+      type: "DIMENSION_MEMBER",
+      code,
+      label: label !== "-" ? label : code,
+      subLabel: `${dimensionName} member`,
+      badge: "Member",
+      dimensionCode,
+      memberCount: 1,
+    };
+  }
+
+  function mapGeographyToLibraryItem(geography: Geography): LibraryItem {
+    const code = geography.member_code ?? geography.geography_code ?? "";
+    const label = firstDisplayName([geography.name, geography.short_name], code);
+    return {
+      id: `GEOGRAPHY_MEMBER:${code}`,
+      type: "GEOGRAPHY_MEMBER",
+      code,
+      label: label !== "-" ? label : code,
+      subLabel: [geography.level_name ?? geography.level_code, geography.parent_geography_name ?? geography.parent_geography_code]
+        .filter(Boolean)
+        .join(" under ") || "Geography member",
+      badge: "Member",
+      dimensionCode: "GEOGRAPHY",
+      memberCount: 1,
+    };
+  }
+
+  function mapTimePeriodToLibraryItem(period: TimePeriod): LibraryItem {
+    const code = period.member_code ?? period.time_period_code ?? "";
+    const label = firstDisplayName([period.name, period.short_name], code);
+    return {
+      id: `TIME_MEMBER:${code}`,
+      type: "TIME_MEMBER",
+      code,
+      label: label !== "-" ? label : code,
+      subLabel: [period.frequency_name ?? period.frequency_code, period.period_year].filter(Boolean).join(" | ") || "Time period member",
+      badge: "Member",
+      dimensionCode: "TIME_PERIOD",
+      memberCount: 1,
+    };
+  }
+
   function onDragStart(event: DragEvent, item: LibraryItem) {
+    if (isSelectedVersionFrozen) {
+      event.preventDefault();
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     event.dataTransfer.setData("application/json", JSON.stringify(item));
     event.dataTransfer.effectAllowed = "copy";
   }
 
+  function syncLevelOneRows(levels: RowLevel[]) {
+    const nextLevelOne = levels[0]?.items ?? [];
+    setBuilder((current) => ({ ...current, rowRepresents: nextLevelOne }));
+  }
+
+  function updateRowLevels(updater: (current: RowLevel[]) => RowLevel[]) {
+    setRowLevels((current) => {
+      const next = reindexRowLevels(updater(current));
+      syncLevelOneRows(next);
+      return next;
+    });
+  }
+
+  function syncLevelOneColumns(levels: ColumnLevel[]) {
+    const nextLevelOne = levels[0]?.items ?? [];
+    setBuilder((current) => ({ ...current, columns: nextLevelOne }));
+  }
+
+  function updateColumnLevels(updater: (current: ColumnLevel[]) => ColumnLevel[]) {
+    setColumnLevels((current) => {
+      const next = reindexColumnLevels(updater(current));
+      syncLevelOneColumns(next);
+      return next;
+    });
+  }
+
+  function addColumnLevel() {
+    const nextLevelId = `column-level-${columnLevels.length + 1}`;
+    updateColumnLevels((current) => [...current, makeColumnLevel(current.length)]);
+    setActiveColumnLevelId(nextLevelId);
+  }
+
+  function removeColumnLevel(levelId: string) {
+    updateColumnLevels((current) => (current.length <= 1 ? [makeColumnLevel(0)] : current.filter((level) => level.id !== levelId)));
+    setActiveColumnLevelId("column-level-1");
+  }
+
+  function addRowLevel() {
+    const nextLevelId = `row-level-${rowLevels.length + 1}`;
+    updateRowLevels((current) => [...current, makeRowLevel(current.length)]);
+    setActiveRowLevelId(nextLevelId);
+  }
+
+  function removeRowLevel(levelId: string) {
+    updateRowLevels((current) => (current.length <= 1 ? [makeRowLevel(0)] : current.filter((level) => level.id !== levelId)));
+    setActiveRowLevelId("row-level-1");
+  }
+
+  async function toggleRowLevelItem(levelId: string, item: LibraryItem) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    if (item.type === "MEASURE") {
+      setNotice("Drop measures into Fields To Fill. Row levels accept dimensions, geography, and time-period items.");
+      return;
+    }
+    updateRowLevels((current) =>
+      current.map((level) => {
+        if (level.id !== levelId) return level;
+        const exists = level.items.some((existing) => existing.id === item.id);
+        return {
+          ...level,
+          items: exists ? level.items.filter((existing) => existing.id !== item.id) : [...level.items, item],
+        };
+      }),
+    );
+    setActiveRowLevelId(levelId);
+    await loadMembersForItem(item);
+  }
+
+  async function toggleColumnLevelItem(levelId: string, item: LibraryItem) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    if (item.type === "MEASURE") {
+      setNotice("Drop measures into Fields To Fill. Column levels accept dimensions, geography, and time-period items.");
+      return;
+    }
+    updateColumnLevels((current) =>
+      current.map((level) => {
+        if (level.id !== levelId) return level;
+        const exists = level.items.some((existing) => existing.id === item.id);
+        return {
+          ...level,
+          items: exists ? level.items.filter((existing) => existing.id !== item.id) : [...level.items, item],
+        };
+      }),
+    );
+    setActiveColumnLevelId(levelId);
+    await loadMembersForItem(item);
+  }
+
+  async function onColumnLevelDrop(event: DragEvent, levelId: string) {
+    event.preventDefault();
+    const raw = event.dataTransfer.getData("application/json");
+    if (!raw) return;
+    await toggleColumnLevelItem(levelId, JSON.parse(raw) as LibraryItem);
+  }
+
+  async function onRowLevelDrop(event: DragEvent, levelId: string) {
+    event.preventDefault();
+    const raw = event.dataTransfer.getData("application/json");
+    if (!raw) return;
+    await toggleRowLevelItem(levelId, JSON.parse(raw) as LibraryItem);
+  }
+
+  function removeColumnLevelItem(levelId: string, itemId: string) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    updateColumnLevels((current) =>
+      current.map((level) => (level.id === levelId ? { ...level, items: level.items.filter((item) => item.id !== itemId) } : level)),
+    );
+  }
+
+  function removeRowLevelItem(levelId: string, itemId: string) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    updateRowLevels((current) =>
+      current.map((level) => (level.id === levelId ? { ...level, items: level.items.filter((item) => item.id !== itemId) } : level)),
+    );
+  }
+
   async function onDrop(event: DragEvent, zone: DropZone) {
     event.preventDefault();
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     const raw = event.dataTransfer.getData("application/json");
     if (!raw) return;
     const item = JSON.parse(raw) as LibraryItem;
@@ -776,6 +1914,10 @@ export function TemplateStudioPage() {
 
   async function onCellDrop(event: DragEvent, zone: DropZone, cellKey?: string) {
     event.preventDefault();
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     const raw = event.dataTransfer.getData("application/json");
     if (!raw) return;
     const item = JSON.parse(raw) as LibraryItem;
@@ -788,6 +1930,14 @@ export function TemplateStudioPage() {
       );
       setCellMap((current) => ({ ...current, [cellKey]: item }));
       await loadMembersForItem(item);
+      return;
+    }
+    if (actualZone === "columns") {
+      await toggleColumnLevelItem(columnLevels[0]?.id ?? "column-level-1", item);
+      return;
+    }
+    if (actualZone === "rowRepresents") {
+      await toggleRowLevelItem(rowLevels[0]?.id ?? "row-level-1", item);
       return;
     }
     setBuilder((current) => {
@@ -808,6 +1958,18 @@ export function TemplateStudioPage() {
   async function loadMembersForItem(item: LibraryItem): Promise<DimensionMemberSetItem[]> {
     if (memberCache[item.id]) return memberCache[item.id];
     if (item.type === "MEASURE" || !item.code) return [];
+    if (isMemberItem(item)) {
+      const row = {
+        dimension_code: item.dimensionCode,
+        member_code: item.code,
+        member_name: item.label,
+        name: item.label,
+        sort_order: 1,
+        is_active: true,
+      } satisfies DimensionMemberSetItem;
+      setMemberCache((current) => ({ ...current, [item.id]: [row] }));
+      return [row];
+    }
     try {
       const response =
         item.type === "TIME_SET"
@@ -822,10 +1984,63 @@ export function TemplateStudioPage() {
     }
   }
 
+  async function loadSecondaryMembersForItem(item: LibraryItem): Promise<void> {
+    if (secondaryMemberLabelCache[item.id] || item.type === "MEASURE" || item.type === "TIME_SET" || item.type === "TIME_MEMBER" || !item.code) return;
+    try {
+      let labels: Record<string, string> = {};
+      if (item.type === "DIMENSION_MEMBER" && item.dimensionCode) {
+        const response = await listDimensionMembers(item.dimensionCode, 500, { locale: previewSettings.bilingualLabels.locale });
+        labels = (response.data ?? []).reduce<Record<string, string>>((next, row) => {
+          const code = textValue(row.member_code);
+          const label = firstDisplayName([row.name, row.short_name], row.member_code);
+          if (code !== "-" && label !== "-") next[code] = label;
+          return next;
+        }, {});
+      } else if (item.type === "GEOGRAPHY_MEMBER") {
+        const response = await listGeographies({ limit: 500, offset: 0, locale: previewSettings.bilingualLabels.locale });
+        labels = (response.data ?? []).reduce<Record<string, string>>((next, row) => {
+          const code = textValue(row.member_code ?? row.geography_code);
+          const label = firstDisplayName([row.name, row.short_name], code);
+          if (code !== "-" && label !== "-") next[code] = label;
+          return next;
+        }, {});
+      } else {
+        const response = await listDimensionMemberSetMembers(item.code, 500, { locale: previewSettings.bilingualLabels.locale });
+        labels = (response.data ?? []).reduce<Record<string, string>>((next, row) => {
+          const code = textValue(row.member_code);
+          const label = itemName(row);
+          if (code !== "-" && label !== "-") next[code] = label;
+          return next;
+        }, {});
+      }
+      setSecondaryMemberLabelCache((current) => ({ ...current, [item.id]: labels }));
+    } catch {
+      setSecondaryMemberLabelCache((current) => ({ ...current, [item.id]: {} }));
+    }
+  }
+
+  async function loadSecondaryMeasureLabels(): Promise<void> {
+    if (Object.keys(secondaryMeasureLabelCache).length > 0) return;
+    try {
+      const response = await listDataFields({ limit: 500, offset: 0, locale: previewSettings.bilingualLabels.locale });
+      const labels = (response.data ?? []).reduce<Record<string, string>>((next, field) => {
+        const code = field.measure_code ?? field.data_field_code ?? "";
+        const label = measureName(field);
+        if (code && label !== "-") next[code] = label;
+        return next;
+      }, {});
+      setSecondaryMeasureLabelCache(labels);
+    } catch {
+      setSecondaryMeasureLabelCache({});
+    }
+  }
+
   async function loadAvailableRollups() {
     const dimensionCodes = Array.from(
       new Set(
         [...builder.tabsBy, ...builder.rowRepresents, ...builder.columns]
+          .concat(rowLevels.flatMap((level) => level.items))
+          .concat(columnLevels.flatMap((level) => level.items))
           .map((item) => item.dimensionCode)
           .filter((code): code is string => Boolean(code)),
       ),
@@ -857,6 +2072,12 @@ export function TemplateStudioPage() {
 
   function removeDroppedItem(zone: DropZone, id: string) {
     setBuilder((current) => ({ ...current, [zone]: current[zone].filter((item) => item.id !== id) }));
+    if (zone === "rowRepresents") {
+      removeRowLevelItem(rowLevels[0]?.id ?? "row-level-1", id);
+    }
+    if (zone === "columns") {
+      removeColumnLevelItem(columnLevels[0]?.id ?? "column-level-1", id);
+    }
     if (zone === "fields") {
       setCellMap((current) => {
         const next = { ...current };
@@ -907,7 +2128,7 @@ export function TemplateStudioPage() {
   }
 
   function measureTitle(field: LibraryItem) {
-    return `Fill data for:\n${field.label}\nUOM: ${field.badge || "Not mapped"}\nCode: ${field.code}`;
+    return `Fill data for:\n${libraryItemLabel(field)}\nUOM: ${field.badge || "Not mapped"}\nCode: ${field.code}`;
   }
 
   function openColumnValidation(event: MouseEvent, columnIndex: number, measure: LibraryItem | null) {
@@ -958,6 +2179,10 @@ export function TemplateStudioPage() {
   }
 
   function addComputedColumn(mode: SettingsTab) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     const selectedRollup = availableRollups.find((rollup) => rollupKey(rollup) === selectedRollupKey);
     const label = mode === "rollup" && selectedRollup ? rollupLabel(selectedRollup) : computeName.trim();
     const formula =
@@ -977,6 +2202,9 @@ export function TemplateStudioPage() {
       outputUom,
       mode,
       functionCode: mode === "calculated" ? calculatedFunction : undefined,
+      showInDataEntry: false,
+      showInPreview: true,
+      showInPublishedOutput: true,
     };
     const item: LibraryItem = {
       id: `MEASURE:${code}`,
@@ -998,6 +2226,63 @@ export function TemplateStudioPage() {
     setNotice(`${mode === "rollup" ? "Rollup" : mode === "calculated" ? "Calculated" : "Computed"} column added to the draft preview.`);
   }
 
+  function toggleGeneratedColumnDataEntryVisibility(code: string) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    const normalizedCode = normalizeCode(code);
+    setComputedColumns((current) =>
+      current.map((column) =>
+        normalizeCode(column.code) === normalizedCode
+          ? { ...column, showInDataEntry: !Boolean(column.showInDataEntry) }
+          : column,
+      ),
+    );
+  }
+
+  function addGeneratedColumnToPreview(column: ComputedColumnDraft) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    const item: LibraryItem = {
+      id: `MEASURE:${column.code}`,
+      type: "MEASURE",
+      code: column.code,
+      label: column.label,
+      subLabel: `${column.mode === "rollup" ? "Rollup" : column.mode === "compute" ? "Computed" : "Calculated"} | ${column.formula}`,
+      badge: column.outputUom || "Calculated",
+      generatedMode: column.mode,
+    };
+    setBuilder((current) => {
+      if (current.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code))) return current;
+      return { ...current, fields: [...current.fields, item] };
+    });
+    setNotice(`${column.label} added to preview fields.`);
+  }
+
+  function removeGeneratedColumn(column: ComputedColumnDraft) {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    const normalizedCode = normalizeCode(column.code);
+    setComputedColumns((current) => current.filter((item) => normalizeCode(item.code) !== normalizedCode));
+    setBuilder((current) => ({
+      ...current,
+      fields: current.fields.filter((field) => normalizeCode(field.code) !== normalizedCode),
+    }));
+    setCellMap((current) => {
+      const next = { ...current };
+      Object.entries(next).forEach(([key, value]) => {
+        if (normalizeCode(value.code) === normalizedCode) delete next[key];
+      });
+      return next;
+    });
+    setNotice(`${column.label} removed from generated outputs.`);
+  }
+
   function sourceKeysForFormula(formula: string) {
     const normalizedFormula = formula.toLowerCase();
     return editableColumnSources
@@ -1005,9 +2290,19 @@ export function TemplateStudioPage() {
       .map((source) => source.key);
   }
 
+  function sanitizeCellMapForPreview(input: Record<string, LibraryItem>) {
+    const next: Record<string, LibraryItem> = {};
+    Object.entries(input).forEach(([key, value]) => {
+      if (activeCellMapKeys.has(key)) next[key] = value;
+    });
+    return next;
+  }
+
   function buildStudioDraftState(
     overrides: Partial<{
       builder: BuilderState;
+      rowLevels: RowLevel[];
+      columnLevels: ColumnLevel[];
       cellMap: Record<string, LibraryItem>;
       columnValidations: Record<string, ColumnValidationConfig>;
       computedColumns: ComputedColumnDraft[];
@@ -1015,9 +2310,12 @@ export function TemplateStudioPage() {
       activeStep: StudioStep;
     }> = {},
   ) {
+    const nextCellMap = sanitizeCellMapForPreview(overrides.cellMap ?? cellMap);
     return {
       builder: overrides.builder ?? builder,
-      cellMap: overrides.cellMap ?? cellMap,
+      rowLevels: overrides.rowLevels ?? rowLevels,
+      columnLevels: overrides.columnLevels ?? columnLevels,
+      cellMap: nextCellMap,
       columnValidations: overrides.columnValidations ?? columnValidations,
       computedColumns: overrides.computedColumns ?? computedColumns,
       previewSettings: overrides.previewSettings ?? previewSettings,
@@ -1032,11 +2330,17 @@ export function TemplateStudioPage() {
       if (!options.silent) setError("Select a template version before saving draft.");
       return;
     }
+    if (isSelectedVersionFrozen) {
+      if (!options.silent) setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     const draftBuilder = options.overrides?.builder ?? builder;
-    const draftCellMap = options.overrides?.cellMap ?? cellMap;
+    const draftRowLevels = options.overrides?.rowLevels ?? rowLevels;
+    const draftColumnLevels = options.overrides?.columnLevels ?? columnLevels;
+    const draftCellMap = sanitizeCellMapForPreview(options.overrides?.cellMap ?? cellMap);
     const draftValidations = options.overrides?.columnValidations ?? columnValidations;
     const draftComputedColumns = options.overrides?.computedColumns ?? computedColumns;
-    if (!hasDraftContent(draftBuilder, draftCellMap, draftValidations, draftComputedColumns)) {
+    if (!hasDraftContent(draftBuilder, draftCellMap, draftValidations, draftComputedColumns, draftColumnLevels, draftRowLevels)) {
       if (!options.silent) setError("Add template structure before saving draft.");
       return;
     }
@@ -1064,6 +2368,11 @@ export function TemplateStudioPage() {
             generated_mode: column.mode,
             repeat_per_column_group: true,
             preview_behavior: "NON_EDITABLE_GENERATED_COLUMN",
+            visibility: {
+              show_in_data_entry: Boolean(column.showInDataEntry),
+              show_in_preview: column.showInPreview !== false,
+              show_in_published_output: column.showInPublishedOutput !== false,
+            },
           },
           sort_order: 9000 + index,
           is_active: true,
@@ -1125,7 +2434,39 @@ export function TemplateStudioPage() {
     return measureCode;
   }
 
+  async function syncActiveTemplateMeasures(versionCode: string) {
+    const currentMeasureCodes = new Set(
+      editableMeasureItems
+        .map((measure) => normalizeCode(measure.sourceMeasureCode ?? measure.code))
+        .filter(Boolean),
+    );
+
+    for (const measure of editableMeasureItems) {
+      await ensureTemplateMeasure(measure);
+    }
+
+    const latestMeasures = await listTemplateMeasures(versionCode);
+    const activeMeasures = latestMeasures.data ?? [];
+    const staleMeasures = activeMeasures.filter((measure) => {
+      const measureCode = normalizeCode(measure.measure_code);
+      return measureCode && measure.is_active !== false && !currentMeasureCodes.has(measureCode);
+    });
+
+    if (staleMeasures.length) {
+      await Promise.all(
+        staleMeasures.map((measure) => deactivateTemplateMeasure(versionCode, String(measure.measure_code ?? ""))),
+      );
+    }
+
+    const refreshedMeasures = await listTemplateMeasures(versionCode);
+    setMeasures(refreshedMeasures.data ?? []);
+  }
+
   async function saveColumnValidation() {
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
     if (!validationDrawer?.measure) {
       setError("Map a measure before creating column validation.");
       return;
@@ -1139,6 +2480,8 @@ export function TemplateStudioPage() {
     const severity = validationForm.failureBehavior === "BLOCK" ? "ERROR" : "WARNING";
     const draftSnapshot = {
       builder,
+      rowLevels,
+      columnLevels,
       cellMap,
       computedColumns,
       previewSettings,
@@ -1192,6 +2535,8 @@ export function TemplateStudioPage() {
         },
       });
       setBuilder(draftSnapshot.builder);
+      setRowLevels(draftSnapshot.rowLevels);
+      setColumnLevels(draftSnapshot.columnLevels);
       setCellMap(draftSnapshot.cellMap);
       setComputedColumns(draftSnapshot.computedColumns);
       setPreviewSettings(draftSnapshot.previewSettings);
@@ -1271,15 +2616,23 @@ export function TemplateStudioPage() {
       setError("Select a template version before saving structure.");
       return false;
     }
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return false;
+    }
     setIsSaving(true);
     setError("");
     try {
-      const timeItem = [...builder.rowRepresents, ...builder.columns, ...builder.tabsBy].find((item) => item.type === "TIME_SET");
+      const rowLevelItems = rowLevels.flatMap((level) => level.items);
+      const columnLevelItems = columnLevels.flatMap((level) => level.items);
+      const timeItem = [...rowLevelItems, ...columnLevelItems, ...builder.rowRepresents, ...builder.columns, ...builder.tabsBy].find((item) => item.type === "TIME_SET");
       if (timeItem) {
         const existingTimeAxis = axes.find((axis) => normalizeCode(axis.dimension_code) === "TIME_PERIOD");
+        const isColumnTime = columnLevelItems.some((item) => item.id === timeItem.id) || builder.columns.some((item) => item.id === timeItem.id);
+        const isRowTime = rowLevelItems.some((item) => item.id === timeItem.id) || builder.rowRepresents.some((item) => item.id === timeItem.id);
         const payload = {
           axis_code: existingTimeAxis?.axis_code ?? "AXIS_TIME_PERIOD",
-          axis_role: builder.columns.some((item) => item.id === timeItem.id) ? "COLUMN" : builder.rowRepresents.some((item) => item.id === timeItem.id) ? "ROW" : "PAGE",
+          axis_role: isColumnTime ? "COLUMN" : isRowTime ? "ROW" : "PAGE",
           dimension_code: "TIME_PERIOD",
           label: timeItem.label,
           unit_code: getSelectedUnitCode(),
@@ -1293,11 +2646,7 @@ export function TemplateStudioPage() {
           render_metadata: {
             time_period_behavior: "CONTRIBUTOR_SELECT",
             governance_rule: "TIME_PERIOD_SET_VERSIONED_IMMUTABLE",
-            builder_zone: builder.columns.some((item) => item.id === timeItem.id)
-              ? "columns"
-              : builder.rowRepresents.some((item) => item.id === timeItem.id)
-                ? "rowRepresents"
-                : "tabsBy",
+            builder_zone: isColumnTime ? "columns" : isRowTime ? "rowRepresents" : "tabsBy",
           },
           is_active: true,
           help_text: "Provider/request uses the governed reporting sequence selected in Template Designer.",
@@ -1308,6 +2657,7 @@ export function TemplateStudioPage() {
           await createTemplateAxis(selectedVersion.version_code, payload);
         }
       }
+      await syncActiveTemplateMeasures(selectedVersion.version_code);
       await persistComputedColumns(selectedVersion.version_code);
       await saveDraftSnapshot({ silent: true });
       setNotice("Template structure draft saved.");
@@ -1317,6 +2667,45 @@ export function TemplateStudioPage() {
       return false;
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function persistRecipientProviderPolicies(versionCode: string) {
+    const unitCode = getSelectedUnitCode();
+    const policyKeys = new Set<string>();
+    for (const measure of editableMeasureItems) {
+      const measureCode = normalizeCode(measure.sourceMeasureCode ?? measure.code);
+      if (!measureCode) continue;
+      const detail = dataFieldDetails[measureCode] ?? await getDataFieldDetail(measureCode);
+      const sources = activeMappings(detail?.source_mappings ?? detail?.source_organizations);
+      for (const source of sources) {
+        const organizationCode = sourceCodeFromMapping(source);
+        const normalizedOrganizationCode = normalizeCode(organizationCode);
+        if (!normalizedOrganizationCode) continue;
+        const policyKey = `${measureCode}:${normalizedOrganizationCode}`;
+        if (policyKeys.has(policyKey)) continue;
+        policyKeys.add(policyKey);
+        await upsertTemplateMeasureAccessPolicy(versionCode, {
+          measure_code: measureCode,
+          organization_code: organizationCode,
+          unit_code: unitCode,
+          access_role: "DATA_PROVIDER",
+          can_enter_data: true,
+          can_view_data: true,
+          can_view_other_measure_data: Boolean(previewSettings.showAllRecipientColumns),
+          can_view_after_submission: false,
+          is_primary_provider: true,
+          is_required: true,
+          policy_metadata: {
+            source: "TEMPLATE_STUDIO_RECIPIENTS",
+            template_grain: templateGrainLabels,
+            assigned_columns: editableTemplateColumns
+              .filter((column) => column.measureCode === measureCode)
+              .map((column) => column.label),
+          },
+          is_active: true,
+        });
+      }
     }
   }
 
@@ -1330,23 +2719,46 @@ export function TemplateStudioPage() {
       setError("Select a template version before publishing.");
       return;
     }
+    if (isSelectedVersionFrozen) {
+      setError("This template version is already published and locked. Create a new version for changes.");
+      return;
+    }
+    if (publishBlockers.length) {
+      setError(`Publish blocked. Resolve: ${publishBlockers.map((check) => check.label).join(", ")}.`);
+      return;
+    }
     setIsPublishing(true);
     setError("");
     try {
       const saved = await saveStructureDraft();
       if (!saved) return;
+      await persistRecipientProviderPolicies(selectedVersion.version_code);
       await publishTemplateVersion(selectedVersion.version_code, {
         unit_code: getSelectedUnitCode(),
         publish_notes: "Published from Template Studio after structure preview review.",
       });
       setNotice("Template version published successfully.");
+      setVersions((current) =>
+        current.map((version) =>
+          version.version_code === selectedVersion.version_code
+            ? { ...version, status: "PUBLISHED", is_current: true }
+            : version,
+        ),
+      );
+      setTemplates((current) =>
+        current.map((template) =>
+          template.template_code === selectedTemplate?.template_code
+            ? { ...template, status: "PUBLISHED", current_version_code: selectedVersion.version_code }
+            : template,
+        ),
+      );
       if (selectedTemplate?.template_code) {
-        await loadVersions(selectedTemplate.template_code);
+        await Promise.all([loadVersions(selectedTemplate.template_code), loadAll()]);
       }
     } catch (publishError) {
       const message = publishError instanceof Error ? publishError.message : "";
       if (message.includes("approved data contract") || message.includes("API request failed: 400")) {
-        setError("Publish blocked. Complete Recipients mapping first: every editable measure needs one active primary data provider.");
+        setError("Publish blocked. Complete Recipients mapping first: every editable measure needs at least one active primary data provider.");
       } else {
         setError(message || "Template version could not be published.");
       }
@@ -1368,6 +2780,377 @@ export function TemplateStudioPage() {
     setActiveStep(steps[Math.max(0, index - 1)].code);
   }
 
+  function renderReadOnlyPreviewTable(options: { columns?: PreviewColumn[]; title?: string } = {}) {
+    const columns = options.columns ?? previewColumns;
+    const structuralDepth = columns.reduce((maxDepth, column) => Math.max(maxDepth, (column.path?.length ?? 1) - 1), 0);
+    const headerRows = groupedHeaderRows(columns, structuralDepth);
+    const columnMinWidth = Math.max(720, previewRowHeaderCount * 132 + columns.length * 156);
+    return (
+      <div className="template-excel-wrap template-final-preview-wrap">
+        <table
+          className={`template-excel-table ${previewSettings.compactCells ? "compact" : ""} ${previewSettings.zebraRows ? "zebra" : ""}`}
+          style={{ minWidth: `${columnMinWidth}px` }}
+        >
+          <thead>
+            {headerRows.map((row, rowIndex) => (
+              <tr key={`final-preview-header-level-${rowIndex}`}>
+                <th colSpan={previewRowHeaderCount}>{rowIndex === 0 ? options.title ?? "Column Groups" : ""}</th>
+                {row.map((cell, index) => (
+                  <th key={`${cell.code}-${rowIndex}-${index}`} colSpan={cell.colSpan}>
+                    {previewSettings.showCodes ? cell.code : cell.label}
+                  </th>
+                ))}
+              </tr>
+            ))}
+            <tr>
+              {Array.from({ length: previewRowHeaderCount }, (_, index) => {
+                const rowLevel = activeRowLevels[index];
+                return (
+                  <th key={`final-preview-row-header-${index}`} className="template-row-header-cell">
+                    {rowLevel?.items.map((item) => libraryItemLabel(item)).join(" / ") || (index === 0 ? "Rows" : `Row Level ${index + 1}`)}
+                  </th>
+                );
+              })}
+              {columns.map((column) => {
+                const originalIndex = previewColumns.indexOf(column);
+                const columnMeasure = measureForColumn(originalIndex);
+                return (
+                  <th key={`${column.code}-${originalIndex}`} title={columnMeasure ? measureTitle(columnMeasure) : undefined}>
+                    <span className="template-preview-header-label">
+                      <span className="template-preview-header-text">{previewSettings.showCodes ? column.code : column.label}</span>
+                      {columnMeasure && (
+                        <span className="template-measure-meta">
+                          <span className="template-measure-info"><Info size={11} /></span>
+                          <span className="template-measure-uom">{columnMeasure.badge || "UOM"}</span>
+                        </span>
+                      )}
+                    </span>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.map((row, rowIndex) => (
+              <tr key={`${row.code}-${rowIndex}`}>
+                {Array.from({ length: previewRowHeaderCount }, (_, levelIndex) => {
+                  const part = row.path?.[levelIndex] ?? (levelIndex === 0 ? row : { code: "-", label: "-" });
+                  return (
+                    <td key={`${row.code}-final-row-level-${levelIndex}`} className="template-row-header-cell">
+                      {previewSettings.showCodes ? part.code : part.label}
+                  </td>
+                );
+              })}
+                {columns.map((column) => {
+                  const originalIndex = previewColumns.indexOf(column);
+                  return (
+                  <td key={`${row.code}-${column.code}-${originalIndex}`}>
+                    {column.generatedMeasure ? (
+                      <span className="computed-cell-preview" title={column.generatedMeasure.subLabel}>Auto</span>
+                    ) : (
+                      <span className={measureForColumn(originalIndex) ? "editable-cell-preview" : "empty-cell-preview"} />
+                    )}
+                  </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  function renderRecipientsStep() {
+    return (
+      <section className="template-work-card template-step-card">
+        <div className="template-step-header">
+          <div>
+            <span>Recipients</span>
+            <h3>Source and officer readiness</h3>
+            <p>
+              Source views are generated from template grain, assigned measure columns, generated columns allowed for Data Entry,
+              and the show all/hide non-assigned setting.
+            </p>
+          </div>
+          <div className="template-recipient-header-actions">
+            <select
+              className="template-recipient-source-filter"
+              value={selectedRecipientSource}
+              onChange={(event) => setSelectedRecipientSource(event.target.value)}
+              title="Filter by source organization"
+            >
+              <option value="ALL">All sources</option>
+              {recipientSourceOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <label className="template-toggle-label" title="Default hides columns that are not owned by the source. Enable this only when a recipient must see all template columns.">
+              <input
+                type="checkbox"
+                checked={previewSettings.showAllRecipientColumns}
+                onChange={(event) =>
+                  setPreviewSettings((current) => ({
+                    ...current,
+                    showAllRecipientColumns: event.target.checked,
+                  }))
+                }
+              />
+              Show all columns to recipients
+            </label>
+            {isRecipientLoading && <span className="template-inline-loader"><span className="spinner" /> Loading mappings</span>}
+          </div>
+        </div>
+        <div className="template-summary-grid">
+          <div><strong>{editableMeasureItems.length}</strong><span>Editable measures</span></div>
+          <div><strong>{recipientGroups.length}</strong><span>Source groups</span></div>
+          <div><strong>{recipientGroups.filter((group) => group.readiness === "READY").length}</strong><span>Ready groups</span></div>
+          <div><strong>{recipientGroups.filter((group) => group.readiness !== "READY").length}</strong><span>Needs review</span></div>
+        </div>
+        <div className="template-recipient-table-wrap">
+          <table className="template-recipient-table">
+            <thead>
+              <tr>
+                <th>Source / Ministry</th>
+                <th>Department</th>
+                <th>Assigned Measures</th>
+                <th>Data Entry Columns</th>
+                <th>Cadence</th>
+                <th>Template Grain</th>
+                <th>Officers</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRecipientGroups.map((group) => (
+                <tr key={group.key}>
+                  <td><strong>{group.sourceName}</strong><small>{group.sourceCode}</small></td>
+                  <td>{group.departmentName}</td>
+                  <td>{group.measureLabels.map((label) => <span key={label} className="template-soft-chip">{label}</span>)}</td>
+                  <td>{group.dataEntryColumnLabels.map((label) => <span key={label} className="template-soft-chip blue">{label}</span>)}</td>
+                  <td>{group.periodicities.map((item) => <span key={item} className="template-soft-chip blue">{item}</span>)}</td>
+                  <td>{group.grains.map((item) => <span key={item} className="template-soft-chip green">{item}</span>)}</td>
+                  <td>{group.officers.map((item) => <span key={item} className="template-soft-chip gray">{item}</span>)}</td>
+                  <td><span className={`template-readiness ${group.readiness.toLowerCase()}`}>{group.readiness.replaceAll("_", " ")}</span></td>
+                </tr>
+              ))}
+              {!visibleRecipientGroups.length && (
+                <tr>
+                  <td colSpan={8} className="empty-table-cell">
+                    {recipientGroups.length
+                      ? "No recipient rows match the selected source filter."
+                      : "Add measures in Structure and map their source providers in Data Field Library before publishing."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  }
+
+  function renderPreviewStep() {
+    const validationEntries = Object.entries(columnValidations);
+    const generatedInPreview = computedColumns.filter((column) =>
+      builder.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code)),
+    );
+    const columnsForRecipient = (group: RecipientSourceGroup) => {
+      const assignedMeasures = new Set(group.measureCodes.map(normalizeCode));
+      return previewColumns.filter((column, index) => {
+        if (column.generatedMeasure) {
+          return generatedDataEntryColumns.some(
+            (generated) => normalizeCode(generated.code) === normalizeCode(column.generatedMeasure?.code) && generated.showInDataEntry,
+          );
+        }
+        if (previewSettings.showAllRecipientColumns) return Boolean(measureForColumn(index));
+        const measure = measureForColumn(index);
+        return Boolean(measure && assignedMeasures.has(normalizeCode(measure.sourceMeasureCode ?? measure.code)));
+      });
+    };
+    return (
+      <section className="template-work-card template-step-card">
+        <div className="template-step-header">
+          <div>
+            <span>Preview</span>
+            <h3>Final template contract preview</h3>
+            <p>Review structure, recipients, validations, and generated outputs before publish.</p>
+          </div>
+        </div>
+        <div className="template-preview-summary-grid">
+          <div><span>Template</span><strong>{templateName(selectedTemplate)}</strong></div>
+          <div><span>Version</span><strong>{textValue(selectedVersion?.title ?? selectedVersion?.version_code)}</strong></div>
+          <div><span>Rows</span><strong>{previewRows.length}</strong></div>
+          <div><span>Columns</span><strong>{previewColumns.length}</strong></div>
+          <div><span>Editable Cells</span><strong>{Math.max(1, previewRows.length) * Math.max(1, previewColumns.length)}</strong></div>
+          <div><span>Recipients</span><strong>{recipientGroups.length}</strong></div>
+          <div><span>Validations</span><strong>{Object.keys(columnValidations).length}</strong></div>
+          <div><span>Generated Outputs</span><strong>{computedColumns.length}</strong></div>
+        </div>
+        <div className="template-preview-contract-grid">
+          <article>
+            <span>Template Grain</span>
+            <div className="template-preview-chip-list">
+              {templateGrainLabels.length
+                ? templateGrainLabels.map((label) => <em key={label}>{label}</em>)
+                : <small>No grain configured.</small>}
+            </div>
+          </article>
+          <article>
+            <span>Row Headers</span>
+            <div className="template-preview-chip-list">
+              {activeRowLevels.length
+                ? activeRowLevels.map((level, index) => <em key={level.id}>L{index + 1}: {level.items.map((item) => item.label).join(" / ")}</em>)
+                : <small>No row headers.</small>}
+            </div>
+          </article>
+          <article>
+            <span>Column Headers</span>
+            <div className="template-preview-chip-list">
+              {activeColumnLevels.length
+                ? activeColumnLevels.map((level, index) => <em key={level.id}>L{index + 1}: {level.items.map((item) => item.label).join(" / ")}</em>)
+                : <small>No column headers.</small>}
+            </div>
+          </article>
+          <article>
+            <span>Fields To Fill</span>
+            <div className="template-preview-chip-list">
+              {builder.fields.length
+                ? builder.fields.map((field) => (
+                    <em key={field.id}>
+                      {field.label} {field.generatedMode ? `(${field.generatedMode})` : "(editable)"}
+                    </em>
+                  ))
+                : <small>No fields selected.</small>}
+            </div>
+          </article>
+        </div>
+
+        <div className="template-preview-section template-main-preview-section">
+          <header>
+            <div>
+              <span>Main Template</span>
+              <h4>Full configured output</h4>
+            </div>
+            <small>Includes editable columns plus generated outputs added to preview.</small>
+          </header>
+          {renderReadOnlyPreviewTable()}
+        </div>
+
+        <div className="template-preview-section template-recipient-preview-section">
+          <header>
+            <div>
+              <span>Recipient Views</span>
+              <h4>Source-specific template previews</h4>
+            </div>
+            <small>Each source sees the same grain with its assigned editable measures and allowed generated outputs.</small>
+          </header>
+          <div className="template-source-preview-list">
+            {recipientGroups.length ? recipientGroups.map((group) => (
+              <article key={group.key} className="template-source-preview-card">
+                <header>
+                  <div>
+                    <strong>{group.sourceName}</strong>
+                    <small>{group.departmentName && group.departmentName !== "-" ? group.departmentName : group.sourceCode}</small>
+                  </div>
+                  <span className={`template-readiness ${group.readiness.toLowerCase()}`}>{group.readiness.replaceAll("_", " ")}</span>
+                </header>
+                <div className="template-source-preview-meta">
+                  <span>Measures: {group.measureLabels.join(" | ")}</span>
+                  <span>Officers: {group.officers.join(" | ")}</span>
+                  <span>Grain: {group.grains.join(" | ")}</span>
+                </div>
+                {columnsForRecipient(group).length
+                  ? renderReadOnlyPreviewTable({ columns: columnsForRecipient(group), title: "Recipient Template" })
+                  : <div className="template-empty-note">No visible columns for this source. Check source mappings and generated column visibility.</div>}
+              </article>
+            )) : <div className="template-empty-note">No source views are available yet.</div>}
+          </div>
+        </div>
+
+        <div className="template-preview-two-column">
+          <section className="template-preview-section">
+            <header>
+              <div>
+                <span>Validation Rules</span>
+                <h4>Configured column validations</h4>
+              </div>
+            </header>
+            <div className="template-preview-rule-list">
+              {validationEntries.length ? validationEntries.map(([key, rule]) => (
+                <article key={key}>
+                  <strong>{key.replace("column-repeat-label:", "")}</strong>
+                  <span>{rule.requirement} | {rule.numericBehavior} | {rule.failureBehavior}</span>
+                  <small>
+                    Min {rule.minValue === "" ? "-" : rule.minValue} / Max {rule.maxValue === "" ? "-" : rule.maxValue}
+                  </small>
+                </article>
+              )) : <div className="template-empty-note">No validations configured. Validation can be added later.</div>}
+            </div>
+          </section>
+
+          <section className="template-preview-section">
+            <header>
+              <div>
+                <span>Generated Outputs</span>
+                <h4>Computed, calculated, and rollup columns</h4>
+              </div>
+            </header>
+            <div className="template-preview-rule-list">
+              {computedColumns.length ? computedColumns.map((column) => (
+                <article key={column.code}>
+                  <strong>{column.label}</strong>
+                  <span>
+                    {column.mode.toUpperCase()} | {column.outputUom || "No UOM"} | {generatedInPreview.some((item) => normalizeCode(item.code) === normalizeCode(column.code)) ? "In preview" : "Not in preview"}
+                  </span>
+                  <small>{column.showInDataEntry ? "Visible to data provider" : "Hidden from data provider"} | {column.formula}</small>
+                </article>
+              )) : <div className="template-empty-note">No generated outputs configured.</div>}
+            </div>
+          </section>
+        </div>
+      </section>
+    );
+  }
+
+  function renderPublishStep() {
+    return (
+      <section className="template-work-card template-step-card">
+        <div className="template-step-header">
+          <div>
+            <span>Publish</span>
+            <h3>Readiness checks</h3>
+            <p>Publish is allowed only when blocking contract checks are resolved.</p>
+          </div>
+          <span className={`template-publish-state ${publishBlockers.length ? "blocked" : "ready"}`}>
+            {publishBlockers.length ? `${publishBlockers.length} blocker(s)` : "Ready to publish"}
+          </span>
+        </div>
+        <div className="template-publish-checks">
+          {publishChecks.map((check) => (
+            <article key={check.label} className={`template-publish-check ${check.status.toLowerCase()}`}>
+              <span>{check.status}</span>
+              <strong>{check.label}</strong>
+              <p>{check.detail}</p>
+            </article>
+          ))}
+        </div>
+        {publishBlockers.length > 0 && (
+          <div className="template-publish-blocker-note">
+            Backend publish also verifies source-provider readiness. Resolve missing Data Field source mappings before publishing.
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderWorkflowStep() {
+    if (activeStep === "recipients") return renderRecipientsStep();
+    if (activeStep === "preview") return renderPreviewStep();
+    if (activeStep === "publish") return renderPublishStep();
+    return null;
+  }
+
   return (
     <section className="template-designer-page">
       <div className="template-designer-header">
@@ -1377,23 +3160,33 @@ export function TemplateStudioPage() {
         </div>
         <div className="toolbar-actions">
           <button className="secondary-button compact" type="button" onClick={() => navigate("/template/library")}>Library</button>
-          <button className="secondary-button compact" type="button" onClick={() => void loadAll()} disabled={isStudioHydrating}><RefreshCw size={13} /> Refresh</button>
-          <button className="secondary-button compact" type="button" onClick={() => void saveStructureDraft()} disabled={isSaving || isPublishing || isStudioHydrating}><Save size={13} /> Save</button>
-          <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating}>
-            <CheckCircle2 size={13} /> {activeStep === "publish" ? (isPublishing ? "Publishing" : "Publish") : "Done"}
+          <button className="secondary-button compact" type="button" onClick={() => void loadAll({ forceLibrary: true })} disabled={isShellLoading || isStudioHydrating}><RefreshCw size={13} /> Refresh</button>
+          <button className="secondary-button compact" type="button" onClick={() => void saveStructureDraft()} disabled={isSaving || isPublishing || isStudioHydrating || isSelectedVersionFrozen}><Save size={13} /> Save</button>
+          <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating || isSelectedVersionFrozen || (activeStep === "publish" && publishBlockers.length > 0)}>
+            <CheckCircle2 size={13} /> {isSelectedVersionFrozen ? "Published" : activeStep === "publish" ? (isPublishing ? "Publishing" : "Publish") : "Done"}
           </button>
         </div>
       </div>
 
       {notice && <div className="toast-notice success">{notice}</div>}
       {error && <div className="toast-notice error">{error}</div>}
+      {isSelectedVersionFrozen && (
+        <div className="template-lock-banner">
+          <ShieldCheck size={15} />
+          <span>Published template version is locked. Create a new version from Template Library to make changes.</span>
+        </div>
+      )}
 
-      <div className={`template-designer-shell ${isStudioHydrating ? "is-hydrating" : ""}`}>
-        {isStudioHydrating && (
+      <div className={`template-designer-shell ${isStudioHydrating || isShellLoading ? "is-hydrating" : ""}`}>
+        {(isStudioHydrating || isShellLoading) && (
           <div className="template-studio-loader" role="status" aria-live="polite">
             <span className="spinner" />
-            <strong>Loading template design</strong>
-            <small>Preparing data library, saved structure, preview bindings, formulas, and validation suggestions.</small>
+            <strong>{isShellLoading ? "Loading templates" : "Loading template design"}</strong>
+            <small>
+              {isShellLoading
+                ? "Preparing template and version list."
+                : "Preparing saved structure, preview bindings, formulas, and validation suggestions."}
+            </small>
           </div>
         )}
         <aside className="template-data-library">
@@ -1418,20 +3211,46 @@ export function TemplateStudioPage() {
             <input value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} placeholder={`Search ${activeLibraryTab}`} />
           </label>
           <div className="template-library-tabs">
-            <button className={activeLibraryTab === "dimensions" ? "active" : ""} type="button" onClick={() => changeLibraryTab("dimensions")}>Dimensions</button>
-            <button className={activeLibraryTab === "geography" ? "active" : ""} type="button" onClick={() => changeLibraryTab("geography")}>Geography</button>
-            <button className={activeLibraryTab === "time" ? "active" : ""} type="button" onClick={() => changeLibraryTab("time")}>Time Period</button>
-            <button className={activeLibraryTab === "measures" ? "active" : ""} type="button" onClick={() => changeLibraryTab("measures")}>Measures</button>
+            <button className={activeLibraryTab === "dimensions" ? "active" : ""} type="button" disabled={isLibraryLoading} onClick={() => changeLibraryTab("dimensions")}>Dimensions</button>
+            <button className={activeLibraryTab === "geography" ? "active" : ""} type="button" disabled={isLibraryLoading} onClick={() => changeLibraryTab("geography")}>Geography</button>
+            <button className={activeLibraryTab === "time" ? "active" : ""} type="button" disabled={isLibraryLoading} onClick={() => changeLibraryTab("time")}>Time Period</button>
+            <button className={activeLibraryTab === "measures" ? "active" : ""} type="button" disabled={isLibraryLoading} onClick={() => changeLibraryTab("measures")}>Measures</button>
           </div>
-          {activeLibraryTab === "time" && (
-            <div className="template-time-set-action">
-              <button className="secondary-button compact" type="button" onClick={() => setTimeSetDrawerOpen(true)}>
-                <Plus size={12} /> New Set
-              </button>
+          {activeLibraryTab !== "measures" && (
+            <div className="template-library-mode-row">
+              <div className="template-library-mode-toggle" role="group" aria-label={`${activeLibraryTab} library mode`}>
+                <button
+                  className={libraryModes[activeLibraryTab] === "sets" ? "active" : ""}
+                  type="button"
+                  disabled={isLibraryLoading}
+                  onClick={() => {
+                    setLibrarySearch("");
+                    setLibraryModes((current) => ({ ...current, [activeLibraryTab]: "sets" }));
+                  }}
+                >
+                  Sets
+                </button>
+                <button
+                  className={libraryModes[activeLibraryTab] === "members" ? "active" : ""}
+                  type="button"
+                  disabled={isLibraryLoading}
+                  onClick={() => {
+                    setLibrarySearch("");
+                    setLibraryModes((current) => ({ ...current, [activeLibraryTab]: "members" }));
+                  }}
+                >
+                  Members
+                </button>
+              </div>
+              {activeLibraryTab === "time" && libraryModes.time === "sets" && (
+                <button className="secondary-button compact" type="button" disabled={isLibraryLoading} onClick={() => setTimeSetDrawerOpen(true)}>
+                  <Plus size={12} /> New Set
+                </button>
+              )}
             </div>
           )}
-          <div key={activeLibraryTab} className="template-library-list">
-            {isLoading ? (
+          <div key={`${activeLibraryTab}-${activeLibraryTab === "measures" ? "measures" : libraryModes[activeLibraryTab]}`} className="template-library-list">
+            {isLibraryLoading ? (
               <div className="template-library-empty">Loading library...</div>
             ) : libraryItems.length === 0 ? (
               <div className="template-library-empty">No matching records.</div>
@@ -1440,13 +3259,13 @@ export function TemplateStudioPage() {
                 <div
                   key={item.id}
                   className="template-library-item"
-                  draggable
+                  draggable={!isSelectedVersionFrozen}
                   onDragStart={(event) => onDragStart(event, item)}
-                  title={`${item.label} | ${item.code}`}
+                  title={`${libraryItemLabel(item)} | ${item.code}`}
                 >
                   <GripVertical size={13} />
                   <span>
-                    <strong>{item.label}</strong>
+                    <strong>{libraryItemLabel(item)}</strong>
                     <small>{item.subLabel}</small>
                     <code>{item.code}</code>
                   </span>
@@ -1458,7 +3277,7 @@ export function TemplateStudioPage() {
           <p className="template-library-footnote">Dimensions create structure. Geography, time-period sets, and measures define collection layout.</p>
         </aside>
 
-        <main className="template-builder-workspace">
+        <main className={`template-builder-workspace template-step-${activeStep}`}>
           <nav className="template-builder-steps">
             {steps.map((step) => (
               <button key={step.code} type="button" className={activeStep === step.code ? "active" : ""} onClick={() => setActiveStep(step.code)}>
@@ -1480,16 +3299,88 @@ export function TemplateStudioPage() {
                     <label><input type="checkbox" checked={previewSettings.zebraRows} onChange={(event) => setPreviewSettings((current) => ({ ...current, zebraRows: event.target.checked }))} /> Zebra</label>
                     <label><input type="checkbox" checked={previewSettings.compactCells} onChange={(event) => setPreviewSettings((current) => ({ ...current, compactCells: event.target.checked }))} /> Compact</label>
                     <label><input type="checkbox" checked={previewSettings.editablePreview} onChange={(event) => setPreviewSettings((current) => ({ ...current, editablePreview: event.target.checked }))} /> Editable</label>
+                    <details className="template-lang-menu">
+                      <summary>Lang</summary>
+                      <div>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={previewSettings.bilingualLabels.geography}
+                            onChange={(event) =>
+                              setPreviewSettings((current) => ({
+                                ...current,
+                                bilingualLabels: { ...current.bilingualLabels, geography: event.target.checked },
+                              }))
+                            }
+                          />
+                          Geography Hindi
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={previewSettings.bilingualLabels.dimensions}
+                            onChange={(event) =>
+                              setPreviewSettings((current) => ({
+                                ...current,
+                                bilingualLabels: { ...current.bilingualLabels, dimensions: event.target.checked },
+                              }))
+                            }
+                          />
+                          Dimensions Hindi
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={previewSettings.bilingualLabels.measures}
+                            onChange={(event) =>
+                              setPreviewSettings((current) => ({
+                                ...current,
+                                bilingualLabels: { ...current.bilingualLabels, measures: event.target.checked },
+                              }))
+                            }
+                          />
+                          Measures Hindi
+                        </label>
+                      </div>
+                    </details>
                     <button className="template-settings-button" type="button" title="Template preview settings" onClick={() => setSettingsDrawerOpen(true)}>
                       <Settings2 size={12} /> Settings
                     </button>
                   </div>
                 </div>
                 <div className="template-drop-grid">
-                  <DropZoneCard title="Separate Into Tabs By" hint="e.g. Rural/Urban, Gender" zone="tabsBy" items={builder.tabsBy} onDropItem={onDrop} onRemove={removeDroppedItem} />
-                  <DropZoneCard title="Each Row Represents" hint="Drop State, District, Time, or any dimension set" zone="rowRepresents" items={builder.rowRepresents} onDropItem={onDrop} onRemove={removeDroppedItem} />
-                  <DropZoneCard title="Show Across Columns" hint="Drop reporting sequences or dimensions" zone="columns" items={builder.columns} onDropItem={onDrop} onRemove={removeDroppedItem} />
-                  <DropZoneCard title="Fields To Fill" hint="Drop measures/data fields" zone="fields" items={builder.fields} onDropItem={onDrop} onRemove={removeDroppedItem} />
+                  <DropZoneCard title="Separate Into Tabs By" hint="e.g. Rural/Urban, Gender" zone="tabsBy" items={builder.tabsBy} onDropItem={onDrop} onRemove={removeDroppedItem} labelForItem={libraryItemLabel} />
+                  <ColumnLevelsZone
+                    title="Each Row Represents"
+                    emptyHint="Drop country, state, district, time, or dimension set/member"
+                    filledHint="Drop another item here or use View items to manage row levels."
+                    levels={rowLevels}
+                    activeLevelId={activeRowLevelId}
+                    isItemsOpen={rowLevelItemsOpen}
+                    onActiveLevelChange={setActiveRowLevelId}
+                    onItemsOpenChange={setRowLevelItemsOpen}
+                    onDropItem={onRowLevelDrop}
+                    onAddLevel={addRowLevel}
+                    onRemoveLevel={removeRowLevel}
+                    onRemoveItem={removeRowLevelItem}
+                    labelForItem={libraryItemLabel}
+                  />
+                  <ColumnLevelsZone
+                    title="Show Across Columns"
+                    emptyHint="Drop time period, geography, or dimension set/member"
+                    filledHint="Drop another item here or use View items to manage selected items."
+                    levels={columnLevels}
+                    activeLevelId={activeColumnLevelId}
+                    isItemsOpen={columnLevelItemsOpen}
+                    onActiveLevelChange={setActiveColumnLevelId}
+                    onItemsOpenChange={setColumnLevelItemsOpen}
+                    onDropItem={onColumnLevelDrop}
+                    onAddLevel={addColumnLevel}
+                    onRemoveLevel={removeColumnLevel}
+                    onRemoveItem={removeColumnLevelItem}
+                    labelForItem={libraryItemLabel}
+                  />
+                  <DropZoneCard title="Fields To Fill" hint="Drop measures/data fields" zone="fields" items={builder.fields} onDropItem={onDrop} onRemove={removeDroppedItem} labelForItem={libraryItemLabel} />
                 </div>
               </section>
 
@@ -1498,35 +3389,48 @@ export function TemplateStudioPage() {
                   <FileSpreadsheet size={15} />
                   <strong>Preview</strong>
                   <span>~{Math.max(1, previewRows.length) * Math.max(1, previewColumns.length)} editable cells</span>
+                  {isSecondaryLabelLoading && <span className="template-secondary-label-status">Hindi labels loading...</span>}
                   <em>Drop directly on row headers, column headers, or cells.</em>
                 </div>
+                {isPreviewHydrating && (
+                  <div className="template-preview-loader" role="status" aria-live="polite">
+                    <span className="spinner" />
+                    Loading saved preview structure...
+                  </div>
+                )}
                 <div className="template-excel-wrap">
                   <table
                     className={`template-excel-table ${previewSettings.compactCells ? "compact" : ""} ${previewSettings.zebraRows ? "zebra" : ""}`}
                     style={{ minWidth: `${previewColumnMinWidth}px` }}
                   >
                     <thead>
-                      {previewTabItems.length > 0 && (
-                        <tr>
-                          <th>Tab</th>
-                          {previewColumnGroups.map((group, index) => (
-                            <th key={`${group.code}-${index}`} colSpan={columnsPerGroup}>
-                              {previewSettings.showCodes ? group.code : group.label}
+                      {previewHeaderRows.map((row, rowIndex) => (
+                        <tr key={`preview-header-level-${rowIndex}`}>
+                          <th colSpan={previewRowHeaderCount}>{rowIndex === 0 ? "Column Groups" : ""}</th>
+                          {row.map((cell, index) => (
+                            <th key={`${cell.code}-${rowIndex}-${index}`} colSpan={cell.colSpan}>
+                              {previewSettings.showCodes ? cell.code : cell.label}
                             </th>
                           ))}
                         </tr>
-                      )}
+                      ))}
                       <tr>
-                        <th
-                          className="preview-drop-target"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => void onCellDrop(event, "rowRepresents")}
-                          title="Drop a dimension/geography/time set here to map rows"
-                        >
-                          <span className="template-preview-header-label">
-                            {builder.rowRepresents.map((item) => item.label).join(" / ") || "Drop row dimension"}
-                          </span>
-                        </th>
+                        {Array.from({ length: previewRowHeaderCount }, (_, index) => {
+                          const rowLevel = activeRowLevels[index];
+                          return (
+                            <th
+                              key={`preview-row-header-${index}`}
+                              className="preview-drop-target template-row-header-cell"
+                              onDragOver={(event) => event.preventDefault()}
+                              onDrop={(event) => void onRowLevelDrop(event, rowLevel?.id ?? `row-level-${index + 1}`)}
+                              title={`Drop a dimension/geography/time set here to map row level ${index + 1}`}
+                            >
+                              <span className="template-preview-header-label">
+                                {rowLevel?.items.map((item) => libraryItemLabel(item)).join(" / ") || (index === 0 ? "Drop row dimension" : `Row Level ${index + 1}`)}
+                              </span>
+                            </th>
+                          );
+                        })}
                         {previewColumns.map((column, index) => {
                           const columnMeasure = measureForColumn(index);
                           const columnValidationKey = measureColumnKey(column, index);
@@ -1568,7 +3472,14 @@ export function TemplateStudioPage() {
                     <tbody>
                       {previewRows.map((row, rowIndex) => (
                         <tr key={`${row.code}-${rowIndex}`}>
-                          <td>{previewSettings.showCodes ? row.code : row.label}</td>
+                          {Array.from({ length: previewRowHeaderCount }, (_, levelIndex) => {
+                            const part = row.path?.[levelIndex] ?? (levelIndex === 0 ? row : { code: "-", label: "-" });
+                            return (
+                              <td key={`${row.code}-row-level-${levelIndex}`} className="template-row-header-cell">
+                                {previewSettings.showCodes ? part.code : part.label}
+                              </td>
+                            );
+                          })}
                           {previewColumns.map((column, columnIndex) => {
                             const columnMeasure = measureForColumn(columnIndex);
                             const cellKey = `${rowIndex}:${columnIndex}`;
@@ -1600,18 +3511,15 @@ export function TemplateStudioPage() {
               </section>
             </>
           ) : (
-            <section className="template-work-card template-placeholder-workflow">
-              <h3>{steps.find((step) => step.code === activeStep)?.label}</h3>
-              <p>{workflowText(activeStep, axes, measures, renderContract)}</p>
-            </section>
+            renderWorkflowStep()
           )}
         </main>
       </div>
 
       <div className="sticky-form-footer">
         <button className="ghost-button" type="button" onClick={goBack} disabled={isPublishing || isStudioHydrating}>Back</button>
-        <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating}>
-          {activeStep === "publish" ? (isPublishing ? "Publishing" : "Publish") : "Continue"}
+        <button className="primary-button compact" type="button" onClick={handlePrimaryAction} disabled={isSaving || isPublishing || isStudioHydrating || (activeStep === "publish" && (isSelectedVersionFrozen || publishBlockers.length > 0))}>
+          {activeStep === "publish" ? (isSelectedVersionFrozen ? "Published" : isPublishing ? "Publishing" : "Publish") : "Continue"}
         </button>
       </div>
 
@@ -1620,7 +3528,7 @@ export function TemplateStudioPage() {
           <aside className="side-drawer template-drawer template-form-drawer">
             <div className="drawer-header">
               <span>Column Validation</span>
-              <h3>{validationDrawer.measure?.label ?? `Column ${validationDrawer.columnIndex + 1}`}</h3>
+              <h3>{validationDrawer.measure ? libraryItemLabel(validationDrawer.measure) : `Column ${validationDrawer.columnIndex + 1}`}</h3>
               <button type="button" onClick={() => setValidationDrawer(null)}>x</button>
             </div>
             <div className="drawer-info-note">
@@ -1633,7 +3541,7 @@ export function TemplateStudioPage() {
               </div>
               <div>
                 <span>Measure</span>
-                <strong>{validationDrawer.measure?.label ?? "No measure mapped"}</strong>
+                <strong>{validationDrawer.measure ? libraryItemLabel(validationDrawer.measure) : "No measure mapped"}</strong>
               </div>
               <div>
                 <span>UOM</span>
@@ -1940,9 +3848,38 @@ export function TemplateStudioPage() {
                 <div className="template-computed-list">
                   {computedColumns.map((column) => (
                     <div key={column.code}>
-                      <strong>{column.label}</strong>
-                      <span>{column.mode.toUpperCase()} | {column.outputUom}</span>
+                      <header>
+                        <strong>{column.label}</strong>
+                      </header>
+                      <span>
+                        {column.mode.toUpperCase()} | {column.outputUom} | {column.showInDataEntry ? "Visible to provider" : "Hidden from provider"}
+                      </span>
                       <small>{column.formula}</small>
+                      <div className="template-computed-action-row">
+                        <button
+                          className="secondary-button compact"
+                          type="button"
+                          disabled={builder.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code))}
+                          onClick={() => addGeneratedColumnToPreview(column)}
+                        >
+                          {builder.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code)) ? "In Preview" : "Add Preview"}
+                        </button>
+                        <label className="template-toggle-label compact" title="Generated columns are hidden from data-entry recipients by default. Enable only when the data provider should see this read-only output.">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(column.showInDataEntry)}
+                            onChange={() => toggleGeneratedColumnDataEntryVisibility(column.code)}
+                          />
+                          Show Data Entry
+                        </label>
+                        <button
+                          className="danger-button compact"
+                          type="button"
+                          onClick={() => removeGeneratedColumn(column)}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2057,6 +3994,7 @@ function DropZoneCard({
   items,
   onDropItem,
   onRemove,
+  labelForItem,
 }: {
   title: string;
   hint: string;
@@ -2064,6 +4002,7 @@ function DropZoneCard({
   items: LibraryItem[];
   onDropItem: (event: DragEvent, zone: DropZone) => Promise<void>;
   onRemove: (zone: DropZone, id: string) => void;
+  labelForItem?: (item: LibraryItem) => string;
 }) {
   return (
     <div
@@ -2078,9 +4017,115 @@ function DropZoneCard({
         <div className="template-drop-chip-list">
           {items.map((item) => (
             <button key={item.id} type="button" onClick={() => onRemove(zone, item.id)} title="Remove from structure">
-              {item.label}
+              {labelForItem ? labelForItem(item) : item.label}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ColumnLevelsZone({
+  title = "Show Across Columns",
+  emptyHint = "Drop time period, geography, or dimension set/member",
+  filledHint = "Drop another item here or use View items to manage selected items.",
+  levels,
+  activeLevelId,
+  isItemsOpen,
+  onActiveLevelChange,
+  onItemsOpenChange,
+  onDropItem,
+  onAddLevel,
+  onRemoveLevel,
+  onRemoveItem,
+  labelForItem,
+}: {
+  title?: string;
+  emptyHint?: string;
+  filledHint?: string;
+  levels: ColumnLevel[];
+  activeLevelId: string;
+  isItemsOpen: boolean;
+  onActiveLevelChange: (levelId: string) => void;
+  onItemsOpenChange: (isOpen: boolean) => void;
+  onDropItem: (event: DragEvent, levelId: string) => Promise<void>;
+  onAddLevel: () => void;
+  onRemoveLevel: (levelId: string) => void;
+  onRemoveItem: (levelId: string, itemId: string) => void;
+  labelForItem: (item: LibraryItem) => string;
+}) {
+  const activeLevel = levels.find((level) => level.id === activeLevelId) ?? levels[0] ?? makeColumnLevel(0);
+  const activeLevelNumber = Math.max(1, levels.findIndex((level) => level.id === activeLevel.id) + 1);
+  const itemCount = activeLevel.items.length;
+  return (
+    <div className="template-column-levels-zone">
+      <div className="template-column-levels-title">
+        <div>
+          <span>{title}</span>
+        </div>
+        <div className="template-column-active-row">
+          {levels.length > 1 ? (
+            <select value={activeLevel.id} onChange={(event) => onActiveLevelChange(event.target.value)}>
+              {levels.map((level, index) => (
+                <option key={level.id} value={level.id}>Level {index + 1}</option>
+              ))}
+            </select>
+          ) : (
+            <strong>Level 1</strong>
+          )}
+          <button type="button" onClick={onAddLevel}>+ Level</button>
+          {levels.length > 1 && (
+            <button className="template-column-level-remove" type="button" onClick={() => onRemoveLevel(activeLevel.id)} title="Remove active column level">
+              x
+            </button>
+          )}
+        </div>
+      </div>
+      <div
+        className={`template-column-active-drop ${itemCount ? "has-items" : ""}`}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => void onDropItem(event, activeLevel.id)}
+      >
+        <div>
+          <strong>Level {activeLevelNumber}</strong>
+          <em>{itemCount ? filledHint : emptyHint}</em>
+        </div>
+        <button type="button" onClick={() => onItemsOpenChange(true)}>
+          {itemCount ? `${itemCount} item${itemCount === 1 ? "" : "s"}` : "View items"}
+        </button>
+      </div>
+      {isItemsOpen && (
+        <div className="template-column-level-popup" role="dialog" aria-label="Column level items">
+          <div className="template-column-level-popup-header">
+            <div>
+              <span>{title}</span>
+              <strong>Level {activeLevelNumber} Items</strong>
+            </div>
+            <button type="button" onClick={() => onItemsOpenChange(false)} aria-label="Close column level items">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="template-column-level-popup-list">
+            {levels.map((level, index) => (
+              <section key={level.id}>
+                <h4>Level {index + 1}</h4>
+                {level.items.length === 0 ? (
+                  <p>No items added.</p>
+                ) : (
+                  level.items.map((item) => (
+                    <div key={item.id} className="template-column-level-popup-item">
+                      <div>
+                        <strong>{labelForItem(item)}</strong>
+                        <small>{item.type.replace("_", " ")} | {item.code}</small>
+                      </div>
+                      <button type="button" onClick={() => onRemoveItem(level.id, item.id)}>Remove</button>
+                    </div>
+                  ))
+                )}
+              </section>
+            ))}
+          </div>
         </div>
       )}
     </div>

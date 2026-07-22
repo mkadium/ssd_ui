@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Module | Masters UI |
-| Current Version | v0.1.2 |
-| Status | MASTERS_DATA_FIELD_UI_INTEGRATED |
+| Current Version | v0.1.4 |
+| Status | MASTERS_INDICATOR_PUBLISHED_USAGE_ALIGNED |
 | Created Date | 2026-05-31 |
-| Last Updated | 2026-07-18 |
+| Last Updated | 2026-07-22 |
 
 ## Version History
 
@@ -19,3 +19,5 @@
 | v0.1.0 | 2026-05-31 | Added shared App Shell unit scope selector and clarified parent/root versus selected-node child creation |
 | v0.1.1 | 2026-07-17 | Integrated Unit of Measurement (UOM) Masters reference page with API list/create/update contracts |
 | v0.1.2 | 2026-07-18 | Integrated Data Field Library with WP-2026-011 list, detail, source, periodicity, grain, unmap, and restore APIs |
+| v0.1.3 | 2026-07-22 | Changed Data Field Library grain display to read-only Template Grain Usage derived from Template Studio design state |
+| v0.1.4 | 2026-07-22 | Changed Indicator Detail Mapping tab so only Global Indicator Mapping is editable and operational usage displays only from published template contracts |

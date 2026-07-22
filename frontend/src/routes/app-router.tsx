@@ -17,6 +17,7 @@ import { IndicatorLibraryPage } from "../pages/indicators/indicator-library-page
 import { MastersReferencePage } from "../pages/masters/masters-reference-page";
 import { PlaceholderPage } from "../pages/system/placeholder-page";
 import { TemplateLibraryPage } from "../pages/templates/template-library-page";
+import { TemplateMappingsPage } from "../pages/templates/template-mappings-page";
 import { TemplateStudioPage } from "../pages/templates/template-studio-page";
 import { flatNavigation } from "./navigation";
 
@@ -49,6 +50,8 @@ const childRoutes = flatNavigation
               <DataFieldLibraryPage />
             ) : item.path === "/template/library" ? (
               <TemplateLibraryPage />
+            ) : item.path === "/template/mappings" ? (
+              <TemplateMappingsPage />
             ) : item.path === "/authentication/access-catalog" || item.path === "/authentication/permission-matrix" ? (
               <AccessManagementPage />
             ) : item.path === "/authentication/users" ? (

@@ -92,10 +92,11 @@ Validation:
 - Indicator detail must use `/masters/indicators/{indicator_code}` and render official metadata, metadata status, related hierarchy, `Details`, and `Mapping` sections.
 - Details tab must render overview, versions, measures, source assignment, metadata, and availability information section-wise.
 - Mapping tab must not render a separate framework section in Indicator detail. Framework context is shown through dynamic hierarchy labels and navigation.
-- Mapping tab must render global indicator mapping, source assignment, source officer recipient assignment, version-level UOM, and measure mapping as compact summary sections.
-- Mapping edit actions must open a right-side drawer/panel with dropdown-driven forms and required fields only. Masters such as UOM, sources/ministries, officers, and periodicities are maintained in Masters pages; Indicator detail only maps those existing records to the indicator.
-- Source Assignment and Source Officer Assignment are separate. Source Assignment owns source organization, assignment role, and periodicity. Source Officer Assignment maps officer recipients through `/masters/source-assignment-officers`.
-- Data Source Ministry and Department/Division must resolve from `indicator_source_assignments` and organization parent-child data when both names are not directly returned by the indicator API.
+- Mapping tab must render global indicator mapping as the only editable mapping section in Indicator detail.
+- Source, periodicity, source officer, UOM, and measure sections must be read-only in Indicator detail and derived from `published_template_usage` only.
+- Existing direct source assignment, source officer, UOM, measure, and periodicity records may remain in the database/API for backward compatibility or planning/reference workflows, but Indicator Detail must not show them as operational usage unless they are also present through published template usage.
+- Masters such as UOM, sources/ministries, officers, and periodicities are maintained in Masters pages. Template Studio and data-field provider policy own operational source/provider mappings.
+- Data Source Ministry and Department/Division on Indicator Detail must resolve from `published_template_usage` ministry/department fields. If no published template usage exists, show an empty/pending state instead of falling back to direct indicator source assignments.
 - Base indicator creation must use the selected unit's active framework/edition and `POST /masters/indicators`; advanced source/measure/global/framework mapping saves must use the governed mapping endpoints.
 - Indicator detail hierarchy labels and Open actions must use API-provided `framework_mappings`; do not hardcode Goal/Target.
 - Parent node detail pages must list child nodes from active framework relationships and show mapped indicators through `/masters/framework-indicator-mappings?node_code=...`.
@@ -103,7 +104,7 @@ Validation:
 - Indicator Library must show an explicit loading state when opening an indicator detail record.
 - Indicator records must use stable `national_indicator_code`, `version_code`, `measure_code`, `uom_code`, `periodicity_code`, `organization_code`, and `officer_code` as keys.
 - Indicator create/edit workflow should be implemented as a governed multi-section flow: Basic, Framework Mapping, Metadata, Measures, Source Assignment, Version History, and Language.
-- Indicator Mapping tab may use existing upsert endpoints for global mapping, source assignment, source officer recipient assignment, and measures. Deactivate operations must use `is_active=false`; do not invent hard-delete behavior.
+- Indicator Mapping tab may use existing upsert endpoints for Global Indicator Mapping only. Do not expose direct source assignment, source officer, UOM, measure, or periodicity map/unmap controls on Indicator detail.
 - Indicator detail must show UOM and measures as separate sections because version-level UOM and measure-level UOM are different concepts.
 - Framework node mapping belongs to `framework_indicator_mappings`; indicators should not be auto-created as framework nodes unless future governance approves indicator-as-level behavior.
 
@@ -118,15 +119,16 @@ Validation:
 
 - Data Field Library must be available under the Data Fields module and must manage governed indicator measures as schedulable data fields.
 - Data Field Library must use a full-width table, compact row height, and viewport-aware scrolling for 1366x768.
-- Filters must include source/ministry/department, periodicity, UOM, status/availability, required grain / collection key, and free-text search.
-- Row click must open a dedicated Data Field profile/detail workspace, not a cramped side panel. The detail workspace must provide tabs for Overview, Source Mapping, Periodicity, Required Grain, Used In, and History.
+- Filters must include source/ministry/department, periodicity, UOM, status/availability, and free-text search.
+- Row click must open a dedicated Data Field profile/detail workspace, not a cramped side panel. The detail workspace must provide tabs for Overview, Indicator, Source Mapping, Periodicity, Template Grain Usage, and Used In.
 - Data Field create/edit/deactivate must use the existing indicator-version measure routes and stable `version_code` / `measure_code` values.
 - Source Mapping must allow one measure to map to multiple source organizations using stable `organization_code`.
 - Periodicity Mapping must allow measure-level collection cadence using stable `periodicity_code`.
-- Required Grain mapping must support multiple collection keys per measure. Supported key references include dimension member/member set, geography, and time period using stable codes.
-- Required Grain must be displayed as the submission coordinate structure, for example `State + Time Period + Locality -> Measure Value` or `State + Time Period + Locality + Sex -> Measure Value`.
+- Template Grain Usage is read-only in the Data Field Library. It must be derived from saved Template Studio draft/published design state and grouped by Template, Indicator, Source, and Grain.
+- Template Grain Usage must display the submission coordinate structure designed in that template, for example `2026 - Total / Rural / Urban - States` or `2026 - Total / Rural / Urban - States - Sex`.
+- Do not create new editable measure-level grain mapping UI unless governance later approves a shared default-grain model. The same measure may have different grain by template/source/indicator.
 - Mapping forms must open in the shared right-side drawer pattern and use searchable dropdowns. Do not render mapping forms inline below the table.
 - UI must disable Save when a searchable dropdown has typed text but no selected stable-code record.
-- Data Field list rows must not require one detail API call per visible row; source, UOM, periodicity, default grain, availability, usage count, and last approved/reference period should come from the list endpoint once API supports it.
-- Data collection scheduling UX must explain the resolution order: measure mapping, indicator source assignment fallback, approved template/request override, then blocked dispatch if required context is missing.
+- Data Field list rows must not require one detail API call per visible row; source, UOM, periodicity, availability, usage count, and last approved/reference period should come from the list endpoint once API supports it. Template Grain Usage may load lazily only when the user opens the grain view.
+- Data collection scheduling UX must explain that template/data-field provider policy and approved template/request overrides drive collection. Indicator source/UOM/periodicity/officer mappings are reference defaults for profile and planning screens, not the operational publish contract.
 - Do not use localized names as keys. Use `measure_code`, `version_code`, `organization_code`, `periodicity_code`, `uom_code`, `dimension_code`, `member_code`, `member_set_code`, geography code, and time-period code.

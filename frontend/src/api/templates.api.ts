@@ -20,12 +20,16 @@ export type TemplateDefinition = {
   owning_unit_code?: string;
   template_type?: string;
   status?: string;
+  template_status?: string;
   default_locale_code?: string;
   is_active?: boolean;
   created_at?: string | null;
   updated_at?: string | null;
   last_updated?: string | null;
   current_version_code?: string | null;
+  current_version_status?: string | null;
+  version_status?: string | null;
+  current_version_number?: number | null;
   version_code?: string | null;
   version_number?: number | null;
 };
@@ -140,6 +144,63 @@ export type TemplatePublishPayload = {
   unit_code: string;
   publish_notes?: string | null;
   effective_from?: string | null;
+};
+
+export type TemplateMeasureAccessPolicy = {
+  policy_id?: string;
+  template_version_code?: string;
+  measure_code?: string;
+  organization_code?: string;
+  access_role?: string;
+  provider_mode?: string;
+  can_enter_data?: boolean;
+  can_view_data?: boolean;
+  can_view_other_measure_data?: boolean;
+  can_view_after_submission?: boolean;
+  is_primary_provider?: boolean;
+  is_required?: boolean;
+  policy_metadata?: Record<string, unknown>;
+  is_active?: boolean;
+};
+
+export type TemplateIndicatorMapping = {
+  mapping_id?: string;
+  template_version_code?: string;
+  template_code?: string;
+  unit_code?: string;
+  national_indicator_code?: string;
+  indicator_code?: string;
+  indicator_number?: string;
+  indicator_name?: string;
+  mapping_role?: string;
+  mapping_metadata?: Record<string, unknown>;
+  sort_order?: number;
+  is_active?: boolean;
+  updated_at?: string | null;
+};
+
+export type TemplateMeasureAccessPolicyPayload = {
+  measure_code: string;
+  organization_code: string;
+  unit_code: string;
+  access_role?: string;
+  can_enter_data?: boolean;
+  can_view_data?: boolean;
+  can_view_other_measure_data?: boolean;
+  can_view_after_submission?: boolean;
+  is_primary_provider?: boolean;
+  is_required?: boolean;
+  policy_metadata?: Record<string, unknown>;
+  is_active?: boolean;
+};
+
+export type TemplateIndicatorMappingPayload = {
+  indicator_code: string;
+  unit_code: string;
+  mapping_role?: string;
+  sort_order?: number;
+  mapping_metadata?: Record<string, unknown>;
+  is_active?: boolean;
 };
 
 export type TemplateVersionStatusPayload = {
@@ -300,6 +361,54 @@ export async function publishTemplateVersion(versionCode: string, payload: Templ
   return result.data;
 }
 
+export async function listTemplateMeasureAccessPolicies(versionCode: string, includeInactive = false) {
+  const result = await apiGet<ListResponse<TemplateMeasureAccessPolicy>>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/measure-access-policies${localeParams({
+      include_inactive: includeInactive ? "true" : "false",
+    })}`,
+  );
+  return result.data;
+}
+
+export async function upsertTemplateMeasureAccessPolicy(versionCode: string, payload: TemplateMeasureAccessPolicyPayload) {
+  const result = await apiPost<DetailResponse<TemplateMeasureAccessPolicy>, TemplateMeasureAccessPolicyPayload>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/measure-access-policies${query({ locale: getSelectedLocale() })}`,
+    payload,
+  );
+  return result.data;
+}
+
+export async function listTemplateIndicatorMappings(versionCode: string, includeInactive = false) {
+  const result = await apiGet<ListResponse<TemplateIndicatorMapping>>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/indicator-mappings${localeParams({
+      include_inactive: includeInactive ? "true" : "false",
+    })}`,
+  );
+  return result.data;
+}
+
+export async function upsertTemplateIndicatorMapping(versionCode: string, payload: TemplateIndicatorMappingPayload) {
+  const result = await apiPost<DetailResponse<TemplateIndicatorMapping>, TemplateIndicatorMappingPayload>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/indicator-mappings${query({ locale: getSelectedLocale() })}`,
+    payload,
+  );
+  return result.data;
+}
+
+export async function deactivateTemplateIndicatorMapping(
+  versionCode: string,
+  indicatorCode: string,
+  payload: { unit_code: string; mapping_role?: string; is_active: boolean },
+) {
+  const result = await apiDelete<DetailResponse<TemplateIndicatorMapping>, typeof payload>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/indicator-mappings/${encodeURIComponent(indicatorCode)}${query({
+      locale: getSelectedLocale(),
+    })}`,
+    payload,
+  );
+  return result.data;
+}
+
 export async function setTemplateVersionStatus(versionCode: string, payload: TemplateVersionStatusPayload) {
   const result = await apiPatch<DetailResponse<TemplateVersion>, TemplateVersionStatusPayload>(
     `/templates/versions/${encodeURIComponent(versionCode)}/status${query({ locale: getSelectedLocale() })}`,
@@ -354,6 +463,19 @@ export async function updateTemplateMeasure(versionCode: string, measureCode: st
       locale: getSelectedLocale(),
     })}`,
     payload,
+  );
+  return result.data;
+}
+
+export async function deactivateTemplateMeasure(versionCode: string, measureCode: string) {
+  const result = await apiDelete<DetailResponse<TemplateMeasure>, { unit_code: string; is_active: boolean }>(
+    `/templates/versions/${encodeURIComponent(versionCode)}/measures/${encodeURIComponent(measureCode)}${query({
+      locale: getSelectedLocale(),
+    })}`,
+    {
+      unit_code: getSelectedUnitCode(),
+      is_active: false,
+    },
   );
   return result.data;
 }

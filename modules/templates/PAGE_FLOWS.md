@@ -7,7 +7,7 @@
 | TEMPLATES-FLOW-003 | Create template version | API_BACKED_FOUNDATION |
 | TEMPLATES-FLOW-004 | Open Template Studio from selected version | API_BACKED_FOUNDATION |
 | TEMPLATES-FLOW-005 | Drag/drop Structure builder with live preview | UI_FOUNDATION |
-| TEMPLATES-FLOW-006 | Recipient/source-specific view rules | PENDING_DETAILED_UI |
+| TEMPLATES-FLOW-006 | Recipient/source-specific view rules | UI_FOUNDATION |
 | TEMPLATES-FLOW-007 | Preview/publish readiness | PARTIAL_PREVIEW_FOUNDATION |
 | TEMPLATES-FLOW-008 | Edit Studio reload from saved draft and formula output state | READY_FOR_LIVE_SMOKE |
 
@@ -51,7 +51,21 @@
 12. User may open Settings to add generated Compute, Calculated, or Rollup values to Fields To Fill.
 13. Generated values appear as non-editable preview columns and repeat under each active column group, such as every selected year.
 14. Rollup choices come from existing dimension rollup rules for selected structure dimensions.
-15. Save Draft persists the visible builder state and compute/calculated/rollup output definitions so Edit Studio can repopulate the prior design.
+15. Generated values are hidden from Data Entry by default; user may explicitly mark each generated value visible to providers.
+16. Save Draft persists the visible builder state and compute/calculated/rollup output definitions so Edit Studio can repopulate the prior design.
+
+## Template Recipients Flow
+
+1. User opens the Recipients step after adding editable measures in Structure.
+2. UI reads each selected measure/data-field mapping from the Data Field APIs.
+3. UI groups recipient rows by source/ministry and department.
+4. For each source group, UI shows assigned editable measure columns.
+5. By default, non-assigned editable measure columns are hidden for that source group.
+6. If `Show all columns to recipients` is enabled, UI includes non-assigned editable columns as context.
+7. Generated compute/calculated/rollup columns appear in the recipient view only when marked `Show in Data Entry`.
+8. Template grain comes from the saved Studio structure: tabs, row levels, and column levels.
+9. Officer readiness is shown from source/officer mappings when available.
+10. Publish remains blocked when required source/provider mappings are missing.
 
 ## Time-Period Loose-End Closure
 

@@ -69,6 +69,18 @@ PATCH /masters/organizations/{organization_code}/officers/{officer_code}
 
 UOM codes are consumed by indicator versions as `unit_of_measure_code` and by indicator measures as `unit_code`.
 
+## Indicator Detail Usage APIs
+
+Indicator detail uses:
+
+```text
+GET /masters/indicators/{indicator_code}
+```
+
+The UI must read operational source, department, UOM, periodicity, measure, and officer usage from `published_template_usage` only. Existing direct indicator mappings may still appear in compatibility fields such as `sources` / `source_assignments`, but the Indicator Detail Mapping tab must not show them as operational usage and must not expose direct map/unmap actions for them.
+
+Global Indicator Mapping remains the only editable mapping section in Indicator Detail.
+
 ## Data Field / Measure Mapping APIs
 
 WP-2026-011 Data Field Library integration uses these DB-backed API contracts:
@@ -90,9 +102,10 @@ Expected list row summary:
 - source organization/ministry/department summary
 - UOM
 - periodicity
-- required grain / collection-key labels and codes
+- legacy/default grain labels and codes where returned by API
 - availability/status
 - usage count
+- template usage count and mapped/published indicator count where supplied by the API
 - last approved/reference period where available
 
 The UI must use stable codes and must not request or display internal IDs.
@@ -101,8 +114,10 @@ The UI must use stable codes and must not request or display internal IDs.
 
 - `Data Field Library` is available under Data Fields navigation at `/data-fields/library`.
 - The list page uses `GET /masters/data-fields` once for table-ready rows and filters client-side from API summary fields.
+- The `Used / Status` table column shows published template usage count and mapped/published indicator count where returned by the DB-backed API read model.
 - Row click loads the selected profile with `GET /masters/data-fields/{measure_code}`.
-- Source, periodicity, and required grain / collection-key mappings open right-side drawer forms and save through the WP-2026-011 mapping routes.
+- Source and periodicity mappings open right-side drawer forms and save through the WP-2026-011 mapping routes.
+- New Data Field UI work does not edit measure-level grain. Template Grain Usage is read-only and derived from saved Template Studio draft/published design state.
 - Data Field create/edit uses the existing indicator-version measure APIs: `POST /masters/indicator-versions/{version_code}/measures` and `PATCH /masters/indicator-versions/{version_code}/measures/{measure_code}`.
 - Unmap/restore actions use `SOURCE`, `PERIODICITY`, and `GRAIN` mapping types with stable mapping codes.
 - Production frontend build passed after integration on 2026-07-18.

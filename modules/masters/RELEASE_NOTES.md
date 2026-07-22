@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Module | Masters UI |
-| Status | MASTERS_DATA_FIELD_UI_INTEGRATED |
-| Last Updated | 2026-07-18 |
+| Status | MASTERS_INDICATOR_REFERENCE_MAPPING_ALIGNED |
+| Last Updated | 2026-07-22 |
 
 ## v0.1.1
 
@@ -31,13 +31,16 @@
 - Removed the separate Framework mapping section from Indicator detail and moved remaining mapping edits into compact right-side drawer forms.
 - Split Indicator Mapping source assignment from source officer recipient assignment to match the database model.
 - Changed Indicator Mapping drawers to fixed right-side forms with searchable dropdown inputs for global indicators, sources, officers, periodicities, UOMs, and measures.
+- Removed direct Indicator-detail map/unmap controls for source assignment, periodicity, source officer recipients, UOM, and measure metadata. Only Global Indicator Mapping remains editable from Indicator detail.
+- Kept source, periodicity, source officer, UOM, and measure sections read-only and changed them to display only `published_template_usage` from active/current published template contracts.
 - Fixed Indicator Library source ministry/department filtering to use stable organization codes from the loaded source options.
 - Added Global Indicators under Indicator Management with list, search, status filter, detail panel, and right-drawer create/edit.
-- Added Data Field Library under `/data-fields/library` using WP-2026-011 APIs for list, profile, source mapping, periodicity mapping, required grain / collection-key mapping, unmap, and restore flows.
+- Added Data Field Library under `/data-fields/library` using WP-2026-011 APIs for list, profile, source mapping, periodicity mapping, unmap, and restore flows.
 - Added Data Field create/edit/deactivate drawer backed by existing indicator-version measure APIs.
 - Changed Data Field row click to open a dedicated full-width detail workspace instead of a cramped side profile panel.
-- Added compact Data Field table filters for source, periodicity, UOM, status, grain, and text search.
-- Added Data Field profile tabs for Overview, Source, Periodicity, Required Grain, Used In, and History with clean empty states.
+- Added compact Data Field table filters for source, periodicity, UOM, status, and text search.
+- Added Data Field profile tabs for Overview, Indicator, Source, Periodicity, and Template Grain Usage with clean empty states.
+- Replaced active measure-level grain editing in the Data Field UI with read-only Template Grain Usage derived from Template Studio draft/published design state.
 - Added right-side Data Field mapping drawers with stable-code dropdown validation for source organizations, periodicities, dimensions, members, member sets, geographies, and time periods.
 - Verified production frontend build after Data Field Library integration.
 - Verified production frontend build after UOM integration.

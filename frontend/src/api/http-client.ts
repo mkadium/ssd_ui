@@ -39,12 +39,14 @@ export async function apiPut<T, TBody extends object>(path: string, body: TBody)
   return apiSend<T, TBody>("PUT", path, body);
 }
 
-export async function apiDelete<T>(path: string): Promise<ApiResult<T>> {
+export async function apiDelete<T, TBody extends object = Record<string, never>>(path: string, body?: TBody): Promise<ApiResult<T>> {
   const response = await requestWithRefresh(path, {
     method: "DELETE",
     headers: {
       Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
     },
+    body: body ? JSON.stringify(body) : undefined,
   });
 
   if (!response.ok) {

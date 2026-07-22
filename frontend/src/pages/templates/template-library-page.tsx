@@ -55,6 +55,14 @@ function versionTitle(version: TemplateVersion) {
   return version.title ?? version.version_code ?? "Template version";
 }
 
+function normalizedStatus(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function isPublishedStatus(value: unknown) {
+  return ["PUBLISHED", "ACTIVE"].includes(normalizedStatus(value));
+}
+
 function formatDate(value: unknown) {
   if (!value) return "-";
   const date = new Date(String(value));
@@ -85,14 +93,41 @@ export function TemplateLibraryPage() {
     () => templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? null,
     [selectedTemplateCode, templates],
   );
+  const currentSelectedVersion = useMemo(() => {
+    if (!selectedTemplate) return null;
+    return (
+      versions.find((version) => version.version_code === selectedTemplate.current_version_code) ??
+      versions.find((version) => version.is_current) ??
+      versions[0] ??
+      null
+    );
+  }, [selectedTemplate, versions]);
+  const selectedTemplateDisplayStatus = isPublishedStatus(currentSelectedVersion?.status)
+    ? "PUBLISHED"
+    : textValue(selectedTemplate?.status);
+
+  function templateDisplayStatus(template: TemplateDefinition) {
+    return String(template.current_version_status ?? template.version_status ?? template.status ?? "DRAFT").toUpperCase();
+  }
 
   const filteredTemplates = useMemo(() => {
     const q = query.trim().toLowerCase();
     return templates.filter((template) => {
-      const statusMatches = statusFilter === "ALL" || String(template.status ?? "").toUpperCase() === statusFilter;
+      const displayStatus = templateDisplayStatus(template);
+      const definitionStatus = String(template.template_status ?? template.status ?? "").toUpperCase();
+      const statusMatches = statusFilter === "ALL" || displayStatus === statusFilter || definitionStatus === statusFilter;
       const queryMatches =
         !q ||
-        [template.template_code, template.name, template.template_name, template.description, template.status]
+        [
+          template.template_code,
+          template.current_version_code,
+          template.name,
+          template.template_name,
+          template.description,
+          template.status,
+          template.template_status,
+          template.current_version_status,
+        ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q));
       return statusMatches && queryMatches;
@@ -131,7 +166,7 @@ export function TemplateLibraryPage() {
     setIsLoading(true);
     setError("");
     try {
-      const response = await listTemplates({ status: statusFilter });
+      const response = await listTemplates();
       const rows = response.data ?? [];
       setTemplates(rows);
       setSelectedTemplateCode((current) => current || rows[0]?.template_code || "");
@@ -263,7 +298,7 @@ export function TemplateLibraryPage() {
         name: templateForm.name.trim(),
         owning_unit_code: getSelectedUnitCode(),
         template_type: templateForm.template_type,
-        status: templateForm.status,
+        status: editingTemplateCode ? selectedTemplate?.status ?? templateForm.status : templateForm.status,
         default_locale_code: getSelectedLocale(),
         is_active: true,
         description: templateForm.description.trim() || undefined,
@@ -391,8 +426,8 @@ export function TemplateLibraryPage() {
   }
 
   const totalTemplates = templates.length;
-  const draftTemplates = templates.filter((template) => String(template.status ?? "").toUpperCase() === "DRAFT").length;
-  const publishedTemplates = templates.filter((template) => String(template.status ?? "").toUpperCase() === "PUBLISHED").length;
+  const draftTemplates = templates.filter((template) => templateDisplayStatus(template) === "DRAFT").length;
+  const publishedTemplates = templates.filter((template) => templateDisplayStatus(template) === "PUBLISHED").length;
   const activeTemplates = templates.filter((template) => template.is_active !== false).length;
 
   return (
@@ -465,7 +500,14 @@ export function TemplateLibraryPage() {
                     >
                       <td><strong>{templateName(template)}</strong><small>{textValue(template.description)}</small></td>
                       <td><code>{textValue(template.template_code)}</code></td>
-                      <td><span className={`status-pill ${String(template.status ?? "DRAFT").toLowerCase()}`}>{textValue(template.status)}</span></td>
+                      <td>
+                        <span className={`status-pill ${templateDisplayStatus(template).toLowerCase()}`}>
+                          {templateDisplayStatus(template)}
+                        </span>
+                        {template.template_status && template.template_status !== templateDisplayStatus(template) && (
+                          <small className="muted-code">Definition: {template.template_status}</small>
+                        )}
+                      </td>
                       <td>{textValue(template.current_version_code ?? template.version_code)}</td>
                       <td>{textValue(template.owning_unit_code)}</td>
                       <td>{formatDate(template.updated_at ?? template.last_updated)}</td>
@@ -531,7 +573,7 @@ export function TemplateLibraryPage() {
               Time period rules are controlled through the Template Studio structure step. Used period sets are referenced, not edited here.
             </div>
             <div className="detail-field-grid">
-              <div><span>Status</span><strong>{textValue(selectedTemplate.status)}</strong></div>
+              <div><span>Status</span><strong>{selectedTemplateDisplayStatus}</strong></div>
               <div><span>Type</span><strong>{textValue(selectedTemplate.template_type)}</strong></div>
               <div><span>Unit</span><strong>{textValue(selectedTemplate.owning_unit_code)}</strong></div>
               <div><span>Locale</span><strong>{textValue(selectedTemplate.default_locale_code)}</strong></div>
@@ -571,7 +613,7 @@ export function TemplateLibraryPage() {
                       <small>{version.version_code}</small>
                     </span>
                     <span className="template-version-meta">
-                      <em>{version.status}</em>
+                      <em className={`status-pill ${isPublishedStatus(version.status) ? "published" : String(version.status ?? "draft").toLowerCase()}`}>{version.status}</em>
                       {version.is_current && <b>Current</b>}
                     </span>
                     <button
@@ -606,7 +648,7 @@ export function TemplateLibraryPage() {
             <label>Template name *<input required value={templateForm.name} onChange={(event) => setTemplateForm((form) => ({ ...form, name: event.target.value, template_code: form.template_code || compactCode(event.target.value) }))} /></label>
             <label>Template code *<input required value={templateForm.template_code} onChange={(event) => setTemplateForm((form) => ({ ...form, template_code: compactCode(event.target.value) }))} /></label>
             <label>Template type<select value={templateForm.template_type} onChange={(event) => setTemplateForm((form) => ({ ...form, template_type: event.target.value }))}><option value="DATA_ENTRY">Data Entry</option><option value="REPORT">Report</option></select></label>
-            <label>Status<select value={templateForm.status} onChange={(event) => setTemplateForm((form) => ({ ...form, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option></select></label>
+            <label>Status<input value={editingTemplateCode ? "System controlled by current version" : templateForm.status} readOnly /></label>
             {editingTemplateCode && (
               <label>
                 Current version

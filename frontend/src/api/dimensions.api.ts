@@ -101,6 +101,11 @@ export type DimensionMemberSetItem = {
   dimension_code?: string;
   member_code?: string;
   member_name?: string;
+  name?: string;
+  display_name?: string;
+  localized_name?: string;
+  alias_value?: string;
+  short_name?: string | null;
   sort_order?: number;
   is_active?: boolean;
 };
@@ -318,7 +323,7 @@ function query(params: Record<string, string | number | undefined | null>) {
 }
 
 function localeParams(extra: Record<string, string | number | undefined | null> = {}) {
-  return query({ locale: getSelectedLocale(), ...extra });
+  return query({ locale: extra.locale ?? getSelectedLocale(), ...extra });
 }
 
 export async function listDimensionStatCards() {
@@ -373,18 +378,19 @@ export async function deactivateTimeFrequency(frequencyCode: string) {
   return result.data;
 }
 
-export async function listTimePeriods(filters: { frequencyCode?: string; limit?: number; offset?: number } = {}) {
+export async function listTimePeriods(filters: { frequencyCode?: string; limit?: number; offset?: number; locale?: string } = {}) {
   const result = await apiGet<ListResponse<TimePeriod>>(
     `/dimensions/time-periods${localeParams({
       frequency_code: filters.frequencyCode === "ALL" ? undefined : filters.frequencyCode,
       limit: filters.limit ?? 500,
       offset: filters.offset ?? 0,
+      locale: filters.locale,
     })}`,
   );
   return result.data;
 }
 
-export async function listAllTimePeriods(filters: { frequencyCode?: string } = {}) {
+export async function listAllTimePeriods(filters: { frequencyCode?: string; locale?: string } = {}) {
   const pageSize = 500;
   const allRows: TimePeriod[] = [];
   for (let offset = 0; ; offset += pageSize) {
@@ -426,6 +432,7 @@ export async function listGeographies(filters: {
   levelCode?: string;
   limit?: number;
   offset?: number;
+  locale?: string;
 } = {}) {
   const result = await apiGet<ListResponse<Geography>>(
     `/dimensions/geographies${localeParams({
@@ -433,6 +440,7 @@ export async function listGeographies(filters: {
       level_code: filters.levelCode === "ALL" ? undefined : filters.levelCode,
       limit: filters.limit ?? 500,
       offset: filters.offset ?? 0,
+      locale: filters.locale,
     })}`,
   );
   return result.data;
@@ -453,9 +461,9 @@ export async function deactivateGeography(geographyCode: string) {
   return result.data;
 }
 
-export async function listTimePeriodSetPeriods(setCode: string) {
+export async function listTimePeriodSetPeriods(setCode: string, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMemberSetItem>>(
-    `/dimensions/time-period-sets/${encodeURIComponent(setCode)}/periods${localeParams({ limit: 1000, offset: 0 })}`,
+    `/dimensions/time-period-sets/${encodeURIComponent(setCode)}/periods${localeParams({ limit: 1000, offset: 0, locale: options.locale })}`,
   );
   return result.data;
 }
@@ -506,9 +514,9 @@ export async function restoreDimension(dimensionCode: string) {
   return result.data;
 }
 
-export async function listDimensionMembers(dimensionCode: string, limit = 300) {
+export async function listDimensionMembers(dimensionCode: string, limit = 300, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMember>>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}/members${localeParams({ limit, offset: 0 })}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}/members${localeParams({ limit, offset: 0, locale: options.locale })}`,
   );
   return result.data;
 }
@@ -567,9 +575,9 @@ export async function listDimensionMemberSets(dimensionCode: string) {
   return result.data;
 }
 
-export async function listDimensionMemberSetMembers(setCode: string, limit = 300) {
+export async function listDimensionMemberSetMembers(setCode: string, limit = 300, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMemberSetItem>>(
-    `/dimensions/member-sets/${encodeURIComponent(setCode)}/members${localeParams({ limit, offset: 0 })}`,
+    `/dimensions/member-sets/${encodeURIComponent(setCode)}/members${localeParams({ limit, offset: 0, locale: options.locale })}`,
   );
   return result.data;
 }
