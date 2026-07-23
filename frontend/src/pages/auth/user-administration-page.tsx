@@ -22,6 +22,7 @@ import {
   type AuthUserRoleAssignment,
 } from "../../api/auth-admin.api";
 import { LOCALE_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type UserDrawerState =
   | { mode: "create" }
@@ -286,7 +287,7 @@ export function UserAdministrationPage() {
 
       <section className="user-admin-layout">
         <div className="table-wrap user-table-wrap">
-          {isLoading ? <div className="empty-state">Loading users...</div> : (
+          {isLoading ? <Loader label="Loading users..." /> : (
             <table className="data-table">
               <thead>
                 <tr>
@@ -383,15 +384,15 @@ function UserDrawer({ drawer, isSaving, onClose, onSubmit, roles, units, reviewW
   const user = drawer.mode !== "create" ? drawer.user : undefined;
   return (
     <div className="drawer-backdrop">
-      <aside className="side-drawer">
-        <div className="drawer-header">
+      <aside className="side-drawer user-drawer">
+        <div className="drawer-header user-drawer-header">
           <div>
             <span className="eyebrow">{drawer.mode.replace("-", " ")}</span>
             <h3>{drawer.mode === "assign-role" ? "User Role Assignment" : drawer.mode === "assign-review-level" ? "Review Level Assignment" : drawer.mode === "password" ? "Password Setup" : "User"}</h3>
           </div>
           <button className="icon-action" type="button" onClick={onClose} aria-label="Close drawer"><X size={16} /></button>
         </div>
-        <form className="drawer-form" onSubmit={onSubmit}>
+        <form className="drawer-form user-drawer-form" onSubmit={onSubmit}>
           {drawer.mode === "assign-role" ? (
             <>
               <label className="form-field">Role<select name="role_code" required>{roles.map((role) => <option key={role.role_code} value={role.role_code}>{role.role_code}</option>)}</select></label>
@@ -402,24 +403,71 @@ function UserDrawer({ drawer, isSaving, onClose, onSubmit, roles, units, reviewW
           ) : drawer.mode === "password" ? (
             <label className="form-field">New password<input name="new_password" type="password" required minLength={8} /></label>
           ) : (
-            <>
-              <label className="form-field">Username<input name="username" defaultValue={user?.username ?? ""} disabled={Boolean(user)} required /></label>
-              <label className="form-field">Email<input name="email" type="email" defaultValue={user?.email ?? ""} required /></label>
-              <div className="form-grid two">
-                <label className="form-field">First name<input name="first_name" defaultValue={user?.first_name ?? ""} /></label>
-                <label className="form-field">Last name<input name="last_name" defaultValue={user?.last_name ?? ""} /></label>
-              </div>
-              <label className="form-field">Display name<input name="display_name" defaultValue={user?.display_name ?? ""} /></label>
-              <label className="form-field">Mobile number<input name="mobile_number" defaultValue={user?.mobile_number ?? ""} /></label>
-              <label className="form-field">Preferred language<select name="preferred_language_code" defaultValue={user?.preferred_language_code ?? "en-IN"}><option value="en-IN">English</option><option value="hi-IN">Hindi</option></select></label>
-              {drawer.mode === "create" && <label className="form-field">Initial password <input name="new_password" type="password" minLength={8} /></label>}
-              <label className="checkbox-card"><input defaultChecked={user?.is_active ?? true} name="is_active" type="checkbox" /> Active user</label>
-              <label className="checkbox-card"><input defaultChecked={user?.is_system_user ?? false} name="is_system_user" type="checkbox" disabled={Boolean(user)} /> System user</label>
-            </>
+            <div className="user-form-sections">
+              <section className="user-form-section">
+                <div className="user-form-section-heading">
+                  <span>01</span>
+                  <div><strong>Identity</strong><small>Core account and display information</small></div>
+                </div>
+                <div className="user-form-section-fields">
+                  <label className="form-field">Username<input name="username" defaultValue={user?.username ?? ""} disabled={Boolean(user)} required /></label>
+                  <div className="form-grid two">
+                    <label className="form-field">First name<input name="first_name" defaultValue={user?.first_name ?? ""} /></label>
+                    <label className="form-field">Last name<input name="last_name" defaultValue={user?.last_name ?? ""} /></label>
+                  </div>
+                  <label className="form-field">Display name<input name="display_name" defaultValue={user?.display_name ?? ""} /></label>
+                </div>
+              </section>
+
+              <section className="user-form-section">
+                <div className="user-form-section-heading">
+                  <span>02</span>
+                  <div><strong>Contact &amp; preferences</strong><small>Communication and language settings</small></div>
+                </div>
+                <div className="user-form-section-fields">
+                  <label className="form-field">Email<input name="email" type="email" defaultValue={user?.email ?? ""} required /></label>
+                  <div className="form-grid two">
+                    <label className="form-field">Mobile number<input name="mobile_number" defaultValue={user?.mobile_number ?? ""} /></label>
+                    <label className="form-field">Preferred language<select name="preferred_language_code" defaultValue={user?.preferred_language_code ?? "en-IN"}><option value="en-IN">English</option><option value="hi-IN">Hindi</option></select></label>
+                  </div>
+                </div>
+              </section>
+
+              {drawer.mode === "create" && (
+                <section className="user-form-section">
+                  <div className="user-form-section-heading">
+                    <span>03</span>
+                    <div><strong>Security</strong><small>Set the initial account credential</small></div>
+                  </div>
+                  <div className="user-form-section-fields">
+                    <label className="form-field">Initial password<input name="new_password" type="password" minLength={8} autoComplete="new-password" /></label>
+                  </div>
+                </section>
+              )}
+
+              <section className="user-form-section">
+                <div className="user-form-section-heading">
+                  <span>{drawer.mode === "create" ? "04" : "03"}</span>
+                  <div><strong>Access settings</strong><small>Control availability and account ownership</small></div>
+                </div>
+                <div className="user-form-toggle-grid">
+                  <label className="role-toggle-card user-toggle-card">
+                    <input defaultChecked={user?.is_active ?? true} name="is_active" type="checkbox" />
+                    <span className="role-toggle-copy"><strong>Active user</strong><small>Allow this account to sign in and work.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                  <label className="role-toggle-card user-toggle-card">
+                    <input defaultChecked={user?.is_system_user ?? false} name="is_system_user" type="checkbox" disabled={Boolean(user)} />
+                    <span className="role-toggle-copy"><strong>System user</strong><small>Mark as a protected platform account.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                </div>
+              </section>
+            </div>
           )}
-          <div className="drawer-footer">
+          <div className="drawer-footer user-drawer-footer">
             <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-            <button className="primary-button" disabled={isSaving} type="submit">Save</button>
+            <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving..." : drawer.mode === "create" ? "Create user" : drawer.mode === "edit" ? "Save changes" : "Save"}</button>
           </div>
         </form>
       </aside>

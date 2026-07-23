@@ -19,6 +19,11 @@
 ## v0.1.0
 
 ### New Features
+- Modernized the Create/Edit User drawer with grouped form sections, responsive access toggles, refined fields, and clearer footer actions.
+- Applied the shared accessible loader to the User Administration page.
+- Modernized Permission Matrix grant cards, section hierarchy, selection controls, responsive layout, spacing, and typography.
+- Redesigned Role drawer boolean controls as modern, accessible toggle cards with clear supporting text and disabled states.
+- Added a reusable accessible loader and applied it to the Permission Matrix data-loading state.
 - Created Auth UI module context from completed Auth API handoff.
 - Documented planned login, session, protected route, profile loading, permission navigation, logout, and password-management UI flows.
 - Synced Auth UI context after `dev` was merged into `mohan`.
@@ -40,6 +45,9 @@
 ### Governance Notes
 - Existing merged Auth code no longer references unapproved `axios` or `zustand`.
 - Password UI follows approved Auth API contracts and does not store/log raw passwords.
+
+### Fixed
+- Fixed Permission Matrix module cards collapsing inside the constrained scroll container by using intrinsic block flow.
 
 ### Testing
 - `npm run lint` passed.
