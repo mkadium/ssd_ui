@@ -1078,7 +1078,8 @@ export function DataFieldLibraryPage() {
               <button className="icon-button" type="button" onClick={() => setPanel("")} aria-label="Close drawer"><X size={16} /></button>
             </div>
             {panel === "measure" && (
-              <form className="drawer-form" onSubmit={saveMeasure}>
+              <form className="drawer-form data-field-measure-form" onSubmit={saveMeasure}>
+                <div className="data-field-form-intro"><strong>Field configuration</strong><span>Connect this data field to an indicator version and define how its values are collected.</span></div>
                 <label>Indicator *
                   <input
                     list="data-field-indicator-options"
