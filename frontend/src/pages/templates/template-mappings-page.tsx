@@ -20,6 +20,7 @@ import {
   type TemplateIndicatorMapping,
   type TemplateVersion,
 } from "../../api/templates.api";
+import { Loader } from "../../components/common/loader";
 
 type PublishedTemplateVersion = {
   template: TemplateDefinition;
@@ -429,46 +430,65 @@ export function TemplateMappingsPage() {
 
   return (
     <section className="template-mapping-page">
-      <div className="page-heading-row compact-heading">
-        <div>
+      <header className="template-mapping-header">
+        <div className="template-mapping-title-block">
           <span className="eyebrow">Template Governance</span>
           <h2>Template Indicator Mapping</h2>
           <p>Map published template versions to indicators. Draft structure remains locked; mapping is version metadata.</p>
         </div>
-        <div className="toolbar-actions">
-          <div className="template-mapping-stat-card">
-            <span>Published</span>
-            <strong>{templateMappingSummary.total}</strong>
+
+        <div className="template-mapping-header-right">
+          <div className="template-mapping-summary-grid" aria-label="Template mapping summary">
+            <article className="template-mapping-stat-card">
+              <span>Published Templates</span>
+              <strong>{templateMappingSummary.total}</strong>
+            </article>
+            <article className="template-mapping-stat-card mapped">
+              <span>Mapped Templates</span>
+              <strong>{templateMappingSummary.mapped}</strong>
+            </article>
+            <article className="template-mapping-stat-card pending">
+              <span>Pending Templates</span>
+              <strong>{templateMappingSummary.pending}</strong>
+            </article>
           </div>
-          <div className="template-mapping-stat-card mapped">
-            <span>Mapped</span>
-            <strong>{templateMappingSummary.mapped}</strong>
+
+          <div className="toolbar-actions template-mapping-actions">
+            <button className="secondary-button compact" type="button" onClick={() => void loadPage()}>
+              <RefreshCw size={13} /> Refresh
+            </button>
+            <button className="secondary-button compact" type="button" disabled={!selected} onClick={openTemplateStudioInNewTab}>
+              <Eye size={13} /> View Template
+            </button>
+            <button className="primary-button compact" type="button" disabled={!selected || isSaving} onClick={() => void saveMapping()}>
+              <Save size={13} /> {isSaving ? "Saving..." : "Save Mapping"}
+            </button>
           </div>
-          <div className="template-mapping-stat-card pending">
-            <span>Pending</span>
-            <strong>{templateMappingSummary.pending}</strong>
-          </div>
-          <button className="secondary-button compact" type="button" onClick={() => void loadPage()}>
-            <RefreshCw size={13} /> Refresh
-          </button>
-          <button className="secondary-button compact" type="button" disabled={!selected} onClick={openTemplateStudioInNewTab}>
-            <Eye size={13} /> View Template
-          </button>
-          <button className="primary-button compact" type="button" disabled={!selected || isSaving} onClick={() => void saveMapping()}>
-            <Save size={13} /> {isSaving ? "Saving..." : "Save Mapping"}
-          </button>
         </div>
-      </div>
+      </header>
 
       {notice && <div className="toast-notice success">{notice}</div>}
       {error && <div className="toast-notice error">{error}</div>}
 
       <div className="template-mapping-shell">
-        <aside className="template-mapping-template-list">
+        <aside className="template-mapping-template-list" aria-label="Published templates">
           <div className="template-mapping-panel-header">
-            <span>Published Templates</span>
+            <div>
+              <span>Published Templates</span>
+              <small>Select a version to map</small>
+            </div>
             <strong>{published.length}</strong>
           </div>
+
+          <label className="search-box template-mapping-template-search">
+            <Search size={14} />
+            <input
+              value={templateSearch}
+              onChange={(event) => setTemplateSearch(event.target.value)}
+              placeholder="Search template or version"
+            />
+          </label>
+
           <div className="template-mapping-status-filter" role="group" aria-label="Filter template mapping status">
             {(["ALL", "MAPPED", "UNMAPPED"] as TemplateMappingFilter[]).map((filter) => (
               <button
@@ -481,94 +501,122 @@ export function TemplateMappingsPage() {
               </button>
             ))}
           </div>
-          <label className="search-box template-mapping-template-search">
-            <Search size={14} />
-            <input
-              value={templateSearch}
-              onChange={(event) => setTemplateSearch(event.target.value)}
-              placeholder="Search template or version"
-            />
-          </label>
+
           {isLoading ? (
-            <div className="inline-loader"><span className="loader-ring" /> Loading published templates...</div>
+            <div className="template-mapping-loader"><Loader label="Loading published templates..." /></div>
           ) : filteredPublished.length === 0 ? (
-            <div className="detail-empty">No published template versions are available for mapping.</div>
+            <div className="template-mapping-empty-state">
+              <FileSpreadsheet size={22} />
+              <strong>No templates found</strong>
+              <span>Publish a template version before mapping indicators, or adjust the current filters.</span>
+            </div>
           ) : (
             <div className="template-mapping-template-scroll">
-            {filteredPublished.map((item) => {
-              const versionCode = textValue(item.version.version_code);
-              const mappedCount = mappingCountForVersion(versionCode);
-              return (
-                <button
-                  className={versionCode === selected?.version.version_code ? "template-mapping-template-card active" : "template-mapping-template-card"}
-                  key={versionCode}
-                  type="button"
-                  onClick={() => setSelectedVersionCode(versionCode)}
-                >
-                  <FileSpreadsheet size={15} />
-                  <span>
-                    <strong>{templateName(item.template)}</strong>
-                    <small>{versionTitle(item.version)}</small>
-                    <em>{versionCode}</em>
+              {filteredPublished.map((item) => {
+                const versionCode = textValue(item.version.version_code);
+                const mappedCount = mappingCountForVersion(versionCode);
+                return (
+                  <button
+                    className={versionCode === selected?.version.version_code ? "template-mapping-template-card active" : "template-mapping-template-card"}
+                    key={versionCode}
+                    type="button"
+                    onClick={() => setSelectedVersionCode(versionCode)}
+                  >
+                    <span className="template-card-icon"><FileSpreadsheet size={16} /></span>
+                    <span className="template-card-copy">
+                      <strong title={templateName(item.template)}>{templateName(item.template)}</strong>
+                      <small>{versionTitle(item.version)}</small>
+                      <em>{versionCode}</em>
+                    </span>
                     <b className={mappedCount > 0 ? "mapping-status mapped" : "mapping-status unmapped"}>
-                      {mappedCount > 0 ? `${mappedCount} mapped` : "0 unmapped"}
+                      {mappedCount > 0 ? `${mappedCount} mapped` : "Unmapped"}
                     </b>
-                  </span>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
             </div>
           )}
         </aside>
 
         <main className="template-mapping-workspace">
-          <div className="template-mapping-selected-bar">
+          <section className="template-mapping-selected-bar">
             <div>
               <span className="eyebrow">Selected Template</span>
               <h3>{templateName(selected?.template)}</h3>
               <p>{versionTitle(selected?.version)} | {textValue(selected?.version.version_code)}</p>
             </div>
-            <span className="status-pill published">Published</span>
-          </div>
+            <div className="template-mapping-selected-meta">
+              <span className="status-pill published">Published</span>
+              <span>{mappingCountForVersion(textValue(selected?.version.version_code))} mapped</span>
+            </div>
+          </section>
 
-          <div className="template-mapping-browser">
-            <aside className="template-mapping-goals">
-              <span className="eyebrow">Browse By Goal</span>
-              {isLoading ? (
-                <div className="template-mapping-loading"><span className="loader-ring" /> Loading framework goals...</div>
-              ) : indicatorGroups.length === 0 ? (
-                <div className="detail-empty">No framework indicator hierarchy is available for this unit.</div>
-              ) : indicatorGroups.map((group) => (
-                <button
-                  className={activeGoal === group.goal.node_code ? "active" : ""}
-                  key={group.goal.node_code}
-                  style={{ "--goal-color": nodeColor(group.goal) } as CSSProperties & Record<"--goal-color", string>}
-                  type="button"
-                  title={`${textValue(group.goal.node_number)} ${textValue(group.goal.name)}`}
-                  onClick={() => setActiveGoal(group.goal.node_code)}
-                >
-                  <em aria-hidden="true" />
-                  <strong>{textValue(group.goal.node_number)} {textValue(group.goal.name)}</strong>
-                  <span>{group.indicatorCount}</span>
-                </button>
-              ))}
-            </aside>
+          <section className="template-mapping-goal-section" aria-label="Framework goals">
+            <div className="template-mapping-section-heading">
+              <div>
+                <span className="eyebrow">Browse By Goal</span>
+                <strong>Framework Goals</strong>
+              </div>
+              <em>{indicatorGroups.length} goals</em>
+            </div>
+            {isLoading ? (
+              <div className="template-mapping-loader"><Loader label="Loading framework goals..." /></div>
+            ) : indicatorGroups.length === 0 ? (
+              <div className="template-mapping-empty-state">
+                <Search size={22} />
+                <strong>No goals available</strong>
+                <span>No framework indicator hierarchy is available for this unit.</span>
+              </div>
+            ) : (
+              <div className="template-mapping-goals">
+                {indicatorGroups.map((group) => (
+                  <button
+                    className={activeGoal === group.goal.node_code ? "active" : ""}
+                    key={group.goal.node_code}
+                    style={{ "--goal-color": nodeColor(group.goal) } as CSSProperties & Record<"--goal-color", string>}
+                    type="button"
+                    title={`${textValue(group.goal.node_number)} ${textValue(group.goal.name)}`}
+                    onClick={() => setActiveGoal(group.goal.node_code)}
+                  >
+                    <em aria-hidden="true" />
+                    <span>
+                      <strong>{textValue(group.goal.node_number)}</strong>
+                      <small>{textValue(group.goal.name)}</small>
+                    </span>
+                    <b>{group.indicatorCount}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
 
-            <section className="template-mapping-indicators">
-              <div className="template-mapping-indicator-list">
-                {isDraftLoading || isIndicatorLoading ? (
-                  <div className="inline-loader"><span className="loader-ring" /> Loading indicator list...</div>
-                ) : activeRows.length === 0 ? (
-                  <div className="detail-empty">No indicators match this filter.</div>
-                ) : (
-                  activeTargetGroups.flatMap((group) =>
-                    group.targets.map((target) => (
-                      <article className="template-mapping-target-group" key={`${group.goal.node_code}-${target.target.node_code}`}>
-                        <header>
-                          <span>{textValue(target.target.node_number)}</span>
-                          <strong>{textValue(target.target.name)}</strong>
-                          <em>{target.indicators.length || nodeIndicatorCount(target.target)}</em>
-                        </header>
+          <section className="template-mapping-indicators" aria-label="Framework targets and indicators">
+            <div className="template-mapping-section-heading">
+              <div>
+                <span className="eyebrow">Targets & Indicators</span>
+                <strong>{textValue(activeGroup?.goal.name)}</strong>
+              </div>
+              <em>{activeRows.length} indicators</em>
+            </div>
+            <div className="template-mapping-indicator-list">
+              {isDraftLoading || isIndicatorLoading ? (
+                <div className="template-mapping-loader"><Loader label="Loading indicator list..." /></div>
+              ) : activeRows.length === 0 ? (
+                <div className="template-mapping-empty-state spacious">
+                  <Search size={24} />
+                  <strong>No indicators available</strong>
+                  <span>Select another goal or refresh framework mappings.</span>
+                </div>
+              ) : (
+                activeTargetGroups.flatMap((group) =>
+                  group.targets.map((target) => (
+                    <details className="template-mapping-target-group" key={`${group.goal.node_code}-${target.target.node_code}`} open>
+                      <summary>
+                        <span>{textValue(target.target.node_number)}</span>
+                        <strong>{textValue(target.target.name)}</strong>
+                        <em>{target.indicators.length || nodeIndicatorCount(target.target)}</em>
+                      </summary>
+                      <div className="template-mapping-target-body">
                         {target.indicators.length === 0 ? (
                           <div className="template-mapping-empty-target">No indicators mapped to this target.</div>
                         ) : (
@@ -585,33 +633,51 @@ export function TemplateMappingsPage() {
                             );
                           })
                         )}
-                      </article>
-                    )),
-                  )
-                )}
-              </div>
-            </section>
+                      </div>
+                    </details>
+                  )),
+                )
+              )}
+            </div>
+          </section>
+        </main>
 
-            <aside className="template-mapping-selected">
-              <div className="template-mapping-panel-header">
-                <span>Selected</span>
-                <strong>{selectedIndicators.length}</strong>
+        <aside className="template-mapping-selected" aria-label="Selected indicators">
+          <div className="template-mapping-selected-sticky">
+            <div className="template-mapping-panel-header">
+              <div>
+                <span>Selected Indicators</span>
+                <small>Included in this mapping</small>
               </div>
-              {selectedIndicators.length === 0 ? (
-                <div className="detail-empty">Select one or more indicators for this published template.</div>
-              ) : (
-                selectedIndicators.map((indicator) => (
+              <strong>{selectedIndicators.length}</strong>
+            </div>
+            {selectedIndicators.length === 0 ? (
+              <div className="template-mapping-empty-state compact">
+                <Save size={21} />
+                <strong>No indicators selected</strong>
+                <span>Choose indicators from the workspace, then save mapping.</span>
+              </div>
+            ) : (
+              <div className="template-mapping-selected-scroll">
+                {selectedIndicators.map((indicator) => (
                   <article className="template-mapping-selected-card" key={indicator.national_indicator_code}>
-                    <span title={indicatorLabel(indicator)}>{textValue(indicator.indicator_number ?? indicator.national_indicator_code)}</span>
-                    <button type="button" onClick={() => setSelectedIndicators((current) => current.filter((item) => item.national_indicator_code !== indicator.national_indicator_code))}>
+                    <div>
+                      <strong title={indicatorLabel(indicator)}>{textValue(indicator.indicator_number ?? indicator.national_indicator_code)}</strong>
+                      <em>{textValue(indicator.name)}</em>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${indicatorLabel(indicator)}`}
+                      onClick={() => setSelectedIndicators((current) => current.filter((item) => item.national_indicator_code !== indicator.national_indicator_code))}
+                    >
                       <X size={13} />
                     </button>
                   </article>
-                ))
-              )}
-            </aside>
+                ))}
+              </div>
+            )}
           </div>
-        </main>
+        </aside>
       </div>
     </section>
   );
