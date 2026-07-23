@@ -12836,3 +12836,64 @@ button.framework-node-indicator-card:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Modern data-field create/edit drawer */
+.data-field-measure-form {
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+.data-field-measure-form .data-field-form-intro {
+  display: flex; flex-direction: column; gap: 3px;
+  border: 1px solid #cfe0f5; border-left: 4px solid #2563eb; border-radius: 10px;
+  background: #f4f8ff; color: #365a7c; padding: 10px 12px; font-size: 10px; line-height: 1.45;
+}
+.data-field-measure-form .data-field-form-intro strong {
+  color: #174f8f; font-size: 10px; letter-spacing: .055em; text-transform: uppercase;
+}
+.data-field-drawer .data-field-measure-form > label,
+.data-field-drawer .data-field-measure-form > .form-grid,
+.data-field-drawer .data-field-measure-form .checkbox-card { margin: 0; }
+.data-field-measure-form > label,
+.data-field-measure-form .form-grid label {
+  display: flex; flex-direction: column; gap: 6px; color: #284764; font-size: 10px; font-weight: 700;
+}
+.data-field-measure-form input,
+.data-field-measure-form select,
+.data-field-measure-form textarea {
+  width: 100%; border: 1px solid #cbdbea; border-radius: 9px; background: #fff;
+  color: #102f53; outline: none; font-size: 11px; transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.data-field-measure-form input,
+.data-field-measure-form select { height: 38px; padding: 0 11px; }
+.data-field-measure-form textarea { min-height: 82px; padding: 10px 11px; resize: vertical; }
+.data-field-measure-form input:focus,
+.data-field-measure-form select:focus,
+.data-field-measure-form textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.11); }
+.data-field-measure-form .form-grid.two { gap: 12px; }
+.data-field-measure-form .checkbox-card {
+  display: grid; min-height: 54px; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 12px;
+  border: 1px solid #d5e2ef; border-radius: 11px; background: #fff; color: #183b62; padding: 10px 12px; cursor: pointer;
+}
+.data-field-measure-form .checkbox-card:has(input:checked) { border-color: #a7c7ed; background: #f3f8ff; }
+.data-field-measure-form .checkbox-card input[type="checkbox"] {
+  appearance: none; position: relative; width: 38px; height: 22px; border: 0; border-radius: 999px;
+  background: #cbd5e1; padding: 0; cursor: pointer;
+}
+.data-field-measure-form .checkbox-card input[type="checkbox"]::after {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(15,23,42,.3); content: ""; transition: transform 160ms ease;
+}
+.data-field-measure-form .checkbox-card input[type="checkbox"]:checked { background: #2563eb; }
+.data-field-measure-form .checkbox-card input[type="checkbox"]:checked::after { transform: translateX(16px); }
+.data-field-drawer .data-field-measure-form .drawer-footer {
+  position: static;
+  bottom: auto;
+  z-index: auto;
+  flex: none;
+  margin: 4px -18px 0;
+  border-top: 1px solid #dce6f1;
+  background: #ffffff;
+  box-shadow: none;
+  padding: 12px 18px;
+}
+@media (max-width: 560px) { .data-field-measure-form .form-grid.two { grid-template-columns: 1fr; } }
