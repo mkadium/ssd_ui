@@ -1,6 +1,7 @@
 import { Edit3, FileSpreadsheet, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Loader } from "../../components/common/loader";
 import {
   createTemplate,
   createTemplateVersion,
@@ -22,6 +23,7 @@ import { getSelectedLocale, getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHAN
 const emptyTemplateForm = {
   template_code: "",
   name: "",
+  owning_unit_code: "",
   description: "",
   template_type: "DATA_ENTRY",
   status: "DRAFT",
@@ -63,6 +65,31 @@ function isPublishedStatus(value: unknown) {
   return ["PUBLISHED", "ACTIVE"].includes(normalizedStatus(value));
 }
 
+type TemplateFormErrors = Partial<Record<"template_code" | "name" | "owning_unit_code" | "description", string>>;
+
+function validateTemplateForm(form: typeof emptyTemplateForm): TemplateFormErrors {
+  const errors: TemplateFormErrors = {};
+  if (!form.template_code.trim()) {
+    errors.template_code = "Template code is required.";
+  }
+  if (!form.name.trim()) {
+    errors.name = "Template name is required.";
+  }
+  if (!form.owning_unit_code.trim()) {
+    errors.owning_unit_code = "Owning unit is required.";
+  }
+  return errors;
+}
+
+function templateApiErrors(error: unknown): TemplateFormErrors {
+  const message = error instanceof Error ? error.message : "";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("template_code") || normalized.includes("template code") || normalized.includes("duplicate") || normalized.includes("already")) {
+    return { template_code: message || "Template code could not be used." };
+  }
+  return {};
+}
+
 function formatDate(value: unknown) {
   if (!value) return "-";
   const date = new Date(String(value));
@@ -82,6 +109,7 @@ export function TemplateLibraryPage() {
   const [editingTemplateCode, setEditingTemplateCode] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
+  const [templateFieldErrors, setTemplateFieldErrors] = useState<TemplateFormErrors>({});
   const [versionForm, setVersionForm] = useState(emptyVersionForm);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -105,6 +133,9 @@ export function TemplateLibraryPage() {
   const selectedTemplateDisplayStatus = isPublishedStatus(currentSelectedVersion?.status)
     ? "PUBLISHED"
     : textValue(selectedTemplate?.status);
+  const templateValidationErrors = useMemo(() => validateTemplateForm(templateForm), [templateForm]);
+  const displayedTemplateErrors = templateFieldErrors;
+  const isTemplateFormValid = Object.keys(templateValidationErrors).length === 0;
 
   function templateDisplayStatus(template: TemplateDefinition) {
     return String(template.current_version_status ?? template.version_status ?? template.status ?? "DRAFT").toUpperCase();
@@ -149,11 +180,9 @@ export function TemplateLibraryPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTemplate?.template_code) {
-      setVersions([]);
-      return;
+    if (detailOpen && selectedTemplate?.template_code) {
+      void loadVersions(selectedTemplate.template_code);
     }
-    if (detailOpen) void loadVersions(selectedTemplate.template_code);
   }, [detailOpen, selectedTemplate?.template_code]);
 
   useEffect(() => {
@@ -169,7 +198,14 @@ export function TemplateLibraryPage() {
       const response = await listTemplates();
       const rows = response.data ?? [];
       setTemplates(rows);
-      setSelectedTemplateCode((current) => current || rows[0]?.template_code || "");
+      if (rows.length === 0) {
+        setSelectedTemplateCode("");
+        setVersions([]);
+      } else {
+        setSelectedTemplateCode((current) =>
+          rows.some((template) => template.template_code === current) ? current : rows[0]?.template_code || "",
+        );
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Template library could not be loaded.");
     } finally {
@@ -205,7 +241,8 @@ export function TemplateLibraryPage() {
   }
 
   function openTemplateDrawer() {
-    setTemplateForm(emptyTemplateForm);
+    setTemplateForm({ ...emptyTemplateForm, owning_unit_code: getSelectedUnitCode() });
+    setTemplateFieldErrors({});
     setEditingTemplateCode("");
     setDrawer("template");
   }
@@ -215,11 +252,13 @@ export function TemplateLibraryPage() {
     setTemplateForm({
       template_code: template.template_code ?? "",
       name: templateName(template) === "-" ? "" : templateName(template),
+      owning_unit_code: template.owning_unit_code ?? getSelectedUnitCode(),
       description: template.description ?? "",
       template_type: template.template_type ?? "DATA_ENTRY",
       status: template.status ?? "DRAFT",
       current_version_code: template.current_version_code ?? template.version_code ?? "",
     });
+    setTemplateFieldErrors({});
     setEditingTemplateCode(template.template_code ?? "");
     setDrawer("template");
     if (template.template_code) void loadVersions(template.template_code, true);
@@ -289,23 +328,32 @@ export function TemplateLibraryPage() {
 
   async function saveTemplate(event: FormEvent) {
     event.preventDefault();
+    if (isSaving) return;
+
+    const validationErrors = validateTemplateForm(templateForm);
+    if (Object.keys(validationErrors).length > 0) {
+      setTemplateFieldErrors(validationErrors);
+      setError("Please fix the highlighted template fields.");
+      return;
+    }
+
     setIsSaving(true);
     setError("");
+    setTemplateFieldErrors({});
     try {
-      const templateCode = compactCode(templateForm.template_code || templateForm.name);
+      const templateCode = templateForm.template_code.trim();
+      const description = templateForm.description.trim();
       const payload = {
         template_code: templateCode,
         name: templateForm.name.trim(),
-        owning_unit_code: getSelectedUnitCode(),
-        template_type: templateForm.template_type,
-        status: editingTemplateCode ? selectedTemplate?.status ?? templateForm.status : templateForm.status,
-        default_locale_code: getSelectedLocale(),
+        owning_unit_code: templateForm.owning_unit_code.trim().toUpperCase(),
+        template_type: "DATA_ENTRY",
+        status: templateForm.status,
+        default_locale_code: getSelectedLocale() || "en-IN",
         is_active: true,
-        description: templateForm.description.trim() || undefined,
+        description: description || null,
       };
-      const response = editingTemplateCode
-        ? await updateTemplate(editingTemplateCode, payload)
-        : await createTemplate(payload);
+      await (editingTemplateCode ? updateTemplate(editingTemplateCode, payload) : createTemplate(payload));
       if (editingTemplateCode && templateForm.current_version_code) {
         const rows = versions.length > 0 ? versions : await loadVersions(editingTemplateCode, true);
         const currentVersion = rows.find((version) => version.version_code === templateForm.current_version_code);
@@ -332,13 +380,21 @@ export function TemplateLibraryPage() {
           });
         }
       }
-      setNotice(editingTemplateCode ? "Template definition updated." : "Template definition saved.");
+      setNotice(editingTemplateCode ? "Template definition updated." : "Template created successfully.");
       setDrawer(null);
       setEditingTemplateCode("");
+      setTemplateForm(emptyTemplateForm);
+      if (!editingTemplateCode) {
+        setQuery("");
+        setStatusFilter("ALL");
+      }
       await loadTemplates();
-      setSelectedTemplateCode(response.data.template_code ?? templateCode);
-      setDetailOpen(true);
+      if (!editingTemplateCode) {
+        setDetailOpen(false);
+      }
     } catch (saveError) {
+      const fieldErrors = templateApiErrors(saveError);
+      setTemplateFieldErrors(fieldErrors);
       setError(saveError instanceof Error ? saveError.message : "Template could not be saved.");
     } finally {
       setIsSaving(false);
@@ -439,7 +495,7 @@ export function TemplateLibraryPage() {
           <p>Manage governed template definitions, versions, mappings, and publish readiness.</p>
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-button compact" type="button" onClick={() => void loadTemplates()}>
+          <button className="secondary-button compact" type="button" onClick={() => void loadTemplates()} disabled={isLoading}>
             <RefreshCw size={13} /> Refresh
           </button>
           <button className="primary-button compact" type="button" onClick={openTemplateDrawer}>
@@ -488,7 +544,7 @@ export function TemplateLibraryPage() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7}>Loading templates...</td></tr>
+                  <tr className="loader-table-row"><td colSpan={7}><Loader label="Loading templates..." /></td></tr>
                 ) : filteredTemplates.length === 0 ? (
                   <tr><td colSpan={7}>No templates match the selected filters.</td></tr>
                 ) : (
@@ -591,7 +647,7 @@ export function TemplateLibraryPage() {
             </div>
             <div className="template-version-list">
               {isVersionLoading ? (
-                <p>Loading versions...</p>
+                <Loader label="Loading template versions..." />
               ) : versions.length === 0 ? (
                 <p>No versions yet. Create a draft version before opening Studio.</p>
               ) : (
@@ -639,20 +695,60 @@ export function TemplateLibraryPage() {
 
       {drawer === "template" && (
         <div className="drawer-backdrop">
-          <form className="side-drawer template-drawer template-form-drawer" onSubmit={saveTemplate}>
+          <form className="side-drawer template-drawer template-form-drawer" onSubmit={saveTemplate} aria-busy={isSaving} noValidate>
             <div className="drawer-header">
               <span>{editingTemplateCode ? "Edit" : "Create"}</span>
               <h3>Template</h3>
-              <button type="button" onClick={() => { setDrawer(null); setEditingTemplateCode(""); }}>x</button>
+              <button type="button" disabled={isSaving} onClick={() => { setDrawer(null); setEditingTemplateCode(""); setTemplateFieldErrors({}); }}>x</button>
             </div>
-            <label>Template name *<input required value={templateForm.name} onChange={(event) => setTemplateForm((form) => ({ ...form, name: event.target.value, template_code: form.template_code || compactCode(event.target.value) }))} /></label>
-            <label>Template code *<input required value={templateForm.template_code} onChange={(event) => setTemplateForm((form) => ({ ...form, template_code: compactCode(event.target.value) }))} /></label>
-            <label>Template type<select value={templateForm.template_type} onChange={(event) => setTemplateForm((form) => ({ ...form, template_type: event.target.value }))}><option value="DATA_ENTRY">Data Entry</option><option value="REPORT">Report</option></select></label>
-            <label>Status<input value={editingTemplateCode ? "System controlled by current version" : templateForm.status} readOnly /></label>
+            {isSaving && <div className="template-form-loader"><Loader label={editingTemplateCode ? "Updating template..." : "Creating template..."} /></div>}
+            <label>
+              Template name *
+              <input
+                disabled={isSaving}
+                aria-invalid={Boolean(displayedTemplateErrors.name)}
+                value={templateForm.name}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setTemplateFieldErrors((errors) => ({ ...errors, name: undefined }));
+                  setTemplateForm((form) => ({ ...form, name, template_code: form.template_code || compactCode(name) }));
+                }}
+              />
+              {displayedTemplateErrors.name && <em className="field-error">{displayedTemplateErrors.name}</em>}
+            </label>
+            <label>
+              Template code *
+              <input
+                disabled={isSaving || Boolean(editingTemplateCode)}
+                aria-invalid={Boolean(displayedTemplateErrors.template_code)}
+                value={templateForm.template_code}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({ ...errors, template_code: undefined }));
+                  setTemplateForm((form) => ({ ...form, template_code: compactCode(event.target.value) }));
+                }}
+              />
+              {displayedTemplateErrors.template_code && <em className="field-error">{displayedTemplateErrors.template_code}</em>}
+            </label>
+            <label>
+              Owning unit *
+              <input
+                disabled={isSaving}
+                aria-invalid={Boolean(displayedTemplateErrors.owning_unit_code)}
+                value={templateForm.owning_unit_code}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({ ...errors, owning_unit_code: undefined }));
+                  setTemplateForm((form) => ({ ...form, owning_unit_code: event.target.value.toUpperCase() }));
+                }}
+              />
+              {displayedTemplateErrors.owning_unit_code && <em className="field-error">{displayedTemplateErrors.owning_unit_code}</em>}
+            </label>
+            <label>Template type<select disabled={isSaving} value="DATA_ENTRY" onChange={() => undefined}><option value="DATA_ENTRY">Data Entry</option></select></label>
+            <label>Status<select disabled={isSaving} value={templateForm.status} onChange={(event) => setTemplateForm((form) => ({ ...form, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option></select></label>
             {editingTemplateCode && (
               <label>
                 Current version
                 <select
+                  disabled={isSaving}
                   value={templateForm.current_version_code}
                   onChange={(event) => setTemplateForm((form) => ({ ...form, current_version_code: event.target.value }))}
                 >
@@ -665,8 +761,19 @@ export function TemplateLibraryPage() {
                 </select>
               </label>
             )}
-            <label>Description<textarea value={templateForm.description} onChange={(event) => setTemplateForm((form) => ({ ...form, description: event.target.value }))} /></label>
-            <div className="drawer-footer"><button className="ghost-button" type="button" onClick={() => { setDrawer(null); setEditingTemplateCode(""); }}>Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{editingTemplateCode ? "Update" : "Save"}</button></div>
+            <label>
+              Description
+              <textarea
+                disabled={isSaving}
+                value={templateForm.description}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({ ...errors, description: undefined }));
+                  setTemplateForm((form) => ({ ...form, description: event.target.value }));
+                }}
+              />
+              {displayedTemplateErrors.description && <em className="field-error">{displayedTemplateErrors.description}</em>}
+            </label>
+            <div className="drawer-footer"><button className="ghost-button" type="button" disabled={isSaving} onClick={() => { setDrawer(null); setEditingTemplateCode(""); setTemplateFieldErrors({}); }}>Cancel</button><button className="primary-button" disabled={isSaving || !isTemplateFormValid} type="submit">{isSaving ? (editingTemplateCode ? "Updating..." : "Creating...") : editingTemplateCode ? "Update" : "Create"}</button></div>
           </form>
         </div>
       )}
