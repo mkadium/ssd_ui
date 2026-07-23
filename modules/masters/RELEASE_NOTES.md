@@ -8,6 +8,14 @@
 
 ## v0.1.1
 
+- Fixed Indicator hierarchy dropdown clipping by removing section-level overflow and keeping scrolling on the parent drawer form.
+
+- Fixed Indicator drawer hierarchy dropdowns by giving Goal/Target selectors the full drawer width for long labels.
+
+- Modernized national and global indicator create/edit drawers with refined editor surfaces, structured global-reference sections, modern active controls, and contextual footer actions.
+
+- Applied the shared accessible loader to the Indicator Library and Global Indicators pages.
+
 - Modernized shared Masters create/edit drawers with structured details and behavior sections, responsive fields, switch controls, governance guidance, and contextual footer actions.
 
 - Fixed reference-page route transitions flashing an incorrect empty state before Locales, Periodicities, UOM, Units, or Officers data loaded.

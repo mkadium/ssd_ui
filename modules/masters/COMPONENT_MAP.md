@@ -15,3 +15,5 @@
 | `frontend/src/pages/framework/framework-level-page.tsx` | Dynamic GOAL/TARGET and other hierarchy-level browsing with shared loading feedback | IMPLEMENTED |
 | `frontend/src/components/common/loader.tsx` | Shared accessible loading indicator used by Framework overview and dynamic level pages | IMPLEMENTED |
 | `frontend/src/pages/masters/masters-reference-page.tsx` | Shared Locales, Periodicities, UOM, Units, and Officers reference pages with accessible loading feedback | IMPLEMENTED |
+| `frontend/src/pages/indicators/indicator-library-page.tsx` | National Indicator Library with shared loading feedback and modern create/edit drawer | IMPLEMENTED |
+| `frontend/src/pages/indicators/global-indicators-page.tsx` | Global Indicator management with shared loading feedback and structured create/edit drawer | IMPLEMENTED |
