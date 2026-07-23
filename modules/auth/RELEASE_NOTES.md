@@ -19,6 +19,10 @@
 ## v0.1.0
 
 ### New Features
+- Applied the shared accessible loader to the Audit Sessions page.
+- Modernized Review Workflow and Review Level drawers with structured sections, switch-style states, refined fields, and contextual footer actions.
+- Applied the shared accessible loader to the Review Workflow page.
+- Applied the shared accessible loader to the Unit Access page.
 - Modernized the Create/Edit User drawer with grouped form sections, responsive access toggles, refined fields, and clearer footer actions.
 - Applied the shared accessible loader to the User Administration page.
 - Modernized Permission Matrix grant cards, section hierarchy, selection controls, responsive layout, spacing, and typography.

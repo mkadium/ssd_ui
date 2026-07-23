@@ -8,6 +8,14 @@
 
 ## v0.1.1
 
+- Modernized shared Masters create/edit drawers with structured details and behavior sections, responsive fields, switch controls, governance guidance, and contextual footer actions.
+
+- Fixed reference-page route transitions flashing an incorrect empty state before Locales, Periodicities, UOM, Units, or Officers data loaded.
+
+- Applied the shared accessible loader to Locales, Periodicities, UOM, Units, and Officers reference pages.
+
+- Applied the shared accessible loader to the Framework overview and dynamic GOAL/TARGET level pages.
+
 - Added Unit of Measurement (UOM) as a governed Masters reference page under `/masters/uom`.
 - Integrated UOM list/create/update through the shared Masters reference API client.
 - UOM page manages stable `uom_code`, localized name/description, symbol, type, sort order, and active state.

@@ -15,6 +15,7 @@ import {
   type AuthUser,
 } from "../../api/auth-admin.api";
 import { LOCALE_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type ReviewAssignmentRow = {
   username: string;
@@ -200,7 +201,7 @@ export function ReviewWorkflowPage() {
 
       <section className="auth-review-layout">
         <div className="table-wrap user-table-wrap">
-          {isLoading ? <div className="empty-state">Loading review workflows...</div> : (
+          {isLoading ? <Loader label="Loading review workflows..." /> : (
             <table className="data-table">
               <thead>
                 <tr>
@@ -299,49 +300,93 @@ function ReviewWorkflowDrawer({ drawer, isSaving, onClose, onSubmit, units }: {
   const isWorkflowMode = drawer.mode === "workflow-create" || drawer.mode === "workflow-edit";
   return (
     <div className="drawer-backdrop">
-      <aside className="side-drawer">
-        <div className="drawer-header">
+      <aside className="side-drawer review-workflow-drawer">
+        <div className="drawer-header review-workflow-drawer-header">
           <div>
             <span className="eyebrow">{drawer.mode.replace("-", " ")}</span>
             <h3>{isWorkflowMode ? "Review Workflow" : "Review Level"}</h3>
           </div>
           <button className="icon-action" type="button" onClick={onClose} aria-label="Close drawer"><X size={16} /></button>
         </div>
-        <form className="drawer-form" onSubmit={onSubmit}>
+        <form className="drawer-form review-workflow-drawer-form" onSubmit={onSubmit}>
           {isWorkflowMode ? (
-            <>
-              <label className="form-field">Unit scope
-                <select name="unit_code" defaultValue={workflow?.unit_code ?? units[0]?.unit_code ?? ""} required>
-                  {units.map((unit) => <option key={unit.unit_code} value={unit.unit_code}>{unit.unit_name || unit.unit_code}</option>)}
-                </select>
-              </label>
-              <label className="form-field">Workflow code
-                <input name="workflow_code" defaultValue={workflow?.workflow_code ?? "REVIEW_WORKFLOW"} required pattern="[A-Z0-9_\\-]+" />
-              </label>
-              <label className="form-field">Workflow name
-                <input name="workflow_name" defaultValue={workflow?.workflow_name ?? ""} required />
-              </label>
-              <label className="checkbox-card"><input name="is_active" type="checkbox" defaultChecked={workflow?.is_active ?? true} /> Active workflow</label>
-            </>
+            <div className="review-drawer-sections">
+              <section className="review-drawer-section">
+                <div className="review-drawer-section-heading">
+                  <span>01</span>
+                  <div><strong>Workflow details</strong><small>Define the review process and owning unit</small></div>
+                </div>
+                <div className="review-drawer-fields">
+                  <label className="form-field">Unit scope
+                    <select name="unit_code" defaultValue={workflow?.unit_code ?? units[0]?.unit_code ?? ""} required>
+                      {units.map((unit) => <option key={unit.unit_code} value={unit.unit_code}>{unit.unit_name || unit.unit_code}</option>)}
+                    </select>
+                  </label>
+                  <label className="form-field">Workflow code
+                    <input name="workflow_code" defaultValue={workflow?.workflow_code ?? "REVIEW_WORKFLOW"} required pattern="[A-Z0-9_\\-]+" />
+                  </label>
+                  <label className="form-field">Workflow name
+                    <input name="workflow_name" defaultValue={workflow?.workflow_name ?? ""} required />
+                  </label>
+                </div>
+              </section>
+              <section className="review-drawer-section">
+                <div className="review-drawer-section-heading">
+                  <span>02</span>
+                  <div><strong>Availability</strong><small>Control whether this workflow can be assigned</small></div>
+                </div>
+                <div className="review-drawer-toggle-wrap">
+                  <label className="role-toggle-card review-toggle-card">
+                    <input name="is_active" type="checkbox" defaultChecked={workflow?.is_active ?? true} />
+                    <span className="role-toggle-copy"><strong>Active workflow</strong><small>Allow this workflow to receive review assignments.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                </div>
+              </section>
+            </div>
           ) : (
-            <>
-              <div className="form-help">Level belongs to workflow <strong>{workflow?.workflow_code}</strong>.</div>
-              <label className="form-field">Level number
-                <input name="level_number" type="number" min={1} max={50} defaultValue={level?.level_number ?? ((workflow?.levels?.length ?? 0) + 1)} required />
-              </label>
-              <label className="form-field">Level code
-                <input name="level_code" defaultValue={level?.level_code ?? `LEVEL_${(workflow?.levels?.length ?? 0) + 1}`} required pattern="[A-Z0-9_\\-]+" />
-              </label>
-              <label className="form-field">Level name
-                <input name="level_name" defaultValue={level?.level_name ?? ""} required />
-              </label>
-              <label className="checkbox-card"><input name="is_final_level" type="checkbox" defaultChecked={level?.is_final_level ?? false} /> Final approval level</label>
-              <label className="checkbox-card"><input name="is_active" type="checkbox" defaultChecked={level?.is_active ?? true} /> Active level</label>
-            </>
+            <div className="review-drawer-sections">
+              <div className="review-drawer-context">Level belongs to <strong>{workflow?.workflow_code}</strong></div>
+              <section className="review-drawer-section">
+                <div className="review-drawer-section-heading">
+                  <span>01</span>
+                  <div><strong>Level details</strong><small>Configure sequence, code, and display name</small></div>
+                </div>
+                <div className="review-drawer-fields">
+                  <label className="form-field">Level number
+                    <input name="level_number" type="number" min={1} max={50} defaultValue={level?.level_number ?? ((workflow?.levels?.length ?? 0) + 1)} required />
+                  </label>
+                  <label className="form-field">Level code
+                    <input name="level_code" defaultValue={level?.level_code ?? `LEVEL_${(workflow?.levels?.length ?? 0) + 1}`} required pattern="[A-Z0-9_\\-]+" />
+                  </label>
+                  <label className="form-field">Level name
+                    <input name="level_name" defaultValue={level?.level_name ?? ""} required />
+                  </label>
+                </div>
+              </section>
+              <section className="review-drawer-section">
+                <div className="review-drawer-section-heading">
+                  <span>02</span>
+                  <div><strong>Level behavior</strong><small>Set approval responsibility and availability</small></div>
+                </div>
+                <div className="review-drawer-toggle-grid">
+                  <label className="role-toggle-card review-toggle-card">
+                    <input name="is_final_level" type="checkbox" defaultChecked={level?.is_final_level ?? false} />
+                    <span className="role-toggle-copy"><strong>Final approval</strong><small>Completes the review workflow.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                  <label className="role-toggle-card review-toggle-card">
+                    <input name="is_active" type="checkbox" defaultChecked={level?.is_active ?? true} />
+                    <span className="role-toggle-copy"><strong>Active level</strong><small>Allow reviewers to use this level.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                </div>
+              </section>
+            </div>
           )}
-          <div className="drawer-footer">
+          <div className="drawer-footer review-workflow-drawer-footer">
             <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-            <button className="primary-button" disabled={isSaving} type="submit">Save</button>
+            <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving..." : drawer.mode.includes("create") ? isWorkflowMode ? "Create workflow" : "Create level" : "Save changes"}</button>
           </div>
         </form>
       </aside>

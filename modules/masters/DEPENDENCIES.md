@@ -6,6 +6,7 @@
 | Auth UI/session | Bearer auth and permission-aware shell | PENDING_UI_IMPLEMENTATION |
 | React/Vite/TypeScript/Tailwind | UI stack | APPROVED |
 | TanStack Query | Server state | APPROVED |
+| `frontend/src/components/common/loader.tsx` | Shared accessible loading feedback | IMPLEMENTED |
 
 ## Risks
 - Mutation CRUD is not available yet.

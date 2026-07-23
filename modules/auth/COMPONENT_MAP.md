@@ -18,4 +18,4 @@ Authentication UI
 | `src/data/auth.sample.ts` | Sample Auth API-shaped login responses for Super Admin and Unit Admin demos | TEMPORARY_UI_REVIEW_ONLY |
 | `src/components/` | Auth form and layout components | STARTED |
 | `src/components/ui/button.tsx` | Existing shared button primitive | STARTED |
-| `frontend/src/components/common/loader.tsx` | Accessible shared loading indicator with configurable status text, used by Access Catalog, Permission Matrix, and User Administration loading states | IMPLEMENTED |
+| `frontend/src/components/common/loader.tsx` | Accessible shared loading indicator with configurable status text, used by Access Catalog, Permission Matrix, User Administration, Unit Access, Review Workflow, and Audit Sessions loading states | IMPLEMENTED |

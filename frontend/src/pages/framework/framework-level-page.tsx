@@ -11,6 +11,7 @@ import {
   type FrameworkNode,
 } from "../../api/framework.api";
 import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type ViewMode = "grid" | "list";
 
@@ -399,7 +400,7 @@ export function FrameworkLevelPage() {
 
       <section className="framework-level-content">
         {isLoading ? (
-          <div className="empty-state">Loading framework level...</div>
+          <Loader label={`Loading ${levelLabel.toLowerCase()}...`} />
         ) : filteredNodes.length === 0 ? (
           <div className="empty-state">No {levelLabel.toLowerCase()} found for the selected filters.</div>
         ) : effectiveViewMode === "grid" ? (
