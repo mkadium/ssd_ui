@@ -10710,6 +10710,460 @@ button.framework-node-indicator-card:hover {
   color: #991b1b;
 }
 
+.dispatch-plans-page {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  padding: 10px 12px 14px;
+}
+
+.dispatch-plan-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.dispatch-plan-header-row h2 {
+  margin: 2px 0 3px;
+  color: #071b3a;
+  font-size: 21px;
+  line-height: 1.1;
+}
+
+.dispatch-plan-header-row p {
+  margin: 0;
+  color: #52647a;
+  font-size: 12px;
+}
+
+.dispatch-plan-actions,
+.dispatch-plan-detail-actions,
+.dispatch-plan-card-actions,
+.dispatch-plan-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dispatch-plan-actions,
+.dispatch-plan-detail-actions {
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.dispatch-plan-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dispatch-plan-kpi-card {
+  display: flex;
+  min-width: 0;
+  min-height: 64px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #cbdff3;
+  border-left: 4px solid #0b5cad;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.dispatch-plan-kpi-card strong {
+  color: #061f43;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.dispatch-plan-kpi-card span {
+  color: #465c75;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.dispatch-plan-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 170px;
+  gap: 8px;
+  border: 1px solid #d7e4f2;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.dispatch-plan-toolbar input,
+.dispatch-plan-toolbar select,
+.dispatch-plan-drawer input,
+.dispatch-plan-drawer select,
+.dispatch-plan-drawer textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbdff3;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #08264b;
+  font-size: 12px;
+  outline: none;
+}
+
+.dispatch-plan-toolbar input,
+.dispatch-plan-toolbar select,
+.dispatch-plan-drawer input,
+.dispatch-plan-drawer select {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.dispatch-plan-drawer textarea {
+  min-height: 76px;
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.dispatch-plan-toolbar input:focus,
+.dispatch-plan-toolbar select:focus,
+.dispatch-plan-drawer input:focus,
+.dispatch-plan-drawer select:focus,
+.dispatch-plan-drawer textarea:focus {
+  border-color: #0b65c2;
+  box-shadow: 0 0 0 3px rgba(11, 101, 194, 0.12);
+}
+
+.dispatch-plan-shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.dispatch-plan-list-panel,
+.dispatch-plan-detail-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid #d2e0ef;
+  border-radius: 9px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.dispatch-plan-panel-title {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid #e4eef8;
+  color: #53657d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 10px 12px;
+  text-transform: uppercase;
+}
+
+.dispatch-plan-list,
+.dispatch-plan-detail-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.dispatch-plan-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid #d6e5f5;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #08264b;
+  cursor: pointer;
+  margin-bottom: 8px;
+  padding: 10px;
+  text-align: left;
+}
+
+.dispatch-plan-card.active {
+  border-color: #72aef0;
+  background: #eff6ff;
+  box-shadow: inset 4px 0 0 #0b65c2;
+}
+
+.dispatch-plan-card strong,
+.dispatch-plan-detail-header h3,
+.dispatch-plan-section h4 {
+  color: #071b3a;
+  line-height: 1.25;
+}
+
+.dispatch-plan-card strong {
+  display: block;
+  font-size: 13px;
+}
+
+.dispatch-plan-card small,
+.dispatch-plan-muted,
+.dispatch-plan-section p {
+  color: #58708a;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.dispatch-plan-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.dispatch-plan-card-actions {
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.dispatch-plan-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8f3ff;
+  color: #0b65c2;
+}
+
+.dispatch-plan-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e4eef8;
+  background: linear-gradient(90deg, #f8fbff, #ffffff);
+  padding: 12px;
+}
+
+.dispatch-plan-detail-header h3 {
+  margin: 3px 0 4px;
+  font-size: 18px;
+}
+
+.dispatch-plan-info-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dispatch-plan-info-grid article,
+.dispatch-plan-section,
+.dispatch-run-card {
+  border: 1px solid #d6e5f5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.dispatch-plan-info-grid article {
+  min-height: 58px;
+  padding: 9px 10px;
+}
+
+.dispatch-plan-info-grid span {
+  display: block;
+  color: #60758e;
+  font-size: 10.8px;
+}
+
+.dispatch-plan-info-grid strong {
+  display: block;
+  margin-top: 5px;
+  color: #071b3a;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-plan-section {
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.dispatch-plan-section-header {
+  justify-content: space-between;
+  border-bottom: 1px solid #e4eef8;
+  background: #f8fbff;
+  padding: 9px 10px;
+}
+
+.dispatch-plan-section h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.dispatch-plan-section-body {
+  padding: 10px;
+}
+
+.dispatch-plan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dispatch-plan-chip,
+.dispatch-plan-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.dispatch-plan-chip {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #0757a5;
+}
+
+.dispatch-plan-pill {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.dispatch-plan-pill.warning {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.dispatch-run-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dispatch-run-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.dispatch-plan-code {
+  display: block;
+  color: #60758e;
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.dispatch-plan-empty {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  color: #60748e;
+  font-size: 12px;
+  text-align: center;
+}
+
+.dispatch-plan-empty.large {
+  min-height: 340px;
+}
+
+.dispatch-plan-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 70;
+  display: flex;
+  width: min(600px, 94vw);
+  height: 100vh;
+  flex-direction: column;
+  border-left: 1px solid #cbdff3;
+  background: #ffffff;
+  box-shadow: -22px 0 48px rgba(15, 23, 42, 0.18);
+}
+
+.dispatch-plan-drawer .drawer-header {
+  flex-shrink: 0;
+}
+
+.dispatch-plan-drawer-form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding: 12px 14px 78px;
+}
+
+.dispatch-plan-drawer-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #17365d;
+  font-size: 11.2px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.dispatch-plan-drawer-form .field-help {
+  font-weight: 500;
+}
+
+.dispatch-plan-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dispatch-plan-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid #d6e5f5;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #08264b;
+  font-size: 11.5px;
+  font-weight: 750;
+  padding: 8px;
+}
+
+.dispatch-plan-toggle input {
+  width: auto;
+  height: auto;
+  margin-top: 2px;
+}
+
+@media (max-width: 1100px) {
+  .dispatch-plan-kpis,
+  .dispatch-plan-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dispatch-plan-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .dispatch-plan-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dispatch-page-header,
 .dispatch-header-actions,
 .dispatch-detail-actions {

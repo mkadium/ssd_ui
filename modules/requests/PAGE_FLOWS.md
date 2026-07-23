@@ -25,3 +25,14 @@
 4. Admin configures schedule, access/OTP, submission methods, submission controls, certification/evidence, attachments, and reminder offsets.
 5. Save updates the policy list/detail without a full-page refresh.
 6. Effective policy preview resolves the active rule set for request creation and dispatch planning.
+
+## Dispatch Plan Flow
+
+1. Admin opens `/requests/dispatch-plans`.
+2. App Shell selected unit provides the working unit scope.
+3. Admin creates a reusable dispatch plan for a published template version and selected indicator mapping.
+4. Admin selects the dispatch policy, reporting-period mode, reporting-period start, end rule, and request/data-entry adjustment permissions.
+5. Admin reviews the measure-provider grouping snapshot and recipient rules that will drive source-specific dispatches.
+6. Admin creates a dispatch run from the selected plan for a specific Request Period.
+7. The run records the generated Reporting Period behavior for that request cycle without changing the published template structure.
+8. Plan/run save updates the page state without full-page refresh.

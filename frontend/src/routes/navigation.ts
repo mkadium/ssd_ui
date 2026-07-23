@@ -121,9 +121,10 @@ export const navigationModules: NavModule[] = [
     basePath: "/requests",
     icon: Send,
     items: [
+      { label: "Dispatch Settings", path: "/requests/dispatch-settings", icon: Settings },
+      { label: "Dispatch Plans", path: "/requests/dispatch-plans", icon: CalendarDays },
       { label: "Collections", path: "/requests/collections", icon: Send },
       { label: "Dispatch Preview", path: "/requests/dispatch-preview", icon: FileText },
-      { label: "Dispatch Settings", path: "/requests/dispatch-settings", icon: Settings },
       { label: "Request Monitor", path: "/requests/monitor", icon: Gauge },
     ],
   },

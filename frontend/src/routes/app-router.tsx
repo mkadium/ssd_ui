@@ -15,6 +15,7 @@ import { FrameworkPage } from "../pages/framework/framework-page";
 import { GlobalIndicatorsPage } from "../pages/indicators/global-indicators-page";
 import { IndicatorLibraryPage } from "../pages/indicators/indicator-library-page";
 import { MastersReferencePage } from "../pages/masters/masters-reference-page";
+import { DispatchPlansPage } from "../pages/requests/dispatch-plans-page";
 import { DispatchSettingsPage } from "../pages/requests/dispatch-settings-page";
 import { PlaceholderPage } from "../pages/system/placeholder-page";
 import { TemplateLibraryPage } from "../pages/templates/template-library-page";
@@ -53,6 +54,8 @@ const childRoutes = flatNavigation
               <TemplateLibraryPage />
             ) : item.path === "/template/mappings" ? (
               <TemplateMappingsPage />
+            ) : item.path === "/requests/dispatch-plans" ? (
+              <DispatchPlansPage />
             ) : item.path === "/requests/dispatch-settings" ? (
               <DispatchSettingsPage />
             ) : item.path === "/authentication/access-catalog" || item.path === "/authentication/permission-matrix" ? (
