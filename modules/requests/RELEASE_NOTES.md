@@ -3,8 +3,15 @@
 | Field | Value |
 |---|---|
 | Module | Requests UI |
-| Status | COLLECTION_REQUEST_SAMPLE_DATA |
-| Last Updated | 2026-05-31 |
+| Status | DISPATCH_SETTINGS_API_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
+| Last Updated | 2026-07-23 |
+
+## v0.2.0
+- Added `/requests/dispatch-settings` for governed request dispatch/submission defaults.
+- Added dispatch policy list, detail, create/edit drawer, effective settings, and activate/deactivate behavior.
+- Covered access rules, OTP settings, schedule defaults, submission methods, submission controls, evidence/certification, attachment rules, and reminder offsets.
+- Styled the page for 1366x768 and 125% browser zoom with compact cards, scroll-contained panels, and no whole-page refresh for policy operations.
+- API smoke passed on 2026-07-23 for dispatch policy list, effective policy, create, update, deactivate, SOURCE override without template context, and fallback to global after deactivation. Browser smoke remains pending.
 
 ## v0.1.0
 - Created UI module context from ready Requests API contract.

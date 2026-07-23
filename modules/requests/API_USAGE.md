@@ -16,8 +16,15 @@ Requests UI
 | `GET /requests/{request_code}/items/{item_code}/template-instance` | Template instance | DONE |
 | `GET /requests/{request_code}/assignments` | Request assignments | DONE |
 | `GET /requests/assignments/{assignment_code}` | Assignment detail | DONE |
+| `GET /requests/dispatch-policies` | Dispatch Settings list and filters | API_DEV_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
+| `GET /requests/dispatch-policies/effective` | Effective policy preview for unit/template/source scope | API_DEV_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
+| `POST /requests/dispatch-policies` | Create/update dispatch settings from drawer form | API_DEV_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
+| `PATCH /requests/dispatch-policies/{policy_code}` | Edit dispatch settings from drawer form | API_DEV_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
+| `PATCH /requests/dispatch-policies/{policy_code}/status` | Activate/deactivate dispatch settings | API_DEV_SMOKE_PASSED_PENDING_BROWSER_SMOKE |
 
 ## Rules
 - Data endpoints require bearer auth.
 - Use `REQUESTS:list` and `REQUESTS:view` behavior from API.
 - GET endpoints have no request body.
+- Dispatch Settings uses stable policy, unit, template, and source codes only.
+- DEV-backed local API smoke passed on 2026-07-23 for dispatch policy list, effective global, create SOURCE, effective SOURCE without template context, update, deactivate, and fallback to global. Browser smoke for `/requests/dispatch-settings` remains pending.

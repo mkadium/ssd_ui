@@ -16,3 +16,12 @@
 6. Items & scope tab shows request items, selected template version, and governed dimension scope members.
 7. Assignments tab shows provider/owner/observer assignment metadata.
 8. Status trail tab connects request, data entry, ingestion, validation, review, and dashboard context without exposing internal IDs or raw tokens.
+
+## Dispatch Settings Flow
+
+1. Admin opens `/requests/dispatch-settings`.
+2. App Shell selected unit provides the working unit scope; policy cards may also be global, template-specific, or source-specific.
+3. Admin creates or edits a policy in the right drawer.
+4. Admin configures schedule, access/OTP, submission methods, submission controls, certification/evidence, attachments, and reminder offsets.
+5. Save updates the policy list/detail without a full-page refresh.
+6. Effective policy preview resolves the active rule set for request creation and dispatch planning.

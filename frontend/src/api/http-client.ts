@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_SSD_API_BASE_URL ?? "http://localhost:8100";
+const RAW_API_BASE_URL = import.meta.env.VITE_SSD_API_BASE_URL;
+const API_BASE_URL = resolveApiBaseUrl(RAW_API_BASE_URL);
 const ACCESS_TOKEN_KEY = "ssd_access_token";
 const REFRESH_TOKEN_KEY = "ssd_refresh_token";
 const CURRENT_USER_KEY = "ssd_current_user";
@@ -91,7 +92,7 @@ function getAuthHeader(): Record<string, string> {
 }
 
 async function requestWithRefresh(path: string, init: RequestInit): Promise<Response> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       ...(init.headers ?? {}),
@@ -110,7 +111,7 @@ async function requestWithRefresh(path: string, init: RequestInit): Promise<Resp
     return response;
   }
 
-  return fetch(`${API_BASE_URL}${path}`, {
+  return fetch(apiUrl(path), {
     ...init,
     headers: {
       ...(init.headers ?? {}),
@@ -125,7 +126,7 @@ async function refreshAccessToken(): Promise<boolean> {
     return false;
   }
 
-  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+  const response = await fetch(apiUrl("/auth/refresh"), {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -152,6 +153,28 @@ function clearStoredAuth(): void {
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
   window.localStorage.removeItem(CURRENT_USER_KEY);
   window.localStorage.removeItem(LAST_ACTIVITY_KEY);
+}
+
+function resolveApiBaseUrl(configuredUrl: string | undefined): string {
+  const trimmedUrl = configuredUrl?.trim();
+  if (trimmedUrl) {
+    if (trimmedUrl.startsWith("/") && window.location.protocol === "file:") {
+      return "http://localhost:8100";
+    }
+    return trimmedUrl.replace(/\/$/, "");
+  }
+
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+      ? "http://localhost:8100"
+      : `${window.location.origin}/api`;
+  }
+
+  return "http://localhost:8100";
+}
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 async function readErrorMessage(response: Response): Promise<string | undefined> {

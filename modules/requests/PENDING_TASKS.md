@@ -7,3 +7,4 @@
 | Add Collection Request Creation sample-data route at `/requests` | UI Team | DONE_SAMPLE_DATA | v0.1.0 |
 | Define request creation/send/reminder mutation API needs for governance/API | UI Team | PENDING | v0.1.0 |
 | Capture accessibility/responsive evidence | UI Team | STARTED | v0.1.0 |
+| Capture `/requests/dispatch-settings` browser smoke against DEV API | UI Team | PENDING | v0.2.0 |

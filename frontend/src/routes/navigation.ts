@@ -123,6 +123,7 @@ export const navigationModules: NavModule[] = [
     items: [
       { label: "Collections", path: "/requests/collections", icon: Send },
       { label: "Dispatch Preview", path: "/requests/dispatch-preview", icon: FileText },
+      { label: "Dispatch Settings", path: "/requests/dispatch-settings", icon: Settings },
       { label: "Request Monitor", path: "/requests/monitor", icon: Gauge },
     ],
   },
