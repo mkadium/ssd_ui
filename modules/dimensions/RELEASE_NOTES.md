@@ -7,6 +7,8 @@
 | Last Updated | 2026-07-18 |
 
 ## v0.3.0
+- Modernized Dimension drawers with refined fields, switch controls, sticky actions, parent-level scrolling, and unclipped dropdown overflow.
+- Applied the shared accessible loader to Dimension Library, Geography, and Time Periods.
 - Added API-backed Time Periods page at `/dimensions/time-periods`.
 - Added frequencies, period list, create/edit/deactivate flow, and reporting sequence management.
 - Reporting sequences support regular and irregular year selections through `TIME_PERIOD` member sets.

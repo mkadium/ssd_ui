@@ -48,6 +48,7 @@ import {
   type DimensionStatCard,
   type DimensionStructureType,
 } from "../../api/dimensions.api";
+import { Loader } from "../../components/common/loader";
 import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
 
 type DetailTab = "overview" | "members" | "relationships" | "sets" | "rollups" | "aliases";
@@ -724,7 +725,9 @@ export function DimensionLibraryPage() {
         )}
 
         <div className="dimension-tab-content">
-          {activeTab === "overview" ? (
+          {isLoading ? (
+            <Loader label="Loading dimensions..." />
+          ) : activeTab === "overview" ? (
             <div className="table-wrap dimension-table-wrap">
               <table className="data-table premium-dimension-table">
                 <thead>
@@ -739,13 +742,7 @@ export function DimensionLibraryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {isLoading ? (
-                    <tr>
-                      <td colSpan={7}>
-                        <div className="table-empty">Loading dimensions...</div>
-                      </td>
-                    </tr>
-                  ) : filteredRows.length ? (
+                  {filteredRows.length ? (
                     filteredRows.map((row) => (
                       <tr
                         className={`clickable-row ${row.dimension_code === selectedRow?.dimension_code ? "selected-row" : ""}`}
@@ -902,7 +899,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "dimension" && (
         <Drawer title="Dimension" subtitle={dimensionForm.dimension_code ? "Edit" : "Create"} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitDimension}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitDimension}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label title="Stable public code used by API/UI contracts. Auto format uses A-Z, 0-9, and underscore.">Dimension code<input placeholder="Auto/generated code, e.g. GEOGRAPHY" value={dimensionForm.dimension_code} onChange={(event) => setDimensionForm((current) => ({ ...current, dimension_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
             <label title="User-facing dimension name shown in templates and reports.">Name *<input required placeholder="Enter dimension name, e.g. Geography" value={dimensionForm.name} onChange={(event) => setDimensionForm((current) => ({ ...current, name: event.target.value }))} /></label>
             <div className="form-grid two">
@@ -919,7 +917,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "member" && (
         <Drawer title="Dimension Member" subtitle={editingMemberCode ? "Edit" : "Create"} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitMember}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitMember}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label>Member code<input value={memberForm.member_code} onChange={(event) => setMemberForm((current) => ({ ...current, member_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
             <label>Name *<input required value={memberForm.name} onChange={(event) => setMemberForm((current) => ({ ...current, name: event.target.value }))} /></label>
             <label>Short name<input value={memberForm.short_name} onChange={(event) => setMemberForm((current) => ({ ...current, short_name: event.target.value }))} /></label>
@@ -937,7 +936,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "relationship" && (
         <Drawer title="Member Relationship" subtitle={selectedCode} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitRelationship}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitRelationship}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label>Parent member *<select required value={relationshipForm.parent_member_code} onChange={(event) => setRelationshipForm((current) => ({ ...current, parent_member_code: event.target.value }))}>{memberOptions(members)}</select></label>
             <label>Child member *<select required value={relationshipForm.child_member_code} onChange={(event) => setRelationshipForm((current) => ({ ...current, child_member_code: event.target.value }))}>{memberOptions(members)}</select></label>
             <label>Relationship type<input value={relationshipForm.relationship_type} onChange={(event) => setRelationshipForm((current) => ({ ...current, relationship_type: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
@@ -949,7 +949,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "set" && (
         <Drawer title="Member Set" subtitle={selectedCode} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitSet}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitSet}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label>Set code<input value={setForm.set_code} onChange={(event) => setSetForm((current) => ({ ...current, set_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
             <label>Name *<input required value={setForm.name} onChange={(event) => setSetForm((current) => ({ ...current, name: event.target.value }))} /></label>
             <label>Set type<input value={setForm.set_type} onChange={(event) => setSetForm((current) => ({ ...current, set_type: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
@@ -962,7 +963,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "setItem" && (
         <Drawer title="Member Set Item" subtitle={setItemForm.set_code} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitSetItem}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitSetItem}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label title="Choose the target set. Use New Set when the set itself does not exist yet.">Set *<select required value={setItemForm.set_code} onChange={(event) => setSetItemForm((current) => ({ ...current, set_code: event.target.value }))}>{setOptions(sets)}</select></label>
             <label title="Select an existing dimension member to include in this set.">Member *<select required value={setItemForm.member_code} onChange={(event) => setSetItemForm((current) => ({ ...current, member_code: event.target.value }))}>{memberOptions(members)}</select></label>
             <label title="Optional display order of this member inside the set.">Sort order<input type="number" value={setItemForm.sort_order} onChange={(event) => setSetItemForm((current) => ({ ...current, sort_order: Number(event.target.value) }))} /></label>
@@ -974,7 +976,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "alias" && (
         <Drawer title="Member Alias" subtitle={selectedCode} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitAlias}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitAlias}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label>Member *<select required value={aliasForm.member_code} onChange={(event) => setAliasForm((current) => ({ ...current, member_code: event.target.value }))}>{memberOptions(members)}</select></label>
             <label title="Classify why this alternate value exists. SOURCE_CODE is for external import files; DISPLAY_ALIAS is for alternate labels; LEGACY_CODE is for old migrated codes.">Alias type<select value={aliasForm.alias_type} onChange={(event) => setAliasForm((current) => ({ ...current, alias_type: event.target.value }))}><option>SOURCE_CODE</option><option>DISPLAY_ALIAS</option><option>LEGACY_CODE</option><option>EXTERNAL_CODE</option><option>OTHER</option></select></label>
             <label title="The alternate code/name exactly as it appears in a source file, legacy system, or alternate display.">Alias value *<input required placeholder="Example: IND, INDIA, 01, DISTRICT_001" value={aliasForm.alias_value} onChange={(event) => setAliasForm((current) => ({ ...current, alias_value: event.target.value }))} /></label>
@@ -987,7 +990,8 @@ export function DimensionLibraryPage() {
 
       {drawer === "rollup" && (
         <Drawer title="Rollup Rule" subtitle={editingRollupKey ? "Edit" : "Create"} onClose={() => setDrawer(null)}>
-          <form className="drawer-form" onSubmit={submitRollup}>
+          <form className="drawer-form dimension-editor-form" onSubmit={submitRollup}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
             <label>Parent member *<select required value={rollupForm.parent_member_code} onChange={(event) => setRollupForm((current) => ({ ...current, parent_member_code: event.target.value }))}>{memberOptions(members)}</select></label>
             <label>Rule code<input value={rollupForm.rule_code} onChange={(event) => setRollupForm((current) => ({ ...current, rule_code: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} /></label>
             <div className="form-grid two">
@@ -1217,8 +1221,8 @@ function DimensionListPanel<T>({
 function Drawer({ title, subtitle, children, onClose }: { title: string; subtitle: string; children: ReactNode; onClose: () => void }) {
   return (
     <div className="drawer-overlay">
-      <aside className="form-drawer compact-form-drawer">
-        <header className="drawer-header">
+      <aside className="form-drawer compact-form-drawer dimension-editor-drawer">
+        <header className="drawer-header dimension-editor-header">
           <div>
             <span>{subtitle}</span>
             <h3>{title}</h3>

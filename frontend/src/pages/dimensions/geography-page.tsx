@@ -24,6 +24,7 @@ import {
   type Geography,
   type GeographyLevel,
 } from "../../api/dimensions.api";
+import { Loader } from "../../components/common/loader";
 
 type GeographyTab = "records" | "sets" | "rollups";
 type GeographyDrawerMode = "geography" | "set" | "rollup" | null;
@@ -638,7 +639,7 @@ export function GeographyPage() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={7}><div className="table-empty">Loading geography records...</div></td></tr>
+                <tr className="loader-table-row"><td colSpan={7}><Loader label="Loading geography records..." /></td></tr>
               ) : filteredRows.length ? (
                 filteredRows.map((row) => (
                   <tr key={row.geography_code}>
@@ -767,8 +768,8 @@ export function GeographyPage() {
 
       {drawer && (
         <div className="drawer-overlay">
-          <aside className="form-drawer compact-form-drawer">
-            <header className="drawer-header">
+          <aside className="form-drawer compact-form-drawer dimension-editor-drawer">
+            <header className="drawer-header dimension-editor-header">
               <div>
                 <span>{drawer === "set" ? "MEMBER SET" : drawer === "rollup" ? "ROLLUP RULE" : editingCode ? "EDIT" : "CREATE"}</span>
                 <h3>{drawer === "set" ? "Geography Member Set" : drawer === "rollup" ? "Geography Rollup" : "Geography"}</h3>
@@ -776,7 +777,8 @@ export function GeographyPage() {
               <button className="icon-button" type="button" onClick={() => setDrawer(null)} aria-label="Close"><X size={16} /></button>
             </header>
             {drawer === "geography" ? (
-            <form className="drawer-form" onSubmit={saveGeography}>
+            <form className="drawer-form dimension-editor-form" onSubmit={saveGeography}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
               <label title="Stable geography member code used by APIs, templates, member sets, and rollups. Example: IND or STATE_MAHARASHTRA.">Geography code<input value={form.geography_code} onChange={(event) => setForm((current) => ({ ...current, geography_code: compactCode(event.target.value) }))} required /></label>
               <label title="Readable geography name shown in dropdowns, tables, templates, and reports.">Name<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required /></label>
               <div className="form-grid two">
@@ -800,7 +802,8 @@ export function GeographyPage() {
               </div>
             </form>
             ) : drawer === "set" ? (
-            <form className="drawer-form" onSubmit={saveGeographySet}>
+            <form className="drawer-form dimension-editor-form" onSubmit={saveGeographySet}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
               <label title="Stable set code used by templates and reports. Examples: GEOGRAPHY_NATIONAL, GEOGRAPHY_NATIONAL_STATES, GEOGRAPHY_STATES.">Set code<input value={memberSetForm.set_code} onChange={(event) => setMemberSetForm((current) => ({ ...current, set_code: compactCode(event.target.value) }))} required /></label>
               <label title="Readable set name shown to users. Examples: National, National + States, States.">Name<input value={memberSetForm.name} onChange={(event) => setMemberSetForm((current) => ({ ...current, name: event.target.value }))} required /></label>
               <label title="Controlled Scope is recommended for geography presets used in templates, requests, and reporting.">Set type<select value={memberSetForm.set_type} onChange={(event) => setMemberSetForm((current) => ({ ...current, set_type: event.target.value }))}><option value="CONTROLLED_SCOPE">Controlled Scope</option><option value="TEMPLATE_SCOPE">Template Scope</option><option value="REQUEST_SCOPE">Request Scope</option><option value="REPORT_SCOPE">Report Scope</option></select></label>
@@ -836,7 +839,8 @@ export function GeographyPage() {
               </div>
             </form>
             ) : (
-            <form className="drawer-form" onSubmit={saveRollup}>
+            <form className="drawer-form dimension-editor-form" onSubmit={saveRollup}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
               <label title="Parent member that stores or derives the rollup value. For geography this is usually India.">Parent member<select required value={rollupForm.parent_member_code} onChange={(event) => setRollupForm((current) => ({ ...current, parent_member_code: event.target.value }))}>{[...countryRows, ...stateRows].map((row) => <option value={geographyMemberCode(row)} key={geographyMemberCode(row)}>{textValue(row.name ?? geographyMemberCode(row))}</option>)}</select></label>
               <label title="Stable rollup rule code. Example: ROLLUP_INDIA_STATES_SUM.">Rule code<input value={rollupForm.rule_code} onChange={(event) => setRollupForm((current) => ({ ...current, rule_code: compactCode(event.target.value) }))} required /></label>
               <div className="form-grid two">

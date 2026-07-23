@@ -20,6 +20,7 @@ import {
   type TimeFrequency,
   type TimePeriod,
 } from "../../api/dimensions.api";
+import { Loader } from "../../components/common/loader";
 
 type TimeTab = "periods" | "sets" | "frequencies";
 type DrawerMode = "period" | "set" | "frequency" | null;
@@ -477,7 +478,7 @@ export function TimePeriodsPage() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7}><div className="table-empty">Loading time periods...</div></td></tr>
+                  <tr className="loader-table-row"><td colSpan={7}><Loader label="Loading time periods..." /></td></tr>
                 ) : filteredPeriods.length ? (
                   filteredPeriods.map((period) => (
                     <tr key={period.time_period_code}>
@@ -609,8 +610,8 @@ export function TimePeriodsPage() {
 
       {drawer && (
         <div className="drawer-overlay" role="presentation">
-          <aside className="form-drawer compact-form-drawer">
-            <header className="drawer-header">
+          <aside className="form-drawer compact-form-drawer dimension-editor-drawer">
+            <header className="drawer-header dimension-editor-header">
               <div>
                 <span>{drawer === "period" ? "TIME PERIOD" : drawer === "set" ? "REPORTING SEQUENCE" : "TIME FREQUENCY"}</span>
                 <h3>{drawer === "period" ? "Time Period" : drawer === "set" ? "Time Period Set" : "Frequency"}</h3>
@@ -618,7 +619,8 @@ export function TimePeriodsPage() {
               <button className="icon-button" type="button" onClick={() => setDrawer(null)}><X size={16} /></button>
             </header>
             {drawer === "period" ? (
-              <form className="drawer-form" onSubmit={savePeriod}>
+              <form className="drawer-form dimension-editor-form" onSubmit={savePeriod}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
                 <label>Period code<input value={periodForm.time_period_code} onChange={(event) => setPeriodForm((current) => ({ ...current, time_period_code: compactCode(event.target.value) }))} required /></label>
                 <label>Name<input value={periodForm.name} onChange={(event) => setPeriodForm((current) => ({ ...current, name: event.target.value }))} required /></label>
                 <div className="form-grid two">
@@ -640,7 +642,8 @@ export function TimePeriodsPage() {
                 </footer>
               </form>
             ) : drawer === "set" ? (
-              <form className="drawer-form" onSubmit={saveSet}>
+              <form className="drawer-form dimension-editor-form" onSubmit={saveSet}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
                 <label>Set code<input value={setForm.set_code} onChange={(event) => setSetForm((current) => ({ ...current, set_code: compactCode(event.target.value) }))} required /></label>
                 <label>Name<input value={setForm.name} onChange={(event) => setSetForm((current) => ({ ...current, name: event.target.value }))} required /></label>
                 <label>Set type<select value={setForm.set_type} onChange={(event) => setSetForm((current) => ({ ...current, set_type: event.target.value }))}><option value="TEMPLATE_SCOPE">Template Scope</option><option value="REQUEST_SCOPE">Request Scope</option><option value="REPORT_SCOPE">Report Scope</option><option value="CONTROLLED_SCOPE">Controlled Scope</option></select></label>
@@ -684,7 +687,8 @@ export function TimePeriodsPage() {
                 </footer>
               </form>
             ) : (
-              <form className="drawer-form" onSubmit={saveFrequency}>
+              <form className="drawer-form dimension-editor-form" onSubmit={saveFrequency}>
+              <div className="dimension-editor-guidance"><strong>Configuration details</strong><span>Complete the governed fields below. Changes are validated before saving.</span></div>
                 <label title="Stable public frequency code. Example: ANNUAL, FINANCIAL_YEAR, QUARTERLY, MONTHLY.">Frequency code<input value={frequencyForm.frequency_code} onChange={(event) => setFrequencyForm((current) => ({ ...current, frequency_code: compactCode(event.target.value) }))} required /></label>
                 <label title="Readable frequency name shown to users.">Name<input value={frequencyForm.name} onChange={(event) => setFrequencyForm((current) => ({ ...current, name: event.target.value }))} required /></label>
                 <div className="form-grid two">

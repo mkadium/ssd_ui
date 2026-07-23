@@ -4070,6 +4070,177 @@ a {
     grid-template-columns: 1fr;
   }
 }
+.dimension-editor-drawer {
+  width: min(600px, 100vw);
+  overflow: visible;
+  background: #f5f8fc;
+}
+
+.dimension-editor-header {
+  background: #ffffff;
+}
+
+.dimension-editor-form {
+  min-height: 0;
+  gap: 10px;
+  overflow-x: visible;
+  overflow-y: auto;
+  padding: 14px 16px 0;
+}
+
+.dimension-editor-guidance {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #cfe0f3;
+  border-left: 3px solid #3b82f6;
+  border-radius: 9px;
+  background: #eef6ff;
+  padding: 9px 11px;
+}
+
+.dimension-editor-guidance strong {
+  color: #175a9c;
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.dimension-editor-guidance span {
+  color: #365a7c;
+  font-size: 9.8px;
+  line-height: 1.4;
+}
+
+.dimension-editor-form > label,
+.dimension-editor-form > .form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #284764;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.dimension-editor-form input,
+.dimension-editor-form select,
+.dimension-editor-form textarea {
+  width: 100%;
+  border: 1px solid #cddceb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #102f53;
+  outline: none;
+  font-size: 11px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.dimension-editor-form input,
+.dimension-editor-form select {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.dimension-editor-form textarea {
+  min-height: 76px;
+  resize: vertical;
+  padding: 9px 10px;
+}
+
+.dimension-editor-form input:hover,
+.dimension-editor-form select:hover,
+.dimension-editor-form textarea:hover {
+  border-color: #9dbddd;
+}
+
+.dimension-editor-form input:focus,
+.dimension-editor-form select:focus,
+.dimension-editor-form textarea:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.11);
+}
+
+.dimension-editor-form .checkbox-card {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
+  column-gap: 12px;
+  border: 1px solid #d6e2ef;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.dimension-editor-form .checkbox-card:has(input:checked) {
+  border-color: #a7c7ed;
+  background: #f3f8ff;
+}
+
+.dimension-editor-form .checkbox-card input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: #cbd5e1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.dimension-editor-form .checkbox-card input[type="checkbox"]::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.dimension-editor-form .checkbox-card input[type="checkbox"]:checked {
+  background: #2563eb;
+}
+
+.dimension-editor-form .checkbox-card input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
+
+.dimension-editor-form .drawer-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-right: -16px;
+  margin-left: -16px;
+  border-top: 1px solid #dce6f1;
+  background: #ffffff;
+  box-shadow: 0 -6px 18px rgba(15, 39, 71, 0.05);
+  padding: 12px 16px;
+}
+
+.dimension-editor-form .drawer-footer button {
+  min-width: 105px;
+  height: 34px;
+}
+
+@media (max-width: 560px) {
+  .dimension-editor-form .form-grid.two {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dimension-editor-form .checkbox-card input[type="checkbox"],
+  .dimension-editor-form .checkbox-card input[type="checkbox"]::after {
+    transition: none;
+  }
+}
 .form-help {
   margin: -2px 18px 10px;
   border-left: 3px solid #93c5fd;
