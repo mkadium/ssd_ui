@@ -2,6 +2,7 @@ import { Building2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { listAuthUnits, type AuthUnit } from "../../api/auth-admin.api";
 import { LOCALE_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 export function UnitAccessPage() {
   const [units, setUnits] = useState<AuthUnit[]>([]);
@@ -87,7 +88,7 @@ export function UnitAccessPage() {
       </section>
 
       <section className="workflow-card">
-        {isLoading ? <div className="empty-state">Loading units...</div> : (
+        {isLoading ? <Loader label="Loading units..." /> : (
           <div className="unit-card-grid">
             {filteredUnits.map((unit) => (
               <article className="unit-scope-card" key={unit.unit_code}>

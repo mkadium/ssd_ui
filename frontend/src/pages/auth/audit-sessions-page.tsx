@@ -7,6 +7,7 @@ import {
   listAuthSessions,
   type AuthSessionAuditRow,
 } from "../../api/auth-admin.api";
+import { Loader } from "../../components/common/loader";
 
 type AuditTab = "sessions" | "login" | "anonymous";
 
@@ -145,7 +146,7 @@ export function AuditSessionsPage() {
           </select>
         </div>
         <div className="table-wrap user-table-wrap">
-          {isLoading ? <div className="empty-state">Loading audit records...</div> : (
+          {isLoading ? <Loader label="Loading audit records..." /> : (
             <table className="data-table">
               <thead>
                 <tr>

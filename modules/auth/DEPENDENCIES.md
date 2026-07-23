@@ -6,6 +6,7 @@
 |---|---|---|
 | `ssd_api/modules/auth` | REQUIRED | Approved Auth API contracts |
 | `ssd_ui/modules/portal` | REQUIRED | Authenticated portal shell and navigation integration |
+| `frontend/src/components/common/loader.tsx` | SHARED UI | Accessible loading feedback for authentication access screens |
 
 ---
 

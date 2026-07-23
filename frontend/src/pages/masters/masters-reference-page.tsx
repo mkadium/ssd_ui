@@ -8,6 +8,7 @@ import {
   type MasterRecord,
 } from "../../api/masters-reference.api";
 import { LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type FieldConfig = {
   key: string;
@@ -208,11 +209,11 @@ export function MastersReferencePage() {
     setStatusFilter("ACTIVE");
     setTypeFilter("ALL");
     setOrganizationFilter("ALL");
-    void loadRecords(config);
+    void loadRecords(config, true);
   }, [config]);
 
   useEffect(() => {
-    const handleContextChange = () => void loadRecords(config);
+    const handleContextChange = () => void loadRecords(config, true);
     window.addEventListener(LOCALE_CHANGED_EVENT, handleContextChange);
     window.addEventListener(UNIT_CHANGED_EVENT, handleContextChange);
     return () => {
@@ -227,8 +228,8 @@ export function MastersReferencePage() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  async function loadRecords(pageConfig = config): Promise<void> {
-    setIsLoading(records.length === 0);
+  async function loadRecords(pageConfig = config, forceLoader = false): Promise<void> {
+    setIsLoading(forceLoader || records.length === 0);
     setError("");
     try {
       const response = await listMasterRecords({ endpoint: pageConfig.endpoint });
@@ -357,7 +358,7 @@ export function MastersReferencePage() {
       <section className="masters-layout">
         <div className="workflow-card masters-table-card">
           {isLoading ? (
-            <div className="empty-state">Loading {config.title.toLowerCase()}...</div>
+            <Loader label={`Loading ${config.title.toLowerCase()}...`} />
           ) : filteredRecords.length === 0 ? (
             <div className="empty-state">No {config.title.toLowerCase()} records found.</div>
           ) : (
@@ -433,10 +434,12 @@ function FormPanel({
   onChange: (key: string, value: string | number | boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const detailFields = config.fields.filter((field) => field.type !== "checkbox");
+  const booleanFields = config.fields.filter((field) => field.type === "checkbox");
   return (
     <div className="drawer-backdrop">
-      <aside className="side-drawer">
-      <div className="drawer-header">
+      <aside className="side-drawer master-reference-drawer">
+        <div className="drawer-header master-reference-drawer-header">
           <div>
             <div className="eyebrow">{editingRecord ? "Edit" : "Create"}</div>
             <h3>{config.title}</h3>
@@ -445,26 +448,75 @@ function FormPanel({
             <X size={15} />
           </button>
         </div>
-      <form className="drawer-form" onSubmit={onSubmit}>
-        <div className="form-help">{config.ownershipNote}</div>
-        <div className="masters-form-fields">
-          {config.fields.map((field) => (
-            <label className={field.type === "checkbox" ? "checkbox-field compact" : "form-field"} key={field.key}>
-              <span>{field.label}{field.required ? " *" : ""}</span>
-              {renderField(field, formValues[field.key], onChange, organizationRecords)}
-            </label>
-          ))}
-        </div>
-        <div className="drawer-footer">
-          <button className="secondary-button" type="button" onClick={onCancel}>Cancel</button>
-          <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving..." : "Save"}</button>
-        </div>
-      </form>
+        <form className="drawer-form master-reference-drawer-form" onSubmit={onSubmit}>
+          <div className="master-reference-sections">
+            <div className="master-reference-guidance">
+              <span>Governance note</span>
+              <p>{config.ownershipNote}</p>
+            </div>
+
+            <section className="master-reference-section">
+              <div className="master-reference-section-heading">
+                <span>01</span>
+                <div><strong>Record details</strong><small>Provide the governed code, labels, and metadata</small></div>
+              </div>
+              <div className="master-reference-fields">
+                {detailFields.map((field) => (
+                  <label className="form-field" key={field.key}>
+                    <span>{field.label}{field.required ? " *" : ""}</span>
+                    {renderField(field, formValues[field.key], onChange, organizationRecords)}
+                  </label>
+                ))}
+              </div>
+            </section>
+
+            {booleanFields.length > 0 && (
+              <section className="master-reference-section">
+                <div className="master-reference-section-heading">
+                  <span>02</span>
+                  <div><strong>Status &amp; behavior</strong><small>Control availability and special record behavior</small></div>
+                </div>
+                <div className="master-reference-toggle-grid">
+                  {booleanFields.map((field) => (
+                    <label className="role-toggle-card master-reference-toggle" key={field.key}>
+                      {renderField(field, formValues[field.key], onChange, organizationRecords)}
+                      <span className="role-toggle-copy">
+                        <strong>{field.label}</strong>
+                        <small>{getBooleanFieldDescription(field)}</small>
+                      </span>
+                      <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+          <div className="drawer-footer master-reference-drawer-footer">
+            <button className="secondary-button" type="button" onClick={onCancel}>Cancel</button>
+            <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving..." : editingRecord ? "Save changes" : `Create ${getSingularTitle(config.title)}`}</button>
+          </div>
+        </form>
       </aside>
     </div>
   );
 }
 
+function getBooleanFieldDescription(field: FieldConfig): string {
+  if (field.key === "is_active") return "Make this record available across governed workflows.";
+  if (field.key === "is_default") return "Use this as the default option when no preference is selected.";
+  return `Enable ${field.label.toLowerCase()} behavior for this record.`;
+}
+
+function getSingularTitle(title: string): string {
+  const singularTitles: Record<string, string> = {
+    Locales: "locale",
+    Periodicities: "periodicity",
+    "Unit of Measurement (UOM)": "UOM",
+    "Sources / Ministries": "organization",
+    Officers: "officer",
+  };
+  return singularTitles[title] ?? "record";
+}
 function renderField(
   field: FieldConfig,
   value: unknown,

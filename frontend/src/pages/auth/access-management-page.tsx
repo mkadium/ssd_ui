@@ -14,6 +14,7 @@ import {
   type AuthRole,
 } from "../../api/auth-admin.api";
 import { LOCALE_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type AuthTab = "catalog" | "roles";
 type RoleDrawerState = { mode: "create" } | { mode: "edit"; role: AuthRole } | null;
@@ -288,7 +289,7 @@ export function AccessManagementPage() {
           </div>
         )}
 
-        {isLoading && <div className="empty-state">Loading authentication access records...</div>}
+        {isLoading && <Loader label="Loading authentication access records..." />}
         {!isLoading && activeTab === "catalog" && <AccessCatalog permissions={filteredPermissions} />}
         {!isLoading && activeTab === "roles" && (
           <RolePermissionStudio
@@ -460,6 +461,7 @@ function PermissionModuleSection({
 }) {
   const pagePermissions = group.permissions.filter((permission) => getPermissionKind(permission) === "PAGE");
   const actionPermissions = group.permissions.filter((permission) => getPermissionKind(permission) === "ACTION");
+  const selectedCount = group.permissions.filter((permission) => selectedPermissionCodes.has(permission.permission_code)).length;
   return (
     <section className="permission-module-section">
       <div className="permission-section-heading">
@@ -467,7 +469,7 @@ function PermissionModuleSection({
           <h3>{group.moduleName}</h3>
           <p>{group.moduleCode}</p>
         </div>
-        <span className="status-badge">{group.permissions.length} grants</span>
+        <span className="permission-module-count">{selectedCount} of {group.permissions.length} selected</span>
       </div>
       <PermissionToggleGroup
         label="PAGE"
@@ -511,7 +513,7 @@ function PermissionToggleGroup({
               type="checkbox"
             />
             <span className="permission-check">
-              {selectedPermissionCodes.has(permission.permission_code) ? <Check size={12} /> : <X size={12} />}
+              {selectedPermissionCodes.has(permission.permission_code) && <Check size={14} strokeWidth={2.5} />}
             </span>
             <span>
               <strong>{label === "PAGE" ? permission.page_code || "Page" : permission.action_code || "Action"}</strong>
@@ -570,13 +572,25 @@ function RoleDrawer({
               <option value="GLOBAL">Global</option>
             </select>
           </label>
-          <label className="checkbox-card">
+          <label className="role-toggle-card">
             <input defaultChecked={role?.is_active ?? true} disabled={!isEdit} name="is_active" type="checkbox" />
-            Active role
+            <span className="role-toggle-copy">
+              <strong>Active role</strong>
+              <small>Allow this role to be assigned and used.</small>
+            </span>
+            <span className="role-toggle-track" aria-hidden="true">
+              <span className="role-toggle-thumb" />
+            </span>
           </label>
-          <label className="checkbox-card">
+          <label className="role-toggle-card">
             <input defaultChecked={role?.is_system_role ?? false} disabled={isEdit} name="is_system_role" type="checkbox" />
-            System role
+            <span className="role-toggle-copy">
+              <strong>System role</strong>
+              <small>Protect this role as a platform-managed role.</small>
+            </span>
+            <span className="role-toggle-track" aria-hidden="true">
+              <span className="role-toggle-thumb" />
+            </span>
           </label>
           <div className="form-help">
             Create the role first, then assign permissions from the module-wise matrix. Delete is treated as deactivate.

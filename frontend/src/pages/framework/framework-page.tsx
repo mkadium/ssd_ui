@@ -34,6 +34,7 @@ import {
   getFrameworkHierarchy,
 } from "../../api/framework.api";
 import { LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 type FrameworkTab = "editions" | "levels" | "nodes" | "relationships";
 type DrawerMode = "edition" | "level" | "node" | "relationship";
@@ -657,7 +658,7 @@ export function FrameworkPage() {
           )}
         </div>
 
-        {isLoading && <div className="empty-state">Loading framework records...</div>}
+        {isLoading && <Loader label="Loading framework records..." />}
         {!isLoading && activeTab === "editions" && (
           <EditionsTable
             editions={filteredEditions}
