@@ -35,6 +35,7 @@ import {
 } from "../../api/framework.api";
 import { listMasterRecords, type MasterRecord } from "../../api/masters-reference.api";
 import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 import { useSearchParams } from "react-router-dom";
 
 type IndicatorStatusFilter = "ALL" | "ACTIVE" | "DRAFT" | "INACTIVE";
@@ -575,11 +576,7 @@ export function IndicatorLibraryPage() {
   return (
     <div className="workflow-page indicator-library-page">
       {selectedCode && isDetailLoading && !selectedDetail ? (
-        <div className="indicator-detail-loading-card">
-          <div className="loader-ring" />
-          <strong>Loading indicator details...</strong>
-          <span>Please wait while source, measures, metadata, and mappings are loaded.</span>
-        </div>
+        <div className="indicator-detail-loading-card"><Loader label="Loading indicator details..." /></div>
       ) : selectedDetail ? (
         <IndicatorDetailPage
           detail={selectedDetail}
@@ -702,9 +699,7 @@ export function IndicatorLibraryPage() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr>
-                  <td colSpan={8}>Loading indicators...</td>
-                </tr>
+                <tr className="loader-table-row"><td colSpan={8}><Loader label="Loading indicators..." /></td></tr>
               ) : filteredIndicators.length === 0 ? (
                 <tr>
                   <td colSpan={8}>No indicators found.</td>
@@ -801,17 +796,21 @@ export function IndicatorLibraryPage() {
       )}
       {isCreateOpen && (
         <div className="drawer-backdrop">
-          <aside className="side-drawer">
-            <div className="drawer-header">
+          <aside className="side-drawer indicator-editor-drawer">
+            <div className="drawer-header indicator-editor-header">
               <div>
-                <span>Create</span>
-                <h3>{editingIndicatorCode ? "Edit Indicator" : "Indicator"}</h3>
+                <span>{editingIndicatorCode ? "Edit" : "Create"}</span>
+                <h3>{editingIndicatorCode ? "Edit Indicator" : "New Indicator"}</h3>
               </div>
               <button className="icon-action" type="button" onClick={() => setIsCreateOpen(false)}>
                 x
               </button>
             </div>
-            <form className="drawer-form" onSubmit={(event) => void handleCreateIndicator(event)}>
+            <form className="drawer-form indicator-editor-form" onSubmit={(event) => void handleCreateIndicator(event)}>
+              <div className="indicator-editor-guidance"><strong>Indicator setup</strong><span>Define the active framework placement, governed identity, and presentation settings.</span></div>
+              <section className="indicator-editor-section">
+                <div className="indicator-editor-section-heading"><span>01</span><div><strong>Framework placement</strong><small>Choose the active framework, parent, and mapped target</small></div></div>
+                <div className="indicator-editor-section-body">
               <div className="form-grid two">
                 <label className="form-field">
                   <span>Framework</span>
@@ -822,7 +821,7 @@ export function IndicatorLibraryPage() {
                   <input value={activeFramework?.edition_code ?? ""} readOnly />
                 </label>
               </div>
-              <div className="form-grid two">
+              <div className="form-grid indicator-hierarchy-grid">
                 <label className="form-field">
                   <span>{parentNodeOptions.length ? parentNodeLabel : "Parent level"}</span>
                   <select
@@ -867,6 +866,11 @@ export function IndicatorLibraryPage() {
                   <small>This creates the framework-indicator mapping for the indicator.</small>
                 </label>
               </div>
+                </div>
+              </section>
+              <section className="indicator-editor-section">
+                <div className="indicator-editor-section-heading"><span>02</span><div><strong>Indicator details</strong><small>Define the governed identity, description, status, and color</small></div></div>
+                <div className="indicator-editor-section-body">
               <label className="form-field">
                 <span>Indicator code</span>
                 <input
@@ -918,12 +922,14 @@ export function IndicatorLibraryPage() {
                   />
                 </label>
               </div>
-              <div className="drawer-footer">
+                </div>
+              </section>
+              <div className="drawer-footer indicator-editor-footer">
                 <button className="secondary-button" type="button" onClick={() => setIsCreateOpen(false)}>
                   Cancel
                 </button>
                 <button className="primary-button" type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving..." : editingIndicatorCode ? "Update" : "Save"}
+                  {isSaving ? "Saving..." : editingIndicatorCode ? "Save changes" : "Create indicator"}
                 </button>
               </div>
             </form>

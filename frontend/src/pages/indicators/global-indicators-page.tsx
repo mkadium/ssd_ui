@@ -9,6 +9,7 @@ import {
 } from "../../api/indicators.api";
 import { listFrameworkEditions, type FrameworkEdition } from "../../api/framework.api";
 import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import { Loader } from "../../components/common/loader";
 
 const emptyForm = {
   global_indicator_code: "",
@@ -250,7 +251,7 @@ export function GlobalIndicatorsPage() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7}>Loading global indicators...</td></tr>
+                  <tr className="loader-table-row"><td colSpan={7}><Loader label="Loading global indicators..." /></td></tr>
                 ) : filteredRecords.length ? (
                   filteredRecords.map((record) => (
                     <tr
@@ -303,8 +304,8 @@ export function GlobalIndicatorsPage() {
 
       {isDrawerOpen && (
         <div className="drawer-overlay">
-          <aside className="form-drawer compact-form-drawer">
-            <div className="drawer-header">
+          <aside className="form-drawer compact-form-drawer indicator-editor-drawer">
+            <div className="drawer-header indicator-editor-header">
               <div>
                 <span>{editingRecord ? "Edit" : "Create"}</span>
                 <h3>Global Indicator</h3>
@@ -313,18 +314,33 @@ export function GlobalIndicatorsPage() {
                 <X size={16} />
               </button>
             </div>
-            <form className="drawer-form" onSubmit={handleSubmit}>
-              <label><span>Global indicator code</span><input value={form.global_indicator_code} onChange={(event) => setForm((current) => ({ ...current, global_indicator_code: event.target.value }))} /></label>
-              <label><span>Indicator number</span><input value={form.indicator_number} onChange={(event) => setForm((current) => ({ ...current, indicator_number: event.target.value }))} /></label>
-              <label><span>Name *</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required /></label>
-              <label><span>Description</span><textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></label>
-              <label><span>Custodian agency</span><input value={form.custodian_agency_code} onChange={(event) => setForm((current) => ({ ...current, custodian_agency_code: event.target.value }))} /></label>
-              <label><span>Tier</span><input value={form.tier_code} onChange={(event) => setForm((current) => ({ ...current, tier_code: event.target.value }))} /></label>
-              <label><span>Status</span><select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="RETIRED">RETIRED</option></select></label>
-              <label className="checkbox-line"><input type="checkbox" checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))} /> Active</label>
-              <div className="drawer-footer">
+            <form className="drawer-form indicator-editor-form" onSubmit={handleSubmit}>
+              <div className="indicator-editor-guidance"><strong>Global reference</strong><span>Create a reusable global indicator reference for national indicator mappings.</span></div>
+              <section className="indicator-editor-section">
+                <div className="indicator-editor-section-heading"><span>01</span><div><strong>Reference details</strong><small>Core code, number, name, and description</small></div></div>
+                <div className="indicator-editor-fields two-column">
+                  <label><span>Global indicator code</span><input value={form.global_indicator_code} onChange={(event) => setForm((current) => ({ ...current, global_indicator_code: event.target.value }))} /></label>
+                  <label><span>Indicator number</span><input value={form.indicator_number} onChange={(event) => setForm((current) => ({ ...current, indicator_number: event.target.value }))} /></label>
+                  <label className="full-field"><span>Name *</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required /></label>
+                  <label className="full-field"><span>Description</span><textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></label>
+                </div>
+              </section>
+              <section className="indicator-editor-section">
+                <div className="indicator-editor-section-heading"><span>02</span><div><strong>Ownership &amp; classification</strong><small>Custodian, tier, and lifecycle status</small></div></div>
+                <div className="indicator-editor-fields two-column">
+                  <label><span>Custodian agency</span><input value={form.custodian_agency_code} onChange={(event) => setForm((current) => ({ ...current, custodian_agency_code: event.target.value }))} /></label>
+                  <label><span>Tier</span><input value={form.tier_code} onChange={(event) => setForm((current) => ({ ...current, tier_code: event.target.value }))} /></label>
+                  <label><span>Status</span><select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}><option value="DRAFT">Draft</option><option value="ACTIVE">Active</option><option value="RETIRED">Retired</option></select></label>
+                  <label className="role-toggle-card indicator-active-toggle">
+                    <input type="checkbox" checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))} />
+                    <span className="role-toggle-copy"><strong>Active reference</strong><small>Allow this indicator to be mapped.</small></span>
+                    <span className="role-toggle-track" aria-hidden="true"><span className="role-toggle-thumb" /></span>
+                  </label>
+                </div>
+              </section>
+              <div className="drawer-footer indicator-editor-footer">
                 <button className="secondary-button" type="button" onClick={() => { setEditingRecord(null); setForm(emptyForm); setIsDrawerOpen(false); }}>Cancel</button>
-                <button className="primary-button" type="submit" disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</button>
+                <button className="primary-button" type="submit" disabled={isSaving}>{isSaving ? "Saving..." : editingRecord ? "Save changes" : "Create indicator"}</button>
               </div>
             </form>
           </aside>
