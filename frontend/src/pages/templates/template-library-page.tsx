@@ -1,6 +1,15 @@
-import { Edit3, FileSpreadsheet, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import {
+  Edit3,
+  FileSpreadsheet,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Loader } from "../../components/common/loader";
 import {
   createTemplate,
   createTemplateVersion,
@@ -17,11 +26,17 @@ import {
   type TemplateFormulaOutput,
   type TemplateVersion,
 } from "../../api/templates.api";
-import { getSelectedLocale, getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from "../../api/session.api";
+import {
+  getSelectedLocale,
+  getSelectedUnitCode,
+  LOCALE_CHANGED_EVENT,
+  UNIT_CHANGED_EVENT,
+} from "../../api/session.api";
 
 const emptyTemplateForm = {
   template_code: "",
   name: "",
+  owning_unit_code: "",
   description: "",
   template_type: "DATA_ENTRY",
   status: "DRAFT",
@@ -40,15 +55,23 @@ const emptyVersionForm = {
 };
 
 function textValue(value: unknown) {
-  return value === undefined || value === null || value === "" ? "-" : String(value);
+  return value === undefined || value === null || value === ""
+    ? "-"
+    : String(value);
 }
 
 function compactCode(value: string) {
-  return value.toUpperCase().replace(/[^A-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
 }
 
 function templateName(template: TemplateDefinition) {
-  return template.name ?? template.template_name ?? template.template_code ?? "-";
+  return (
+    template.name ?? template.template_name ?? template.template_code ?? "-"
+  );
 }
 
 function versionTitle(version: TemplateVersion) {
@@ -56,25 +79,67 @@ function versionTitle(version: TemplateVersion) {
 }
 
 function normalizedStatus(value: unknown) {
-  return String(value ?? "").trim().toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
 }
 
 function isPublishedStatus(value: unknown) {
   return ["PUBLISHED", "ACTIVE"].includes(normalizedStatus(value));
 }
 
+type TemplateFormErrors = Partial<
+  Record<"template_code" | "name" | "owning_unit_code" | "description", string>
+>;
+
+function validateTemplateForm(
+  form: typeof emptyTemplateForm,
+): TemplateFormErrors {
+  const errors: TemplateFormErrors = {};
+  if (!form.template_code.trim()) {
+    errors.template_code = "Template code is required.";
+  }
+  if (!form.name.trim()) {
+    errors.name = "Template name is required.";
+  }
+  if (!form.owning_unit_code.trim()) {
+    errors.owning_unit_code = "Owning unit is required.";
+  }
+  return errors;
+}
+
+function templateApiErrors(error: unknown): TemplateFormErrors {
+  const message = error instanceof Error ? error.message : "";
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("template_code") ||
+    normalized.includes("template code") ||
+    normalized.includes("duplicate") ||
+    normalized.includes("already")
+  ) {
+    return { template_code: message || "Template code could not be used." };
+  }
+  return {};
+}
+
 function formatDate(value: unknown) {
   if (!value) return "-";
   const date = new Date(String(value));
   if (Number.isNaN(date.getTime())) return textValue(value);
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
 }
 
 export function TemplateLibraryPage() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState<TemplateDefinition[]>([]);
   const [versions, setVersions] = useState<TemplateVersion[]>([]);
-  const [versionCache, setVersionCache] = useState<Record<string, TemplateVersion[]>>({});
+  const [versionCache, setVersionCache] = useState<
+    Record<string, TemplateVersion[]>
+  >({});
   const [selectedTemplateCode, setSelectedTemplateCode] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -82,6 +147,8 @@ export function TemplateLibraryPage() {
   const [editingTemplateCode, setEditingTemplateCode] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
+  const [templateFieldErrors, setTemplateFieldErrors] =
+    useState<TemplateFormErrors>({});
   const [versionForm, setVersionForm] = useState(emptyVersionForm);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -90,32 +157,59 @@ export function TemplateLibraryPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   const selectedTemplate = useMemo(
-    () => templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? null,
+    () =>
+      templates.find(
+        (template) => template.template_code === selectedTemplateCode,
+      ) ??
+      templates[0] ??
+      null,
     [selectedTemplateCode, templates],
   );
   const currentSelectedVersion = useMemo(() => {
     if (!selectedTemplate) return null;
     return (
-      versions.find((version) => version.version_code === selectedTemplate.current_version_code) ??
+      versions.find(
+        (version) =>
+          version.version_code === selectedTemplate.current_version_code,
+      ) ??
       versions.find((version) => version.is_current) ??
       versions[0] ??
       null
     );
   }, [selectedTemplate, versions]);
-  const selectedTemplateDisplayStatus = isPublishedStatus(currentSelectedVersion?.status)
+  const selectedTemplateDisplayStatus = isPublishedStatus(
+    currentSelectedVersion?.status,
+  )
     ? "PUBLISHED"
     : textValue(selectedTemplate?.status);
+  const templateValidationErrors = useMemo(
+    () => validateTemplateForm(templateForm),
+    [templateForm],
+  );
+  const displayedTemplateErrors = templateFieldErrors;
+  const isTemplateFormValid =
+    Object.keys(templateValidationErrors).length === 0;
 
   function templateDisplayStatus(template: TemplateDefinition) {
-    return String(template.current_version_status ?? template.version_status ?? template.status ?? "DRAFT").toUpperCase();
+    return String(
+      template.current_version_status ??
+        template.version_status ??
+        template.status ??
+        "DRAFT",
+    ).toUpperCase();
   }
 
   const filteredTemplates = useMemo(() => {
     const q = query.trim().toLowerCase();
     return templates.filter((template) => {
       const displayStatus = templateDisplayStatus(template);
-      const definitionStatus = String(template.template_status ?? template.status ?? "").toUpperCase();
-      const statusMatches = statusFilter === "ALL" || displayStatus === statusFilter || definitionStatus === statusFilter;
+      const definitionStatus = String(
+        template.template_status ?? template.status ?? "",
+      ).toUpperCase();
+      const statusMatches =
+        statusFilter === "ALL" ||
+        displayStatus === statusFilter ||
+        definitionStatus === statusFilter;
       const queryMatches =
         !q ||
         [
@@ -149,11 +243,9 @@ export function TemplateLibraryPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTemplate?.template_code) {
-      setVersions([]);
-      return;
+    if (detailOpen && selectedTemplate?.template_code) {
+      void loadVersions(selectedTemplate.template_code);
     }
-    if (detailOpen) void loadVersions(selectedTemplate.template_code);
   }, [detailOpen, selectedTemplate?.template_code]);
 
   useEffect(() => {
@@ -169,9 +261,22 @@ export function TemplateLibraryPage() {
       const response = await listTemplates();
       const rows = response.data ?? [];
       setTemplates(rows);
-      setSelectedTemplateCode((current) => current || rows[0]?.template_code || "");
+      if (rows.length === 0) {
+        setSelectedTemplateCode("");
+        setVersions([]);
+      } else {
+        setSelectedTemplateCode((current) =>
+          rows.some((template) => template.template_code === current)
+            ? current
+            : rows[0]?.template_code || "",
+        );
+      }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Template library could not be loaded.");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Template library could not be loaded.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -205,7 +310,11 @@ export function TemplateLibraryPage() {
   }
 
   function openTemplateDrawer() {
-    setTemplateForm(emptyTemplateForm);
+    setTemplateForm({
+      ...emptyTemplateForm,
+      owning_unit_code: getSelectedUnitCode(),
+    });
+    setTemplateFieldErrors({});
     setEditingTemplateCode("");
     setDrawer("template");
   }
@@ -215,11 +324,14 @@ export function TemplateLibraryPage() {
     setTemplateForm({
       template_code: template.template_code ?? "",
       name: templateName(template) === "-" ? "" : templateName(template),
+      owning_unit_code: template.owning_unit_code ?? getSelectedUnitCode(),
       description: template.description ?? "",
       template_type: template.template_type ?? "DATA_ENTRY",
       status: template.status ?? "DRAFT",
-      current_version_code: template.current_version_code ?? template.version_code ?? "",
+      current_version_code:
+        template.current_version_code ?? template.version_code ?? "",
     });
+    setTemplateFieldErrors({});
     setEditingTemplateCode(template.template_code ?? "");
     setDrawer("template");
     if (template.template_code) void loadVersions(template.template_code, true);
@@ -227,10 +339,17 @@ export function TemplateLibraryPage() {
 
   function openVersionDrawer() {
     if (!selectedTemplate?.template_code) return;
-    const nextNumber = Math.max(0, ...versions.map((version) => Number(version.version_number ?? 0))) + 1;
+    const nextNumber =
+      Math.max(
+        0,
+        ...versions.map((version) => Number(version.version_number ?? 0)),
+      ) + 1;
     const baseCode = compactCode(selectedTemplate.template_code);
     const sourceVersion =
-      versions.find((version) => version.version_code === selectedTemplate.current_version_code) ??
+      versions.find(
+        (version) =>
+          version.version_code === selectedTemplate.current_version_code,
+      ) ??
       versions.find((version) => version.is_current) ??
       versions[0];
     setVersionForm({
@@ -243,14 +362,25 @@ export function TemplateLibraryPage() {
     setDrawer("version");
   }
 
-  async function cloneVersionDesign(sourceVersionCode: string, targetVersionCode: string) {
-    if (!sourceVersionCode || !targetVersionCode || sourceVersionCode === targetVersionCode) return;
+  async function cloneVersionDesign(
+    sourceVersionCode: string,
+    targetVersionCode: string,
+  ) {
+    if (
+      !sourceVersionCode ||
+      !targetVersionCode ||
+      sourceVersionCode === targetVersionCode
+    )
+      return;
     const [draftResult, formulasResult] = await Promise.allSettled([
       getTemplateStudioDraft(sourceVersionCode),
       listTemplateFormulaOutputs(sourceVersionCode),
     ]);
 
-    if (draftResult.status === "fulfilled" && draftResult.value.data?.studio_state) {
+    if (
+      draftResult.status === "fulfilled" &&
+      draftResult.value.data?.studio_state
+    ) {
       await saveTemplateStudioDraft(targetVersionCode, {
         unit_code: getSelectedUnitCode(),
         studio_state: {
@@ -268,7 +398,10 @@ export function TemplateLibraryPage() {
         formulas.map((formula: TemplateFormulaOutput, index: number) =>
           upsertTemplateFormulaOutput(targetVersionCode, {
             formula_code: formula.formula_code ?? `CLONED_FORMULA_${index + 1}`,
-            formula_name: formula.formula_name ?? formula.formula_code ?? `Cloned formula ${index + 1}`,
+            formula_name:
+              formula.formula_name ??
+              formula.formula_code ??
+              `Cloned formula ${index + 1}`,
             formula_type: formula.formula_type ?? "COMPUTE",
             expression_text: formula.expression_text ?? "",
             unit_code: getSelectedUnitCode(),
@@ -289,42 +422,64 @@ export function TemplateLibraryPage() {
 
   async function saveTemplate(event: FormEvent) {
     event.preventDefault();
+    if (isSaving) return;
+
+    const validationErrors = validateTemplateForm(templateForm);
+    if (Object.keys(validationErrors).length > 0) {
+      setTemplateFieldErrors(validationErrors);
+      setError("Please fix the highlighted template fields.");
+      return;
+    }
+
     setIsSaving(true);
     setError("");
+    setTemplateFieldErrors({});
     try {
-      const templateCode = compactCode(templateForm.template_code || templateForm.name);
+      const templateCode = templateForm.template_code.trim();
+      const description = templateForm.description.trim();
       const payload = {
         template_code: templateCode,
         name: templateForm.name.trim(),
-        owning_unit_code: getSelectedUnitCode(),
-        template_type: templateForm.template_type,
-        status: editingTemplateCode ? selectedTemplate?.status ?? templateForm.status : templateForm.status,
-        default_locale_code: getSelectedLocale(),
+        owning_unit_code: templateForm.owning_unit_code.trim().toUpperCase(),
+        template_type: "DATA_ENTRY",
+        status: templateForm.status,
+        default_locale_code: getSelectedLocale() || "en-IN",
         is_active: true,
-        description: templateForm.description.trim() || undefined,
+        description: description || null,
       };
-      const response = editingTemplateCode
-        ? await updateTemplate(editingTemplateCode, payload)
-        : await createTemplate(payload);
+      await (editingTemplateCode
+        ? updateTemplate(editingTemplateCode, payload)
+        : createTemplate(payload));
       if (editingTemplateCode && templateForm.current_version_code) {
-        const rows = versions.length > 0 ? versions : await loadVersions(editingTemplateCode, true);
-        const currentVersion = rows.find((version) => version.version_code === templateForm.current_version_code);
+        const rows =
+          versions.length > 0
+            ? versions
+            : await loadVersions(editingTemplateCode, true);
+        const currentVersion = rows.find(
+          (version) =>
+            version.version_code === templateForm.current_version_code,
+        );
         if (currentVersion?.version_code) {
-          await updateTemplateVersion(editingTemplateCode, currentVersion.version_code, {
-            template_code: editingTemplateCode,
-            version_code: currentVersion.version_code,
-            title: currentVersion.title ?? currentVersion.version_code,
-            unit_code: getSelectedUnitCode(),
-            version_number: currentVersion.version_number ?? undefined,
-            render_contract_version: currentVersion.render_contract_version ?? "v1",
-            effective_from: currentVersion.effective_from ?? undefined,
-            effective_to: currentVersion.effective_to ?? undefined,
-            is_current: true,
-            status: currentVersion.status ?? "DRAFT",
-            publish_notes: currentVersion.publish_notes ?? undefined,
-            subtitle: currentVersion.subtitle ?? undefined,
-            instructions: currentVersion.instructions ?? undefined,
-          });
+          await updateTemplateVersion(
+            editingTemplateCode,
+            currentVersion.version_code,
+            {
+              template_code: editingTemplateCode,
+              version_code: currentVersion.version_code,
+              title: currentVersion.title ?? currentVersion.version_code,
+              unit_code: getSelectedUnitCode(),
+              version_number: currentVersion.version_number ?? undefined,
+              render_contract_version:
+                currentVersion.render_contract_version ?? "v1",
+              effective_from: currentVersion.effective_from ?? undefined,
+              effective_to: currentVersion.effective_to ?? undefined,
+              is_current: true,
+              status: currentVersion.status ?? "DRAFT",
+              publish_notes: currentVersion.publish_notes ?? undefined,
+              subtitle: currentVersion.subtitle ?? undefined,
+              instructions: currentVersion.instructions ?? undefined,
+            },
+          );
           setVersionCache((current) => {
             const next = { ...current };
             delete next[editingTemplateCode];
@@ -332,14 +487,30 @@ export function TemplateLibraryPage() {
           });
         }
       }
-      setNotice(editingTemplateCode ? "Template definition updated." : "Template definition saved.");
+      setNotice(
+        editingTemplateCode
+          ? "Template definition updated."
+          : "Template created successfully.",
+      );
       setDrawer(null);
       setEditingTemplateCode("");
+      setTemplateForm(emptyTemplateForm);
+      if (!editingTemplateCode) {
+        setQuery("");
+        setStatusFilter("ALL");
+      }
       await loadTemplates();
-      setSelectedTemplateCode(response.data.template_code ?? templateCode);
-      setDetailOpen(true);
+      if (!editingTemplateCode) {
+        setDetailOpen(false);
+      }
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Template could not be saved.");
+      const fieldErrors = templateApiErrors(saveError);
+      setTemplateFieldErrors(fieldErrors);
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Template could not be saved.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -351,7 +522,10 @@ export function TemplateLibraryPage() {
     setIsSaving(true);
     setError("");
     try {
-      const versionCode = compactCode(versionForm.version_code || `${selectedTemplate.template_code}_V${versionForm.version_number}`);
+      const versionCode = compactCode(
+        versionForm.version_code ||
+          `${selectedTemplate.template_code}_V${versionForm.version_number}`,
+      );
       await createTemplateVersion(selectedTemplate.template_code, {
         template_code: selectedTemplate.template_code,
         version_code: versionCode,
@@ -365,9 +539,16 @@ export function TemplateLibraryPage() {
         instructions: versionForm.instructions.trim() || undefined,
       });
       if (versionForm.clone_source_version_code) {
-        await cloneVersionDesign(versionForm.clone_source_version_code, versionCode);
+        await cloneVersionDesign(
+          versionForm.clone_source_version_code,
+          versionCode,
+        );
       }
-      setNotice(versionForm.clone_source_version_code ? "Template version cloned. Opening Studio..." : "Template version saved.");
+      setNotice(
+        versionForm.clone_source_version_code
+          ? "Template version cloned. Opening Studio..."
+          : "Template version saved.",
+      );
       setDrawer(null);
       setVersionCache((current) => {
         const next = { ...current };
@@ -381,7 +562,11 @@ export function TemplateLibraryPage() {
         )}&step=structure`,
       );
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Template version could not be saved.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Template version could not be saved.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -389,7 +574,9 @@ export function TemplateLibraryPage() {
 
   async function retireVersion(version: TemplateVersion) {
     if (!version.version_code || !selectedTemplate?.template_code) return;
-    const confirmed = window.confirm(`Retire ${versionTitle(version)}? This keeps audit history but removes it from active use.`);
+    const confirmed = window.confirm(
+      `Retire ${versionTitle(version)}? This keeps audit history but removes it from active use.`,
+    );
     if (!confirmed) return;
     setIsSaving(true);
     setError("");
@@ -408,7 +595,11 @@ export function TemplateLibraryPage() {
       await loadVersions(selectedTemplate.template_code, true);
       await loadTemplates();
     } catch (retireError) {
-      setError(retireError instanceof Error ? retireError.message : "Template version could not be retired.");
+      setError(
+        retireError instanceof Error
+          ? retireError.message
+          : "Template version could not be retired.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -418,17 +609,33 @@ export function TemplateLibraryPage() {
     const templateCode = template.template_code ?? "";
     if (!templateCode) return;
     const cachedVersions = versionCache[templateCode] ?? [];
-    const rows = cachedVersions.length > 0 ? cachedVersions : await loadVersions(templateCode, true);
-    const versionCode = template.current_version_code || rows.find((version) => version.is_current)?.version_code || rows[0]?.version_code || "";
-    const search = new URLSearchParams({ template_code: templateCode, step: "structure" });
+    const rows =
+      cachedVersions.length > 0
+        ? cachedVersions
+        : await loadVersions(templateCode, true);
+    const versionCode =
+      template.current_version_code ||
+      rows.find((version) => version.is_current)?.version_code ||
+      rows[0]?.version_code ||
+      "";
+    const search = new URLSearchParams({
+      template_code: templateCode,
+      step: "structure",
+    });
     if (versionCode) search.set("version_code", versionCode);
     navigate(`/template/studio?${search.toString()}`);
   }
 
   const totalTemplates = templates.length;
-  const draftTemplates = templates.filter((template) => templateDisplayStatus(template) === "DRAFT").length;
-  const publishedTemplates = templates.filter((template) => templateDisplayStatus(template) === "PUBLISHED").length;
-  const activeTemplates = templates.filter((template) => template.is_active !== false).length;
+  const draftTemplates = templates.filter(
+    (template) => templateDisplayStatus(template) === "DRAFT",
+  ).length;
+  const publishedTemplates = templates.filter(
+    (template) => templateDisplayStatus(template) === "PUBLISHED",
+  ).length;
+  const activeTemplates = templates.filter(
+    (template) => template.is_active !== false,
+  ).length;
 
   return (
     <section className="template-page">
@@ -436,13 +643,25 @@ export function TemplateLibraryPage() {
         <div>
           <span className="eyebrow">Data Definition</span>
           <h2>Template Library</h2>
-          <p>Manage governed template definitions, versions, mappings, and publish readiness.</p>
+          <p>
+            Manage governed template definitions, versions, mappings, and
+            publish readiness.
+          </p>
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-button compact" type="button" onClick={() => void loadTemplates()}>
+          <button
+            className="secondary-button compact"
+            type="button"
+            onClick={() => void loadTemplates()}
+            disabled={isLoading}
+          >
             <RefreshCw size={13} /> Refresh
           </button>
-          <button className="primary-button compact" type="button" onClick={openTemplateDrawer}>
+          <button
+            className="primary-button compact"
+            type="button"
+            onClick={openTemplateDrawer}
+          >
             <Plus size={13} /> Create Template
           </button>
         </div>
@@ -452,18 +671,41 @@ export function TemplateLibraryPage() {
       {error && <div className="toast-notice error">{error}</div>}
 
       <div className="template-kpi-grid">
-        <div className="template-kpi-card"><strong>{totalTemplates}</strong><span>Total templates</span><em>{activeTemplates} active</em></div>
-        <div className="template-kpi-card"><strong>{draftTemplates}</strong><span>Draft templates</span><em>Editable</em></div>
-        <div className="template-kpi-card"><strong>{publishedTemplates}</strong><span>Published</span><em>Ready for request</em></div>
-        <div className="template-kpi-card"><strong>{versions.length}</strong><span>Selected versions</span><em>{selectedTemplate?.template_code ?? "No template"}</em></div>
+        <div className="template-kpi-card">
+          <strong>{totalTemplates}</strong>
+          <span>Total templates</span>
+          <em>{activeTemplates} active</em>
+        </div>
+        <div className="template-kpi-card">
+          <strong>{draftTemplates}</strong>
+          <span>Draft templates</span>
+          <em>Editable</em>
+        </div>
+        <div className="template-kpi-card">
+          <strong>{publishedTemplates}</strong>
+          <span>Published</span>
+          <em>Ready for request</em>
+        </div>
+        <div className="template-kpi-card">
+          <strong>{versions.length}</strong>
+          <span>Selected versions</span>
+          <em>{selectedTemplate?.template_code ?? "No template"}</em>
+        </div>
       </div>
 
       <div className="filter-bar template-filter-bar">
         <label className="search-box">
           <Search size={15} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search template name, code, or status" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search template name, code, or status"
+          />
         </label>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+        >
           <option value="ALL">All statuses</option>
           <option value="DRAFT">Draft</option>
           <option value="PUBLISHED">Published</option>
@@ -488,29 +730,62 @@ export function TemplateLibraryPage() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7}>Loading templates...</td></tr>
+                  <tr className="loader-table-row">
+                    <td colSpan={7}>
+                      <Loader label="Loading templates..." />
+                    </td>
+                  </tr>
                 ) : filteredTemplates.length === 0 ? (
-                  <tr><td colSpan={7}>No templates match the selected filters.</td></tr>
+                  <tr>
+                    <td colSpan={7}>
+                      No templates match the selected filters.
+                    </td>
+                  </tr>
                 ) : (
                   filteredTemplates.map((template) => (
                     <tr
                       key={template.template_code}
-                      className={template.template_code === selectedTemplate?.template_code ? "selected-row" : ""}
+                      className={
+                        template.template_code ===
+                        selectedTemplate?.template_code
+                          ? "selected-row"
+                          : ""
+                      }
                       onClick={() => openTemplateDetail(template)}
                     >
-                      <td><strong>{templateName(template)}</strong><small>{textValue(template.description)}</small></td>
-                      <td><code>{textValue(template.template_code)}</code></td>
                       <td>
-                        <span className={`status-pill ${templateDisplayStatus(template).toLowerCase()}`}>
+                        <strong>{templateName(template)}</strong>
+                        <small>{textValue(template.description)}</small>
+                      </td>
+                      <td>
+                        <code>{textValue(template.template_code)}</code>
+                      </td>
+                      <td>
+                        <span
+                          className={`status-pill ${templateDisplayStatus(template).toLowerCase()}`}
+                        >
                           {templateDisplayStatus(template)}
                         </span>
-                        {template.template_status && template.template_status !== templateDisplayStatus(template) && (
-                          <small className="muted-code">Definition: {template.template_status}</small>
+                        {template.template_status &&
+                          template.template_status !==
+                            templateDisplayStatus(template) && (
+                            <small className="muted-code">
+                              Definition: {template.template_status}
+                            </small>
+                          )}
+                      </td>
+                      <td>
+                        {textValue(
+                          template.current_version_code ??
+                            template.version_code,
                         )}
                       </td>
-                      <td>{textValue(template.current_version_code ?? template.version_code)}</td>
                       <td>{textValue(template.owning_unit_code)}</td>
-                      <td>{formatDate(template.updated_at ?? template.last_updated)}</td>
+                      <td>
+                        {formatDate(
+                          template.updated_at ?? template.last_updated,
+                        )}
+                      </td>
                       <td>
                         <div className="template-row-actions">
                           <button
@@ -523,16 +798,16 @@ export function TemplateLibraryPage() {
                           >
                             <Edit3 size={12} /> Edit
                           </button>
-                        <button
-                          className="template-action-button studio"
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void openStudio(template);
-                          }}
-                        >
-                          <FileSpreadsheet size={12} /> Studio
-                        </button>
+                          <button
+                            className="template-action-button studio"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void openStudio(template);
+                            }}
+                          >
+                            <FileSpreadsheet size={12} /> Studio
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -552,7 +827,12 @@ export function TemplateLibraryPage() {
                 <span>Template Profile</span>
                 <h3>{templateName(selectedTemplate)}</h3>
               </div>
-              <button className="icon-button" type="button" onClick={() => setDetailOpen(false)} aria-label="Close template profile">
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setDetailOpen(false)}
+                aria-label="Close template profile"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -565,35 +845,74 @@ export function TemplateLibraryPage() {
                 <strong>{templateName(selectedTemplate)}</strong>
                 <small>{textValue(selectedTemplate.template_code)}</small>
               </div>
-              <span className={`status-pill ${selectedTemplate.is_active === false ? "inactive" : "active"}`}>
+              <span
+                className={`status-pill ${selectedTemplate.is_active === false ? "inactive" : "active"}`}
+              >
                 {selectedTemplate.is_active === false ? "Inactive" : "Active"}
               </span>
             </div>
             <div className="detail-note">
-              Time period rules are controlled through the Template Studio structure step. Used period sets are referenced, not edited here.
+              Time period rules are controlled through the Template Studio
+              structure step. Used period sets are referenced, not edited here.
             </div>
             <div className="detail-field-grid">
-              <div><span>Status</span><strong>{selectedTemplateDisplayStatus}</strong></div>
-              <div><span>Type</span><strong>{textValue(selectedTemplate.template_type)}</strong></div>
-              <div><span>Unit</span><strong>{textValue(selectedTemplate.owning_unit_code)}</strong></div>
-              <div><span>Locale</span><strong>{textValue(selectedTemplate.default_locale_code)}</strong></div>
-              <div><span>Current Version</span><strong>{textValue(selectedTemplate.current_version_code ?? selectedTemplate.version_code)}</strong></div>
-              <div><span>Last Updated</span><strong>{formatDate(selectedTemplate.updated_at ?? selectedTemplate.last_updated)}</strong></div>
+              <div>
+                <span>Status</span>
+                <strong>{selectedTemplateDisplayStatus}</strong>
+              </div>
+              <div>
+                <span>Type</span>
+                <strong>{textValue(selectedTemplate.template_type)}</strong>
+              </div>
+              <div>
+                <span>Unit</span>
+                <strong>{textValue(selectedTemplate.owning_unit_code)}</strong>
+              </div>
+              <div>
+                <span>Locale</span>
+                <strong>
+                  {textValue(selectedTemplate.default_locale_code)}
+                </strong>
+              </div>
+              <div>
+                <span>Current Version</span>
+                <strong>
+                  {textValue(
+                    selectedTemplate.current_version_code ??
+                      selectedTemplate.version_code,
+                  )}
+                </strong>
+              </div>
+              <div>
+                <span>Last Updated</span>
+                <strong>
+                  {formatDate(
+                    selectedTemplate.updated_at ??
+                      selectedTemplate.last_updated,
+                  )}
+                </strong>
+              </div>
             </div>
             <div className="section-header-row">
               <div>
                 <span className="eyebrow">Versions</span>
                 <strong>{versions.length} configured</strong>
               </div>
-              <button className="ghost-button" type="button" onClick={openVersionDrawer}>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={openVersionDrawer}
+              >
                 <Plus size={14} /> New Version
               </button>
             </div>
             <div className="template-version-list">
               {isVersionLoading ? (
-                <p>Loading versions...</p>
+                <Loader label="Loading template versions..." />
               ) : versions.length === 0 ? (
-                <p>No versions yet. Create a draft version before opening Studio.</p>
+                <p>
+                  No versions yet. Create a draft version before opening Studio.
+                </p>
               ) : (
                 versions.map((version) => (
                   <div
@@ -607,13 +926,19 @@ export function TemplateLibraryPage() {
                       )
                     }
                   >
-                    <span className="template-version-icon"><FileSpreadsheet size={15} /></span>
+                    <span className="template-version-icon">
+                      <FileSpreadsheet size={15} />
+                    </span>
                     <span className="template-version-copy">
                       <strong>{version.title ?? version.version_code}</strong>
                       <small>{version.version_code}</small>
                     </span>
                     <span className="template-version-meta">
-                      <em className={`status-pill ${isPublishedStatus(version.status) ? "published" : String(version.status ?? "draft").toLowerCase()}`}>{version.status}</em>
+                      <em
+                        className={`status-pill ${isPublishedStatus(version.status) ? "published" : String(version.status ?? "draft").toLowerCase()}`}
+                      >
+                        {version.status}
+                      </em>
                       {version.is_current && <b>Current</b>}
                     </span>
                     <button
@@ -639,68 +964,344 @@ export function TemplateLibraryPage() {
 
       {drawer === "template" && (
         <div className="drawer-backdrop">
-          <form className="side-drawer template-drawer template-form-drawer" onSubmit={saveTemplate}>
+          <form
+            className="side-drawer template-drawer template-form-drawer"
+            onSubmit={saveTemplate}
+            aria-busy={isSaving}
+            noValidate
+          >
             <div className="drawer-header">
               <span>{editingTemplateCode ? "Edit" : "Create"}</span>
               <h3>Template</h3>
-              <button type="button" onClick={() => { setDrawer(null); setEditingTemplateCode(""); }}>x</button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => {
+                  setDrawer(null);
+                  setEditingTemplateCode("");
+                  setTemplateFieldErrors({});
+                }}
+              >
+                x
+              </button>
             </div>
-            <label>Template name *<input required value={templateForm.name} onChange={(event) => setTemplateForm((form) => ({ ...form, name: event.target.value, template_code: form.template_code || compactCode(event.target.value) }))} /></label>
-            <label>Template code *<input required value={templateForm.template_code} onChange={(event) => setTemplateForm((form) => ({ ...form, template_code: compactCode(event.target.value) }))} /></label>
-            <label>Template type<select value={templateForm.template_type} onChange={(event) => setTemplateForm((form) => ({ ...form, template_type: event.target.value }))}><option value="DATA_ENTRY">Data Entry</option><option value="REPORT">Report</option></select></label>
-            <label>Status<input value={editingTemplateCode ? "System controlled by current version" : templateForm.status} readOnly /></label>
+            {isSaving && (
+              <div className="template-form-loader">
+                <Loader
+                  label={
+                    editingTemplateCode
+                      ? "Updating template..."
+                      : "Creating template..."
+                  }
+                />
+              </div>
+            )}
+            <label>
+              Template name *
+              <input
+                disabled={isSaving}
+                aria-invalid={Boolean(displayedTemplateErrors.name)}
+                value={templateForm.name}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setTemplateFieldErrors((errors) => ({
+                    ...errors,
+                    name: undefined,
+                  }));
+                  setTemplateForm((form) => ({
+                    ...form,
+                    name,
+                    template_code: form.template_code || compactCode(name),
+                  }));
+                }}
+              />
+              {displayedTemplateErrors.name && (
+                <em className="field-error">{displayedTemplateErrors.name}</em>
+              )}
+            </label>
+            <label>
+              Template code *
+              <input
+                disabled={isSaving || Boolean(editingTemplateCode)}
+                aria-invalid={Boolean(displayedTemplateErrors.template_code)}
+                value={templateForm.template_code}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({
+                    ...errors,
+                    template_code: undefined,
+                  }));
+                  setTemplateForm((form) => ({
+                    ...form,
+                    template_code: compactCode(event.target.value),
+                  }));
+                }}
+              />
+              {displayedTemplateErrors.template_code && (
+                <em className="field-error">
+                  {displayedTemplateErrors.template_code}
+                </em>
+              )}
+            </label>
+            <label>
+              Owning unit *
+              <input
+                disabled={isSaving}
+                aria-invalid={Boolean(displayedTemplateErrors.owning_unit_code)}
+                value={templateForm.owning_unit_code}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({
+                    ...errors,
+                    owning_unit_code: undefined,
+                  }));
+                  setTemplateForm((form) => ({
+                    ...form,
+                    owning_unit_code: event.target.value.toUpperCase(),
+                  }));
+                }}
+              />
+              {displayedTemplateErrors.owning_unit_code && (
+                <em className="field-error">
+                  {displayedTemplateErrors.owning_unit_code}
+                </em>
+              )}
+            </label>
+            <label>
+              Template type
+              <select
+                disabled={isSaving}
+                value="DATA_ENTRY"
+                onChange={() => undefined}
+              >
+                <option value="DATA_ENTRY">Data Entry</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select
+                disabled={isSaving}
+                value={templateForm.status}
+                onChange={(event) =>
+                  setTemplateForm((form) => ({
+                    ...form,
+                    status: event.target.value,
+                  }))
+                }
+              >
+                <option value="DRAFT">Draft</option>
+                <option value="ACTIVE">Active</option>
+              </select>
+            </label>
             {editingTemplateCode && (
               <label>
                 Current version
                 <select
+                  disabled={isSaving}
                   value={templateForm.current_version_code}
-                  onChange={(event) => setTemplateForm((form) => ({ ...form, current_version_code: event.target.value }))}
+                  onChange={(event) =>
+                    setTemplateForm((form) => ({
+                      ...form,
+                      current_version_code: event.target.value,
+                    }))
+                  }
                 >
                   <option value="">Select current version</option>
                   {versions.map((version) => (
-                    <option key={version.version_code} value={version.version_code}>
-                      {version.title ?? version.version_code}{version.is_current ? " (current)" : ""}
+                    <option
+                      key={version.version_code}
+                      value={version.version_code}
+                    >
+                      {version.title ?? version.version_code}
+                      {version.is_current ? " (current)" : ""}
                     </option>
                   ))}
                 </select>
               </label>
             )}
-            <label>Description<textarea value={templateForm.description} onChange={(event) => setTemplateForm((form) => ({ ...form, description: event.target.value }))} /></label>
-            <div className="drawer-footer"><button className="ghost-button" type="button" onClick={() => { setDrawer(null); setEditingTemplateCode(""); }}>Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{editingTemplateCode ? "Update" : "Save"}</button></div>
+            <label>
+              Description
+              <textarea
+                disabled={isSaving}
+                value={templateForm.description}
+                onChange={(event) => {
+                  setTemplateFieldErrors((errors) => ({
+                    ...errors,
+                    description: undefined,
+                  }));
+                  setTemplateForm((form) => ({
+                    ...form,
+                    description: event.target.value,
+                  }));
+                }}
+              />
+              {displayedTemplateErrors.description && (
+                <em className="field-error">
+                  {displayedTemplateErrors.description}
+                </em>
+              )}
+            </label>
+            <div className="drawer-footer">
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={isSaving}
+                onClick={() => {
+                  setDrawer(null);
+                  setEditingTemplateCode("");
+                  setTemplateFieldErrors({});
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={isSaving || !isTemplateFormValid}
+                type="submit"
+              >
+                {isSaving
+                  ? editingTemplateCode
+                    ? "Updating..."
+                    : "Creating..."
+                  : editingTemplateCode
+                    ? "Update"
+                    : "Create"}
+              </button>
+            </div>
           </form>
         </div>
       )}
 
       {drawer === "version" && (
         <div className="drawer-backdrop">
-          <form className="side-drawer template-drawer template-form-drawer" onSubmit={saveVersion}>
+          <form
+            className="side-drawer template-drawer template-form-drawer"
+            onSubmit={saveVersion}
+          >
             <div className="drawer-header">
               <span>Create</span>
               <h3>Template Version</h3>
-              <button type="button" onClick={() => setDrawer(null)}>x</button>
+              <button type="button" onClick={() => setDrawer(null)}>
+                x
+              </button>
             </div>
-            <label>Version title *<input required value={versionForm.title} onChange={(event) => setVersionForm((form) => ({ ...form, title: event.target.value }))} /></label>
-            <label>Version code *<input required value={versionForm.version_code} onChange={(event) => setVersionForm((form) => ({ ...form, version_code: compactCode(event.target.value) }))} /></label>
-            <label>Version number<input type="number" min={1} value={versionForm.version_number} onChange={(event) => setVersionForm((form) => ({ ...form, version_number: Number(event.target.value) }))} /></label>
+            <label>
+              Version title *
+              <input
+                required
+                value={versionForm.title}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    title: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Version code *
+              <input
+                required
+                value={versionForm.version_code}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    version_code: compactCode(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Version number
+              <input
+                type="number"
+                min={1}
+                value={versionForm.version_number}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    version_number: Number(event.target.value),
+                  }))
+                }
+              />
+            </label>
             <label>
               Clone bindings from
               <select
                 value={versionForm.clone_source_version_code}
-                onChange={(event) => setVersionForm((form) => ({ ...form, clone_source_version_code: event.target.value }))}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    clone_source_version_code: event.target.value,
+                  }))
+                }
               >
                 <option value="">Start empty</option>
                 {versions.map((version) => (
-                  <option key={version.version_code} value={version.version_code}>
+                  <option
+                    key={version.version_code}
+                    value={version.version_code}
+                  >
                     {versionTitle(version)} - {version.version_code}
                   </option>
                 ))}
               </select>
             </label>
-            <label>Status<input value="DRAFT" readOnly /></label>
-            <label>Subtitle<input value={versionForm.subtitle} onChange={(event) => setVersionForm((form) => ({ ...form, subtitle: event.target.value }))} /></label>
-            <label>Instructions<textarea value={versionForm.instructions} onChange={(event) => setVersionForm((form) => ({ ...form, instructions: event.target.value }))} /></label>
-            <label className="checkbox-row"><input type="checkbox" checked={versionForm.is_current} onChange={(event) => setVersionForm((form) => ({ ...form, is_current: event.target.checked }))} /> Mark as current version</label>
-            <div className="drawer-footer"><button className="ghost-button" type="button" onClick={() => setDrawer(null)}>Cancel</button><button className="primary-button" disabled={isSaving} type="submit">Save Version</button></div>
+            <label>
+              Status
+              <input value="DRAFT" readOnly />
+            </label>
+            <label>
+              Subtitle
+              <input
+                value={versionForm.subtitle}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    subtitle: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Instructions
+              <textarea
+                value={versionForm.instructions}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    instructions: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={versionForm.is_current}
+                onChange={(event) =>
+                  setVersionForm((form) => ({
+                    ...form,
+                    is_current: event.target.checked,
+                  }))
+                }
+              />{" "}
+              Mark as current version
+            </label>
+            <div className="drawer-footer">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setDrawer(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={isSaving}
+                type="submit"
+              >
+                Save Version
+              </button>
+            </div>
           </form>
         </div>
       )}

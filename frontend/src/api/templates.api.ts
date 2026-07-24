@@ -121,7 +121,7 @@ export type TemplateDefinitionPayload = {
   status: string;
   default_locale_code: string;
   is_active: boolean;
-  description?: string;
+  description?: string | null;
 };
 
 export type TemplateVersionPayload = {
