@@ -122,7 +122,9 @@ export const navigationModules: NavModule[] = [
     icon: Send,
     items: [
       { label: "Dispatch Settings", path: "/requests/dispatch-settings", icon: Settings },
-      { label: "Dispatch Plans", path: "/requests/dispatch-plans", icon: CalendarDays },
+      { label: "Email Templates", path: "/requests/email-templates", icon: Mail },
+      { label: "Notification Rules", path: "/requests/notification-rules", icon: Settings },
+      { label: "Template Dispatch", path: "/requests/dispatch-plans", icon: CalendarDays },
       { label: "Collections", path: "/requests/collections", icon: Send },
       { label: "Dispatch Preview", path: "/requests/dispatch-preview", icon: FileText },
       { label: "Request Monitor", path: "/requests/monitor", icon: Gauge },

@@ -223,6 +223,52 @@ function parentNodeForTarget(targetNodeCode: string, hierarchy?: FrameworkHierar
   return relationship ? hierarchy?.nodes.find((candidate) => candidate.node_code === relationship.parent_node_code) : undefined;
 }
 
+function frameworkMappedNodeFromHierarchyNode(node: FrameworkNode, hierarchy?: FrameworkHierarchy | null): FrameworkMappedNode {
+  const level = hierarchy?.levels.find((candidate) => candidate.level_code === node.level_code);
+  return {
+    node_code: node.node_code,
+    node_number: node.node_number,
+    name: node.name,
+    short_name: node.short_name,
+    level_code: node.level_code,
+    level_number: level?.level_number,
+    level_name: level?.name ?? node.level_code,
+    color_value: node.color_value,
+    color_method: node.color_method,
+  };
+}
+
+function frameworkHierarchyPathForMappedNode(
+  mappedNode?: FrameworkMappedNode,
+  hierarchy?: FrameworkHierarchy | null,
+  fallbackParents: FrameworkMappedNode[] = [],
+): FrameworkMappedNode[] {
+  if (!mappedNode?.node_code) {
+    return [];
+  }
+  const nodeByCode = new Map((hierarchy?.nodes ?? []).map((node) => [node.node_code, node]));
+  const parentByChild = new Map(
+    (hierarchy?.relationships ?? [])
+      .filter((relationship) => relationship.is_active !== false)
+      .map((relationship) => [relationship.child_node_code, relationship.parent_node_code]),
+  );
+  const path: FrameworkMappedNode[] = [];
+  const visited = new Set<string>();
+  let currentCode: string | undefined = mappedNode.node_code;
+  while (currentCode && !visited.has(currentCode)) {
+    visited.add(currentCode);
+    const currentNode = nodeByCode.get(currentCode);
+    path.unshift(currentNode ? frameworkMappedNodeFromHierarchyNode(currentNode, hierarchy) : mappedNode);
+    currentCode = parentByChild.get(currentCode);
+  }
+
+  const fallbackPath = [...fallbackParents, mappedNode].filter((node) => Boolean(node.node_code));
+  const resolvedPath = path.length > 1 ? path : fallbackPath;
+  return resolvedPath
+    .filter((node, index, items) => items.findIndex((candidate) => candidate.node_code === node.node_code) === index)
+    .sort((left, right) => Number(left.level_number ?? 0) - Number(right.level_number ?? 0));
+}
+
 function indicatorParentNodes(hierarchy?: FrameworkHierarchy | null): FrameworkNode[] {
   const targets = indicatorTargetNodes(hierarchy);
   const parentCodes = new Set(
@@ -372,6 +418,7 @@ export function IndicatorLibraryPage() {
   );
   const targetNodeLabel = levelNameForNode(targetNodeOptions[0], frameworkHierarchy);
   const parentNodeLabel = levelNameForNode(parentNodeOptions[0], frameworkHierarchy);
+  const hasParentLevelForIndicatorMapping = parentNodeOptions.length > 0;
 
   async function loadPage() {
     setIsLoading(true);
@@ -589,6 +636,7 @@ export function IndicatorLibraryPage() {
           globalIndicators={globalIndicators}
           officers={officers}
           activeFramework={activeFramework}
+          frameworkHierarchy={frameworkHierarchy}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onRefresh={() => loadIndicatorDetail(getIndicatorCode(overviewOf(selectedDetail)), false, true)}
@@ -822,31 +870,30 @@ export function IndicatorLibraryPage() {
                   <input value={activeFramework?.edition_code ?? ""} readOnly />
                 </label>
               </div>
-              <div className="form-grid two">
-                <label className="form-field">
-                  <span>{parentNodeOptions.length ? parentNodeLabel : "Parent level"}</span>
-                  <select
-                    value={createForm.parent_node_code}
-                    onChange={(event) =>
-                      setCreateForm((current) => ({
-                        ...current,
-                        parent_node_code: event.target.value,
-                        target_node_code: "",
-                      }))
-                    }
-                    disabled={parentNodeOptions.length === 0}
-                  >
-                    <option value="">
-                      {parentNodeOptions.length ? `Select ${parentNodeLabel.toLowerCase()}` : "No parent level available"}
-                    </option>
-                    {parentNodeOptions.map((node) => (
-                      <option value={node.node_code} key={node.node_code}>
-                        {frameworkNodeOptionLabel(node, frameworkHierarchy)}
-                      </option>
-                    ))}
-                  </select>
-                  <small>Loaded from the selected unit's active framework hierarchy.</small>
-                </label>
+              <div className={hasParentLevelForIndicatorMapping ? "form-grid two" : "form-grid"}>
+                {hasParentLevelForIndicatorMapping && (
+                  <label className="form-field">
+                    <span>{parentNodeLabel}</span>
+                    <select
+                      value={createForm.parent_node_code}
+                      onChange={(event) =>
+                        setCreateForm((current) => ({
+                          ...current,
+                          parent_node_code: event.target.value,
+                          target_node_code: "",
+                        }))
+                      }
+                    >
+                      <option value="">Select {parentNodeLabel.toLowerCase()}</option>
+                      {parentNodeOptions.map((node) => (
+                        <option value={node.node_code} key={node.node_code}>
+                          {frameworkNodeOptionLabel(node, frameworkHierarchy)}
+                        </option>
+                      ))}
+                    </select>
+                    <small>Loaded from the selected unit's active framework hierarchy.</small>
+                  </label>
+                )}
                 <label className="form-field">
                   <span>{targetNodeLabel} *</span>
                   <select
@@ -1032,6 +1079,7 @@ function IndicatorDetailPage({
   globalIndicators,
   officers,
   activeFramework,
+  frameworkHierarchy,
   activeTab,
   onTabChange,
   onRefresh,
@@ -1045,6 +1093,7 @@ function IndicatorDetailPage({
   globalIndicators: GlobalIndicatorListItem[];
   officers: MasterRecord[];
   activeFramework: FrameworkEdition | null;
+  frameworkHierarchy: FrameworkHierarchy | null;
   activeTab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
   onRefresh: () => Promise<void>;
@@ -1138,8 +1187,8 @@ function IndicatorDetailPage({
   const metadata = firstMetadata(detail);
   const globalMapping = firstGlobalMapping(detail);
   const frameworkMapping = firstFrameworkMapping(detail);
-  const parentNode = frameworkMapping?.parents?.[0];
   const mappedNode = frameworkMapping?.mapped_node;
+  const relatedHierarchyPath = frameworkHierarchyPathForMappedNode(mappedNode, frameworkHierarchy, frameworkMapping?.parents ?? []);
   const notes = parseMetadataNotes(metadata?.notes);
   const indicatorNumber = textValue(overview.indicator_number);
   const color = overview.color_value || "#e91d3d";
@@ -1148,8 +1197,7 @@ function IndicatorDetailPage({
   const frameworkCode = overview.framework_code || activeFramework?.framework_code || "";
   const editionCode = overview.edition_code || activeFramework?.edition_code || "";
   const metadataRows: Array<[string, unknown]> = [
-    [parentNode?.level_name ?? "Parent Level", nodeLabel(parentNode)],
-    [mappedNode?.level_name ?? "Mapped Level", nodeLabel(mappedNode)],
+    ...relatedHierarchyPath.map((node): [string, unknown] => [node.level_name ?? "Framework Level", nodeLabel(node)]),
     ["Indicator", `${indicatorNumber}: ${getIndicatorName(overview)}`],
     ["Data Source Ministry", sourceMinistry],
     ["Department / Division", sourceDepartment],
@@ -1555,34 +1603,34 @@ function IndicatorDetailPage({
               <FileText size={15} />
               Related Hierarchy
             </h3>
-            <DetailLine label={parentNode?.level_name ?? "Parent"} value={nodeLabel(parentNode)} />
-            <DetailLine label={mappedNode?.level_name ?? "Mapped Node"} value={nodeLabel(mappedNode)} />
+            {relatedHierarchyPath.length ? (
+              relatedHierarchyPath.map((node) => (
+                <DetailLine key={`${node.level_code}-${node.node_code}`} label={node.level_name ?? "Level"} value={nodeLabel(node)} />
+              ))
+            ) : (
+              <DetailLine label="Framework" value="No hierarchy mapping found" />
+            )}
             <DetailLine label="Indicator" value={`${indicatorNumber} - ${getIndicatorName(overview)}`} />
             <div className="side-action-row">
-              <button
-                className="secondary-button compact"
-                type="button"
-                disabled={!parentNode?.level_code || !parentNode.node_code}
-                onClick={() => navigate(`/framework/levels/${encodeURIComponent(String(parentNode?.level_code))}/${encodeURIComponent(String(parentNode?.node_code))}`)}
-              >
-                <ExternalLink size={12} />
-                Open {parentNode?.level_name ?? "Parent"} Detail
-              </button>
-              <button
-                className="secondary-button compact"
-                type="button"
-                disabled={!mappedNode?.level_code || !mappedNode.node_code}
-                onClick={() =>
-                  parentNode?.level_code && parentNode.node_code
-                    ? navigate(
-                        `/framework/levels/${encodeURIComponent(String(parentNode.level_code))}/${encodeURIComponent(String(parentNode.node_code))}?selected=${encodeURIComponent(String(mappedNode?.node_code))}`,
-                      )
-                    : navigate(`/framework/levels/${encodeURIComponent(String(mappedNode?.level_code))}/${encodeURIComponent(String(mappedNode?.node_code))}`)
-                }
-              >
-                <ExternalLink size={12} />
-                Open {mappedNode?.level_name ?? "Mapped"} Detail
-              </button>
+              {relatedHierarchyPath.map((node, index) => {
+                const parent = relatedHierarchyPath[index - 1];
+                const path =
+                  parent?.level_code && parent.node_code
+                    ? `/framework/levels/${encodeURIComponent(String(parent.level_code))}/${encodeURIComponent(String(parent.node_code))}?selected=${encodeURIComponent(String(node.node_code))}`
+                    : `/framework/levels/${encodeURIComponent(String(node.level_code))}/${encodeURIComponent(String(node.node_code))}`;
+                return (
+                  <button
+                    className="secondary-button compact"
+                    key={`${node.level_code}-${node.node_code}-action`}
+                    type="button"
+                    disabled={!node.level_code || !node.node_code}
+                    onClick={() => navigate(path)}
+                  >
+                    <ExternalLink size={12} />
+                    Open {node.level_name ?? "Level"}
+                  </button>
+                );
+              })}
             </div>
           </section>
         </aside>

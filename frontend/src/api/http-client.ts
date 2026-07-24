@@ -91,6 +91,14 @@ function getAuthHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export function getStoredAccessToken(): string {
+  return window.localStorage.getItem(ACCESS_TOKEN_KEY) ?? "";
+}
+
+export function buildApiUrl(path: string): string {
+  return apiUrl(path);
+}
+
 async function requestWithRefresh(path: string, init: RequestInit): Promise<Response> {
   const response = await fetch(apiUrl(path), {
     ...init,
@@ -160,6 +168,9 @@ function resolveApiBaseUrl(configuredUrl: string | undefined): string {
   if (trimmedUrl) {
     if (trimmedUrl.startsWith("/") && window.location.protocol === "file:") {
       return "http://localhost:8100";
+    }
+    if (trimmedUrl.startsWith("/") && (window.location.protocol === "http:" || window.location.protocol === "https:")) {
+      return `${window.location.origin}${trimmedUrl.replace(/\/$/, "")}`;
     }
     return trimmedUrl.replace(/\/$/, "");
   }

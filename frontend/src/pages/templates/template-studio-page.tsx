@@ -27,6 +27,7 @@ import {
   createTemplateAxis,
   deactivateTemplateMeasure,
   getTemplateRenderContract,
+  getTemplateVersion,
   getTemplateStudioDraft,
   listTemplateAxes,
   listTemplateFormulaOutputs,
@@ -223,6 +224,22 @@ function templateName(template?: TemplateDefinition | null) {
 
 function normalizeCode(value?: string | null) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+function samePublicCode(left?: string | null, right?: string | null) {
+  return normalizeCode(left) === normalizeCode(right);
+}
+
+function urlVersionFallback(templateCode: string, versionCode: string): TemplateVersion {
+  return {
+    template_code: templateCode,
+    version_code: versionCode,
+    title: versionCode,
+    version_number: null,
+    render_contract_version: "v1",
+    status: "DRAFT",
+    is_current: false,
+  };
 }
 
 function isCodeLike(value: string, code?: string | null) {
@@ -664,6 +681,7 @@ export function TemplateStudioPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLibraryLoading, setIsLibraryLoading] = useState(true);
   const [isRecipientLoading, setIsRecipientLoading] = useState(false);
+  const [isVersionListLoading, setIsVersionListLoading] = useState(false);
   const [isVersionLoading, setIsVersionLoading] = useState(false);
   const [isPreviewHydrating, setIsPreviewHydrating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -671,17 +689,21 @@ export function TemplateStudioPage() {
   const versionHydratedRef = useRef(false);
   const autosaveTimerRef = useRef<number | undefined>(undefined);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? null,
-    [selectedTemplateCode, templates],
-  );
+  const selectedTemplate = useMemo(() => {
+    if (selectedTemplateCode) {
+      return templates.find((template) => samePublicCode(template.template_code, selectedTemplateCode)) ?? null;
+    }
+    return templates[0] ?? null;
+  }, [selectedTemplateCode, templates]);
 
-  const selectedVersion = useMemo(
-    () => versions.find((version) => version.version_code === selectedVersionCode) ?? versions[0] ?? null,
-    [selectedVersionCode, versions],
-  );
+  const selectedVersion = useMemo(() => {
+    if (selectedVersionCode) {
+      return versions.find((version) => samePublicCode(version.version_code, selectedVersionCode)) ?? null;
+    }
+    return versions.find((version) => version.is_current) ?? versions[0] ?? null;
+  }, [selectedVersionCode, versions]);
   const isSelectedVersionFrozen = ["ACTIVE", "PUBLISHED"].includes(normalizeCode(selectedVersion?.status));
-  const isStudioHydrating = isVersionLoading || Boolean(selectedVersion?.version_code && !versionHydratedRef.current);
+  const isStudioHydrating = isVersionListLoading || isVersionLoading || Boolean(selectedVersion?.version_code && !versionHydratedRef.current);
   const isShellLoading = isLoading && templates.length === 0;
 
   const libraryItems = useMemo(() => {
@@ -1261,8 +1283,12 @@ export function TemplateStudioPage() {
   useEffect(() => {
     if (!selectedTemplate?.template_code) {
       setVersions([]);
+      setSelectedVersionCode("");
       return;
     }
+    const requestedVersionCode = params.get("version_code") ?? "";
+    setVersions([]);
+    setSelectedVersionCode((current) => requestedVersionCode || current);
     void loadVersions(selectedTemplate.template_code);
   }, [selectedTemplate?.template_code]);
 
@@ -1565,22 +1591,45 @@ export function TemplateStudioPage() {
   }
 
   async function loadVersions(templateCode: string) {
+    setIsVersionListLoading(true);
     try {
-      const response = await listTemplateVersions(templateCode);
-      const nextVersions = response.data ?? [];
+      let nextVersions: TemplateVersion[] = [];
       const requestedVersionCode = params.get("version_code") ?? "";
+      try {
+        const response = await listTemplateVersions(templateCode);
+        nextVersions = response.data ?? [];
+      } catch {
+        nextVersions = [];
+      }
+      if (requestedVersionCode && !nextVersions.some((version) => samePublicCode(version.version_code, requestedVersionCode))) {
+        try {
+          const detailResponse = await getTemplateVersion(requestedVersionCode);
+          const requestedVersion = detailResponse.data;
+          const requestedTemplateCode = requestedVersion?.template_code ?? templateCode;
+          if (requestedVersion?.version_code && samePublicCode(requestedTemplateCode, templateCode)) {
+            nextVersions = [
+              requestedVersion,
+              ...nextVersions.filter((version) => !samePublicCode(version.version_code, requestedVersion.version_code)),
+            ];
+          }
+        } catch {
+          nextVersions = [urlVersionFallback(templateCode, requestedVersionCode), ...nextVersions];
+        }
+      }
       setVersions(nextVersions);
       setSelectedVersionCode(
         (current) =>
-          nextVersions.some((version) => version.version_code === requestedVersionCode)
+          nextVersions.some((version) => samePublicCode(version.version_code, requestedVersionCode))
             ? requestedVersionCode
-            : nextVersions.some((version) => version.version_code === current)
+            : nextVersions.some((version) => samePublicCode(version.version_code, current))
               ? current
               : nextVersions.find((version) => version.is_current)?.version_code || nextVersions[0]?.version_code || "",
       );
     } catch {
       setVersions([]);
       setSelectedVersionCode("");
+    } finally {
+      setIsVersionListLoading(false);
     }
   }
 
@@ -3151,6 +3200,46 @@ export function TemplateStudioPage() {
     return null;
   }
 
+  if (!isShellLoading && selectedTemplateCode && !selectedTemplate) {
+    return (
+      <section className="template-designer-page">
+        <div className="template-designer-header">
+          <div>
+            <div className="breadcrumb-line">Home / Data Definition / Template Studio</div>
+            <h2>Template Studio</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={() => navigate("/template/library")}>Library</button>
+        </div>
+        <div className="template-studio-empty-state">
+          <FileSpreadsheet size={24} />
+          <h3>Template not found</h3>
+          <p>The selected template is not available for this unit or locale. Return to Template Library and open a valid template.</p>
+          <button className="primary-button compact" type="button" onClick={() => navigate("/template/library")}>Back to Template Library</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!isShellLoading && !isVersionListLoading && selectedTemplate && versions.length === 0 && !params.get("version_code")) {
+    return (
+      <section className="template-designer-page">
+        <div className="template-designer-header">
+          <div>
+            <div className="breadcrumb-line">Home / Data Definition / Template Studio</div>
+            <h2>Template Studio</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={() => navigate("/template/library")}>Library</button>
+        </div>
+        <div className="template-studio-empty-state">
+          <Plus size={24} />
+          <h3>Create a draft version first</h3>
+          <p>Studio opens only after this template has a draft version. Use Add Version in Template Library, then open Studio for that version.</p>
+          <button className="primary-button compact" type="button" onClick={() => navigate("/template/library")}>Back to Template Library</button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="template-designer-page">
       <div className="template-designer-header">
@@ -3197,7 +3286,10 @@ export function TemplateStudioPage() {
             </div>
             <label>
               Version
-              <select value={selectedVersion?.version_code ?? ""} onChange={(event) => setSelectedVersionCode(event.target.value)}>
+              <select value={selectedVersion?.version_code ?? selectedVersionCode} onChange={(event) => setSelectedVersionCode(event.target.value)}>
+                {versions.length === 0 && selectedVersionCode && (
+                  <option value={selectedVersionCode}>{selectedVersionCode}</option>
+                )}
                 {versions.map((version) => <option key={version.version_code} value={version.version_code}>{version.title ?? version.version_code}</option>)}
               </select>
             </label>

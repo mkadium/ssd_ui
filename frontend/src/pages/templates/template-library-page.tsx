@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   createTemplate,
   createTemplateVersion,
+  getTemplateVersion,
   getTemplateStudioDraft,
   listTemplateFormulaOutputs,
   listTemplates,
@@ -83,16 +84,19 @@ export function TemplateLibraryPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
   const [versionForm, setVersionForm] = useState(emptyVersionForm);
+  const [versionTemplateCode, setVersionTemplateCode] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isVersionLoading, setIsVersionLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.template_code === selectedTemplateCode) ?? templates[0] ?? null,
-    [selectedTemplateCode, templates],
-  );
+  const selectedTemplate = useMemo(() => {
+    if (selectedTemplateCode) {
+      return templates.find((template) => template.template_code === selectedTemplateCode) ?? null;
+    }
+    return templates[0] ?? null;
+  }, [selectedTemplateCode, templates]);
   const currentSelectedVersion = useMemo(() => {
     if (!selectedTemplate) return null;
     return (
@@ -108,6 +112,13 @@ export function TemplateLibraryPage() {
 
   function templateDisplayStatus(template: TemplateDefinition) {
     return String(template.current_version_status ?? template.version_status ?? template.status ?? "DRAFT").toUpperCase();
+  }
+
+  function templateHasVersion(template: TemplateDefinition) {
+    const templateCode = template.template_code ?? "";
+    const cachedVersions = templateCode ? versionCache[templateCode] : undefined;
+    if (cachedVersions) return cachedVersions.length > 0;
+    return Boolean(template.current_version_code || template.version_code || Number(template.current_version_number ?? template.version_number ?? 0) > 0);
   }
 
   const filteredTemplates = useMemo(() => {
@@ -225,22 +236,40 @@ export function TemplateLibraryPage() {
     if (template.template_code) void loadVersions(template.template_code, true);
   }
 
-  function openVersionDrawer() {
-    if (!selectedTemplate?.template_code) return;
-    const nextNumber = Math.max(0, ...versions.map((version) => Number(version.version_number ?? 0))) + 1;
-    const baseCode = compactCode(selectedTemplate.template_code);
+  function openVersionDrawer(targetTemplate: TemplateDefinition | null = selectedTemplate, targetVersions = versions) {
+    if (!targetTemplate?.template_code) return;
+    const templateCode = targetTemplate.template_code;
+    const nextNumber = Math.max(0, ...targetVersions.map((version) => Number(version.version_number ?? 0))) + 1;
+    const baseCode = compactCode(templateCode);
     const sourceVersion =
-      versions.find((version) => version.version_code === selectedTemplate.current_version_code) ??
-      versions.find((version) => version.is_current) ??
-      versions[0];
+      targetVersions.find((version) => version.version_code === targetTemplate.current_version_code) ??
+      targetVersions.find((version) => version.is_current) ??
+      targetVersions[0];
+    setVersionTemplateCode(templateCode);
     setVersionForm({
       ...emptyVersionForm,
       version_code: `${baseCode}_V${nextNumber}`,
-      title: `${templateName(selectedTemplate)} v${nextNumber}`,
+      title: `${templateName(targetTemplate)} v${nextNumber}`,
       version_number: nextNumber,
       clone_source_version_code: sourceVersion?.version_code ?? "",
     });
     setDrawer("version");
+  }
+
+  function closeVersionDrawer() {
+    setDrawer(null);
+    setVersionTemplateCode("");
+    setVersionForm(emptyVersionForm);
+  }
+
+  async function openVersionDrawerForTemplate(template: TemplateDefinition) {
+    const templateCode = template.template_code ?? "";
+    if (!templateCode) return;
+    setSelectedTemplateCode(templateCode);
+    setDetailOpen(true);
+    setError("");
+    const rows = await loadVersions(templateCode, true);
+    openVersionDrawer(template, rows);
   }
 
   async function cloneVersionDesign(sourceVersionCode: string, targetVersionCode: string) {
@@ -347,13 +376,14 @@ export function TemplateLibraryPage() {
 
   async function saveVersion(event: FormEvent) {
     event.preventDefault();
-    if (!selectedTemplate?.template_code) return;
+    const templateCode = versionTemplateCode || selectedTemplate?.template_code || "";
+    if (!templateCode) return;
     setIsSaving(true);
     setError("");
     try {
-      const versionCode = compactCode(versionForm.version_code || `${selectedTemplate.template_code}_V${versionForm.version_number}`);
-      await createTemplateVersion(selectedTemplate.template_code, {
-        template_code: selectedTemplate.template_code,
+      const versionCode = compactCode(versionForm.version_code || `${templateCode}_V${versionForm.version_number}`);
+      const response = await createTemplateVersion(templateCode, {
+        template_code: templateCode,
         version_code: versionCode,
         title: versionForm.title.trim(),
         unit_code: getSelectedUnitCode(),
@@ -364,20 +394,46 @@ export function TemplateLibraryPage() {
         subtitle: versionForm.subtitle.trim() || undefined,
         instructions: versionForm.instructions.trim() || undefined,
       });
+      const createdVersionCode = compactCode(response.data?.version_code || versionCode);
       if (versionForm.clone_source_version_code) {
-        await cloneVersionDesign(versionForm.clone_source_version_code, versionCode);
+        await cloneVersionDesign(versionForm.clone_source_version_code, createdVersionCode);
       }
       setNotice(versionForm.clone_source_version_code ? "Template version cloned. Opening Studio..." : "Template version saved.");
-      setDrawer(null);
       setVersionCache((current) => {
         const next = { ...current };
-        delete next[selectedTemplate.template_code ?? ""];
+        delete next[templateCode];
         return next;
       });
-      await loadVersions(selectedTemplate.template_code, true);
+      let refreshedVersions = await loadVersions(templateCode, true);
+      let reloadedVersion =
+        refreshedVersions.find((version) => compactCode(version.version_code ?? "") === createdVersionCode) ??
+        response.data;
+      if (!refreshedVersions.some((version) => compactCode(version.version_code ?? "") === createdVersionCode)) {
+        try {
+          const detailResponse = await getTemplateVersion(createdVersionCode);
+          if (detailResponse.data?.version_code) {
+            reloadedVersion = detailResponse.data;
+            refreshedVersions = [
+              detailResponse.data,
+              ...refreshedVersions.filter((version) => compactCode(version.version_code ?? "") !== createdVersionCode),
+            ];
+            setVersions(refreshedVersions);
+            setVersionCache((current) => ({ ...current, [templateCode]: refreshedVersions }));
+          }
+        } catch {
+          // The create response is still enough to open Studio; the Studio page also verifies the requested version.
+        }
+      }
+      const studioVersionCode = compactCode(reloadedVersion?.version_code || "");
+      if (!studioVersionCode) {
+        throw new Error("Template version was saved but could not be reloaded. Refresh Template Library before opening Studio.");
+      }
+      setSelectedTemplateCode(templateCode);
+      closeVersionDrawer();
+      await loadTemplates();
       navigate(
-        `/template/studio?template_code=${encodeURIComponent(selectedTemplate.template_code)}&version_code=${encodeURIComponent(
-          versionCode,
+        `/template/studio?template_code=${encodeURIComponent(templateCode)}&version_code=${encodeURIComponent(
+          studioVersionCode,
         )}&step=structure`,
       );
     } catch (saveError) {
@@ -420,8 +476,15 @@ export function TemplateLibraryPage() {
     const cachedVersions = versionCache[templateCode] ?? [];
     const rows = cachedVersions.length > 0 ? cachedVersions : await loadVersions(templateCode, true);
     const versionCode = template.current_version_code || rows.find((version) => version.is_current)?.version_code || rows[0]?.version_code || "";
+    if (!versionCode) {
+      setSelectedTemplateCode(templateCode);
+      setDetailOpen(true);
+      openVersionDrawer(template, rows);
+      setNotice("Create a draft version before opening Studio.");
+      return;
+    }
     const search = new URLSearchParams({ template_code: templateCode, step: "structure" });
-    if (versionCode) search.set("version_code", versionCode);
+    search.set("version_code", versionCode);
     navigate(`/template/studio?${search.toString()}`);
   }
 
@@ -523,16 +586,29 @@ export function TemplateLibraryPage() {
                           >
                             <Edit3 size={12} /> Edit
                           </button>
-                        <button
-                          className="template-action-button studio"
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void openStudio(template);
-                          }}
-                        >
-                          <FileSpreadsheet size={12} /> Studio
-                        </button>
+                          {templateHasVersion(template) ? (
+                            <button
+                              className="template-action-button studio"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void openStudio(template);
+                              }}
+                            >
+                              <FileSpreadsheet size={12} /> Studio
+                            </button>
+                          ) : (
+                            <button
+                              className="template-action-button add-version"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void openVersionDrawerForTemplate(template);
+                              }}
+                            >
+                              <Plus size={12} /> Add Version
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -585,8 +661,8 @@ export function TemplateLibraryPage() {
                 <span className="eyebrow">Versions</span>
                 <strong>{versions.length} configured</strong>
               </div>
-              <button className="ghost-button" type="button" onClick={openVersionDrawer}>
-                <Plus size={14} /> New Version
+              <button className="ghost-button" type="button" onClick={() => openVersionDrawer()}>
+                <Plus size={14} /> Add Version
               </button>
             </div>
             <div className="template-version-list">
@@ -677,7 +753,7 @@ export function TemplateLibraryPage() {
             <div className="drawer-header">
               <span>Create</span>
               <h3>Template Version</h3>
-              <button type="button" onClick={() => setDrawer(null)}>x</button>
+              <button type="button" onClick={closeVersionDrawer}>x</button>
             </div>
             <label>Version title *<input required value={versionForm.title} onChange={(event) => setVersionForm((form) => ({ ...form, title: event.target.value }))} /></label>
             <label>Version code *<input required value={versionForm.version_code} onChange={(event) => setVersionForm((form) => ({ ...form, version_code: compactCode(event.target.value) }))} /></label>
@@ -700,7 +776,7 @@ export function TemplateLibraryPage() {
             <label>Subtitle<input value={versionForm.subtitle} onChange={(event) => setVersionForm((form) => ({ ...form, subtitle: event.target.value }))} /></label>
             <label>Instructions<textarea value={versionForm.instructions} onChange={(event) => setVersionForm((form) => ({ ...form, instructions: event.target.value }))} /></label>
             <label className="checkbox-row"><input type="checkbox" checked={versionForm.is_current} onChange={(event) => setVersionForm((form) => ({ ...form, is_current: event.target.checked }))} /> Mark as current version</label>
-            <div className="drawer-footer"><button className="ghost-button" type="button" onClick={() => setDrawer(null)}>Cancel</button><button className="primary-button" disabled={isSaving} type="submit">Save Version</button></div>
+            <div className="drawer-footer"><button className="ghost-button" type="button" onClick={closeVersionDrawer}>Cancel</button><button className="primary-button" disabled={isSaving} type="submit">Save Version</button></div>
           </form>
         </div>
       )}

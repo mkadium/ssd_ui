@@ -1,4 +1,4 @@
-import { Eye, FileSpreadsheet, RefreshCw, Save, Search, X } from "lucide-react";
+import { Eye, FileSpreadsheet, Lock, RefreshCw, Save, Search, X } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -103,6 +103,20 @@ function selectionsFromMappings(rows: TemplateIndicatorMapping[]) {
     .filter((row) => row.national_indicator_code !== "-");
 }
 
+function mappingIndicatorCode(mapping: TemplateIndicatorMapping) {
+  return textValue(mapping.indicator_code ?? mapping.national_indicator_code);
+}
+
+function isMappingFrozen(mapping: TemplateIndicatorMapping) {
+  const metadata = (mapping.mapping_metadata ?? {}) as Record<string, unknown>;
+  return metadata.frozen === true || String(metadata.frozen ?? "").toLowerCase() === "true";
+}
+
+function mappingsFrozen(rows: TemplateIndicatorMapping[]) {
+  const primaryRows = rows.filter((row) => row.is_active !== false && textValue(row.mapping_role).toUpperCase() === "PRIMARY");
+  return primaryRows.length > 0 && primaryRows.every(isMappingFrozen);
+}
+
 function nodeIndicatorCount(node?: FrameworkNode) {
   return Number(node?.indicator_count ?? 0);
 }
@@ -182,6 +196,8 @@ export function TemplateMappingsPage() {
     (mappingCache[versionCode] ?? []).filter(
       (mapping) => mapping.is_active !== false && textValue(mapping.mapping_role).toUpperCase() === "PRIMARY",
     ).length;
+  const selectedVersionMappings = selected?.version.version_code ? mappingCache[selected.version.version_code] ?? [] : [];
+  const isSelectedMappingFrozen = mappingsFrozen(selectedVersionMappings);
 
   const templateMappingSummary = useMemo(() => {
     const mapped = published.filter((item) => mappingCountForVersion(textValue(item.version.version_code)) > 0).length;
@@ -339,6 +355,10 @@ export function TemplateMappingsPage() {
   }
 
   function toggleIndicator(indicator: IndicatorListItem) {
+    if (isSelectedMappingFrozen) {
+      setError("This template indicator mapping is frozen. Admin unfreeze is required before changes are allowed.");
+      return;
+    }
     const key = indicatorKey(indicator);
     setSelectedIndicators((current) =>
       current.some((item) => item.national_indicator_code === key)
@@ -356,6 +376,10 @@ export function TemplateMappingsPage() {
 
   async function saveMapping() {
     if (!selected?.version.version_code) return;
+    if (isSelectedMappingFrozen) {
+      setError("This template indicator mapping is frozen. Admin unfreeze is required before changes are allowed.");
+      return;
+    }
     setIsSaving(true);
     setError("");
     try {
@@ -365,29 +389,32 @@ export function TemplateMappingsPage() {
       const activeExisting = existing.filter(
         (mapping) => mapping.is_active !== false && textValue(mapping.mapping_role).toUpperCase() === "PRIMARY",
       );
+      const activeExistingCodes = new Set(activeExisting.map(mappingIndicatorCode));
 
       await Promise.all(
-        selectedIndicators.map((indicator, index) =>
-          upsertTemplateIndicatorMapping(versionCode, {
-            indicator_code: indicator.national_indicator_code,
-            unit_code: getSelectedUnitCode(),
-            mapping_role: "PRIMARY",
-            sort_order: index + 1,
-            mapping_metadata: {
-              indicator_number: indicator.indicator_number,
-              indicator_name: indicator.name,
-              mapped_from: "template_mapping_workspace",
-            },
-            is_active: true,
-          }),
-        ),
+        selectedIndicators
+          .map((indicator, index) =>
+            upsertTemplateIndicatorMapping(versionCode, {
+              indicator_code: indicator.national_indicator_code,
+              unit_code: getSelectedUnitCode(),
+              mapping_role: "PRIMARY",
+              sort_order: index + 1,
+              mapping_metadata: {
+                indicator_number: indicator.indicator_number,
+                indicator_name: indicator.name,
+                mapped_from: "template_mapping_workspace",
+                frozen: false,
+              },
+              is_active: true,
+            }),
+          ),
       );
 
       await Promise.all(
         activeExisting
-          .filter((mapping) => !selectedCodes.has(textValue(mapping.indicator_code ?? mapping.national_indicator_code)))
+          .filter((mapping) => !selectedCodes.has(mappingIndicatorCode(mapping)))
           .map((mapping) =>
-            deactivateTemplateIndicatorMapping(versionCode, textValue(mapping.indicator_code ?? mapping.national_indicator_code), {
+            deactivateTemplateIndicatorMapping(versionCode, mappingIndicatorCode(mapping), {
               unit_code: getSelectedUnitCode(),
               mapping_role: "PRIMARY",
               is_active: false,
@@ -399,6 +426,39 @@ export function TemplateMappingsPage() {
       setNotice("Template indicator mapping saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Template indicator mapping could not be saved.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function freezeMapping() {
+    if (!selected?.version.version_code || !selectedIndicators.length || isSelectedMappingFrozen) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      const versionCode = selected.version.version_code;
+      await Promise.all(
+        selectedIndicators.map((indicator, index) =>
+          upsertTemplateIndicatorMapping(versionCode, {
+            indicator_code: indicator.national_indicator_code,
+            unit_code: getSelectedUnitCode(),
+            mapping_role: "PRIMARY",
+            sort_order: index + 1,
+            mapping_metadata: {
+              indicator_number: indicator.indicator_number,
+              indicator_name: indicator.name,
+              mapped_from: "template_mapping_workspace",
+              frozen: true,
+              frozen_at: new Date().toISOString(),
+            },
+            is_active: true,
+          }),
+        ),
+      );
+      await loadMappings(versionCode, true);
+      setNotice("Template indicator mapping frozen for dispatch.");
+    } catch (freezeError) {
+      setError(freezeError instanceof Error ? freezeError.message : "Template indicator mapping could not be frozen.");
     } finally {
       setIsSaving(false);
     }
@@ -454,7 +514,10 @@ export function TemplateMappingsPage() {
           <button className="secondary-button compact" type="button" disabled={!selected} onClick={openTemplateStudioInNewTab}>
             <Eye size={13} /> View Template
           </button>
-          <button className="primary-button compact" type="button" disabled={!selected || isSaving} onClick={() => void saveMapping()}>
+          <button className="secondary-button compact" type="button" disabled={!selected || isSaving || isSelectedMappingFrozen || !selectedIndicators.length} onClick={() => void freezeMapping()}>
+            <Lock size={13} /> {isSelectedMappingFrozen ? "Frozen" : "Freeze Mapping"}
+          </button>
+          <button className="primary-button compact" type="button" disabled={!selected || isSaving || isSelectedMappingFrozen} onClick={() => void saveMapping()}>
             <Save size={13} /> {isSaving ? "Saving..." : "Save Mapping"}
           </button>
         </div>
@@ -528,7 +591,9 @@ export function TemplateMappingsPage() {
               <h3>{templateName(selected?.template)}</h3>
               <p>{versionTitle(selected?.version)} | {textValue(selected?.version.version_code)}</p>
             </div>
-            <span className="status-pill published">Published</span>
+            <span className={`status-pill ${isSelectedMappingFrozen ? "frozen" : "published"}`}>
+              {isSelectedMappingFrozen ? "Frozen" : "Published"}
+            </span>
           </div>
 
           <div className="template-mapping-browser">
@@ -575,8 +640,8 @@ export function TemplateMappingsPage() {
                           target.indicators.map((indicator) => {
                             const checked = selectedIndicators.some((item) => item.national_indicator_code === indicatorKey(indicator));
                             return (
-                              <label className={checked ? "template-mapping-indicator-row selected" : "template-mapping-indicator-row"} key={indicatorKey(indicator)}>
-                                <input type="checkbox" checked={checked} onChange={() => toggleIndicator(indicator)} />
+                              <label className={`${checked ? "template-mapping-indicator-row selected" : "template-mapping-indicator-row"} ${isSelectedMappingFrozen ? "disabled" : ""}`} key={indicatorKey(indicator)}>
+                                <input type="checkbox" checked={checked} disabled={isSelectedMappingFrozen} onChange={() => toggleIndicator(indicator)} />
                                 <span>
                                   <strong>{textValue(indicator.indicator_number)}</strong>
                                   <em>{textValue(indicator.name)}</em>
@@ -603,7 +668,7 @@ export function TemplateMappingsPage() {
                 selectedIndicators.map((indicator) => (
                   <article className="template-mapping-selected-card" key={indicator.national_indicator_code}>
                     <span title={indicatorLabel(indicator)}>{textValue(indicator.indicator_number ?? indicator.national_indicator_code)}</span>
-                    <button type="button" onClick={() => setSelectedIndicators((current) => current.filter((item) => item.national_indicator_code !== indicator.national_indicator_code))}>
+                    <button type="button" disabled={isSelectedMappingFrozen} onClick={() => setSelectedIndicators((current) => current.filter((item) => item.national_indicator_code !== indicator.national_indicator_code))}>
                       <X size={13} />
                     </button>
                   </article>

@@ -1,4 +1,4 @@
-import { ExternalLink, Grid2X2, List, RefreshCw, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, Grid2X2, List, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -125,13 +125,22 @@ export function FrameworkLevelPage() {
       .forEach((relationship) => {
         const childNode = nodeByCode.get(relationship.child_node_code);
         if (!childNode || childNode.is_active === false) return;
-        if (nextLevel && childNode.level_code !== nextLevel.level_code) return;
         const children = map.get(relationship.parent_node_code) ?? [];
         children.push(relationship.child_node_code);
         map.set(relationship.parent_node_code, children);
       });
+    map.forEach((children, parentCode) => {
+      map.set(
+        parentCode,
+        children.sort((leftCode, rightCode) => {
+          const left = nodeByCode.get(leftCode);
+          const right = nodeByCode.get(rightCode);
+          return Number(left?.sort_order ?? 0) - Number(right?.sort_order ?? 0) || getNodeTitle(left ?? { node_code: leftCode, level_code: "" }).localeCompare(getNodeTitle(right ?? { node_code: rightCode, level_code: "" }));
+        }),
+      );
+    });
     return map;
-  }, [hierarchy, nextLevel, nodeByCode]);
+  }, [hierarchy, nodeByCode]);
 
   const parentCodeByChild = useMemo(() => {
     const map = new Map<string, string>();
@@ -169,8 +178,15 @@ export function FrameworkLevelPage() {
   }, [currentNodes, isIndicatorMappingLevel, parentCodeByChild, parentFilter, query]);
 
   const totalChildCount = useMemo(() => {
-    return new Set(currentNodes.flatMap((node) => childCodesByParent.get(node.node_code) ?? [])).size;
-  }, [childCodesByParent, currentNodes]);
+    return new Set(
+      currentNodes.flatMap((node) =>
+        (childCodesByParent.get(node.node_code) ?? []).filter((childCode) => {
+          const child = nodeByCode.get(childCode);
+          return !nextLevel || child?.level_code === nextLevel.level_code;
+        }),
+      ),
+    ).size;
+  }, [childCodesByParent, currentNodes, nextLevel, nodeByCode]);
 
   const coveragePercent = useMemo(() => {
     if (!currentNodes.length || !nextLevel) return null;
@@ -205,8 +221,9 @@ export function FrameworkLevelPage() {
     return (childCodesByParent.get(selectedNode.node_code) ?? [])
       .map((code) => nodeByCode.get(code))
       .filter((node): node is FrameworkNode => Boolean(node))
+      .filter((child) => !nextLevel || child.level_code === nextLevel.level_code)
       .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || getNodeTitle(a).localeCompare(getNodeTitle(b)));
-  }, [childCodesByParent, nodeByCode, selectedNode]);
+  }, [childCodesByParent, nextLevel, nodeByCode, selectedNode]);
   const activeChild = selectedNodeChildren.find((node) => node.node_code === selectedChildCode) ?? selectedNodeChildren[0] ?? null;
 
   async function loadLevel() {
@@ -266,10 +283,14 @@ export function FrameworkLevelPage() {
     return (
       <FrameworkNodeDetailView
         childLabel={childLabel}
+        childCodesByParent={childCodesByParent}
         childrenNodes={selectedNodeChildren}
+        hierarchy={hierarchy}
         level={level}
+        nodeByCode={nodeByCode}
         nextLevel={nextLevel}
         node={selectedNode}
+        orderedLevels={orderedLevels}
         selectedChild={activeChild}
         onBack={() => navigate(`/framework/levels/${encodeURIComponent(level.level_code)}`)}
         onSelectChild={(child) =>
@@ -406,7 +427,8 @@ export function FrameworkLevelPage() {
           <div className="level-node-grid">
             {filteredNodes.map((node, index) => {
               const childCount = (childCodesByParent.get(node.node_code) ?? []).length;
-              const indicatorCount = Number(node.indicator_count ?? 0);
+              const lowerCounts = getDescendantCountsByLevel(node, orderedLevels, childCodesByParent, nodeByCode);
+              const indicatorCount = getDescendantIndicatorCount(node, childCodesByParent, nodeByCode);
               const color = getNodeColor(node, index);
               return (
                 <article className="level-node-card" key={node.node_code}>
@@ -425,10 +447,14 @@ export function FrameworkLevelPage() {
                     <h3 title={getNodeTitle(node)}>{getNodeTitle(node)}</h3>
                     <p title={node.description || node.node_code}>{node.description || node.node_code}</p>
                     <div className="level-node-stats">
-                      <span>
-                        <strong>{childCount}</strong>
-                        {childLabel}
-                      </span>
+                      {orderedLevels
+                        .filter((item) => Number(item.level_number) > Number(level?.level_number ?? 0))
+                        .map((item) => (
+                          <span key={item.level_code}>
+                            <strong>{lowerCounts.get(item.level_code) ?? 0}</strong>
+                            {pluralizeLabel(item.name)}
+                          </span>
+                        ))}
                       <span>
                         <strong>{indicatorCount}</strong>
                         Indicators
@@ -443,7 +469,7 @@ export function FrameworkLevelPage() {
           <div className="level-node-list">
             {filteredNodes.map((node, index) => {
               const childCount = (childCodesByParent.get(node.node_code) ?? []).length;
-              const indicatorCount = Number(node.indicator_count ?? 0);
+              const indicatorCount = getDescendantIndicatorCount(node, childCodesByParent, nodeByCode);
               const parentCode = parentCodeByChild.get(node.node_code);
               const parentNode = parentCode ? nodeByCode.get(parentCode) : null;
               const color = getNodeColor(node, index);
@@ -489,7 +515,11 @@ function FrameworkNodeDetailView({
   level,
   nextLevel,
   childLabel,
+  childCodesByParent,
   childrenNodes,
+  hierarchy,
+  nodeByCode,
+  orderedLevels,
   selectedChild,
   onBack,
   onSelectChild,
@@ -498,27 +528,60 @@ function FrameworkNodeDetailView({
   level: FrameworkLevel;
   nextLevel: FrameworkLevel | null;
   childLabel: string;
+  childCodesByParent: Map<string, string[]>;
   childrenNodes: FrameworkNode[];
+  hierarchy: FrameworkHierarchy;
+  nodeByCode: Map<string, FrameworkNode>;
+  orderedLevels: FrameworkLevel[];
   selectedChild: FrameworkNode | null;
   onBack: () => void;
   onSelectChild: (node: FrameworkNode) => void;
 }) {
   const navigate = useNavigate();
   const color = getNodeColor(node, 0);
-  const selectedColor = selectedChild ? getNodeColor(selectedChild, 1) : color;
-  const nodeIndicatorCount = Number(node.indicator_count ?? 0);
-  const childrenWithoutIndicators = childrenNodes.filter((child) => Number(child.indicator_count ?? 0) === 0).length;
+  const [selectedCodesByLevel, setSelectedCodesByLevel] = useState<Record<string, string>>(
+    selectedChild ? { [selectedChild.level_code]: selectedChild.node_code } : {},
+  );
+  const [collapsedLevels, setCollapsedLevels] = useState<Record<string, boolean>>({});
+  const nodeIndicatorCount = getDescendantIndicatorCount(node, childCodesByParent, nodeByCode);
+  const childrenWithoutIndicators = childrenNodes.filter((child) => getDescendantIndicatorCount(child, childCodesByParent, nodeByCode) === 0).length;
   const [mappedIndicators, setMappedIndicators] = useState<FrameworkIndicatorMappingSummary[]>([]);
   const [isLoadingIndicators, setIsLoadingIndicators] = useState(false);
 
+  const hierarchySections = useMemo(() => {
+    const sections: Array<{ level: FrameworkLevel; children: FrameworkNode[]; selected: FrameworkNode | null }> = [];
+    let parent: FrameworkNode | null = node;
+    for (const childLevel of orderedLevels.filter((item) => Number(item.level_number) > Number(level.level_number))) {
+      if (!parent) break;
+      const children = getDirectChildren(parent, childLevel.level_code, childCodesByParent, nodeByCode);
+      if (!children.length) break;
+      const selectedCode = selectedCodesByLevel[childLevel.level_code];
+      const selected = children.find((child) => child.node_code === selectedCode) ?? children[0] ?? null;
+      sections.push({ level: childLevel, children, selected });
+      parent = selected;
+    }
+    return sections;
+  }, [childCodesByParent, level.level_number, node, nodeByCode, orderedLevels, selectedCodesByLevel]);
+
+  const indicatorNode = useMemo(() => {
+    const lastSection = hierarchySections[hierarchySections.length - 1];
+    if (!lastSection) {
+      return level.allows_indicator_mapping ? node : null;
+    }
+    if (lastSection.level.allows_indicator_mapping || !getDirectChildren(lastSection.selected, undefined, childCodesByParent, nodeByCode).length) {
+      return lastSection.selected;
+    }
+    return null;
+  }, [childCodesByParent, hierarchySections, level.allows_indicator_mapping, node, nodeByCode]);
+
   useEffect(() => {
-    if (!selectedChild?.node_code) {
+    if (!indicatorNode?.node_code) {
       setMappedIndicators([]);
       return;
     }
     let isMounted = true;
     setIsLoadingIndicators(true);
-    listFrameworkIndicatorMappingsByNode(selectedChild.node_code)
+    listFrameworkIndicatorMappingsByNode(indicatorNode.node_code)
       .then((response) => {
         if (isMounted) setMappedIndicators(response.data);
       })
@@ -531,11 +594,29 @@ function FrameworkNodeDetailView({
     return () => {
       isMounted = false;
     };
-  }, [selectedChild?.node_code]);
+  }, [indicatorNode?.node_code]);
+
+  function handleSelectSectionNode(sectionLevel: FrameworkLevel, sectionNode: FrameworkNode) {
+    setSelectedCodesByLevel((current) => {
+      const next: Record<string, string> = {};
+      for (const item of orderedLevels) {
+        if (Number(item.level_number) < Number(sectionLevel.level_number) && current[item.level_code]) {
+          next[item.level_code] = current[item.level_code];
+        }
+      }
+      next[sectionLevel.level_code] = sectionNode.node_code;
+      return next;
+    });
+    if (sectionLevel.level_code === nextLevel?.level_code) {
+      onSelectChild(sectionNode);
+    }
+  }
 
   return (
     <div className="workflow-page framework-node-detail-page">
-      <div className="breadcrumb">Home / Framework / {pluralizeLabel(level.name)} / {getNodeTitle(node)}</div>
+      <div className="breadcrumb">
+        Home / Framework / {hierarchy.name ?? hierarchy.framework_code} / {pluralizeLabel(level.name)} / {getNodeTitle(node)}
+      </div>
       <section className="framework-node-hero">
         <button className="secondary-button compact framework-node-back" type="button" onClick={onBack}>
           Back to {pluralizeLabel(level.name)}
@@ -556,38 +637,56 @@ function FrameworkNodeDetailView({
         </div>
       </section>
 
-      <div className="framework-node-detail-grid">
-        <section className="framework-node-child-list">
-          <header>
-            <h3>{childLabel}</h3>
-            <p>Select a {nextLevel?.name ?? "child node"} to view associated national indicators.</p>
-          </header>
-          <div className="node-child-scroll">
-            {childrenNodes.length ? (
-              childrenNodes.map((child, index) => (
+      <div className={hierarchySections.length ? "framework-node-dynamic-grid" : "framework-node-dynamic-grid single-level"}>
+        {hierarchySections.map((section) => {
+          const isCollapsed = collapsedLevels[section.level.level_code] ?? false;
+          return (
+            <section className="framework-node-child-list" key={section.level.level_code}>
+              <header>
+                <div>
+                  <h3>{pluralizeLabel(section.level.name)}</h3>
+                  <p>Select a {section.level.name ?? "level"} to continue through the hierarchy.</p>
+                </div>
                 <button
-                  className={selectedChild?.node_code === child.node_code ? "node-child-card active" : "node-child-card"}
-                  key={child.node_code}
+                  className="icon-action"
                   type="button"
-                  onClick={() => onSelectChild(child)}
+                  onClick={() =>
+                    setCollapsedLevels((current) => ({
+                      ...current,
+                      [section.level.level_code]: !isCollapsed,
+                    }))
+                  }
+                  title={isCollapsed ? "Expand section" : "Collapse section"}
                 >
-                  <span>{nextLevel?.name ?? "Child"} {child.node_number ?? index + 1}</span>
-                  <strong>{getNodeTitle(child)}</strong>
-                  <small>{Number(child.indicator_count ?? 0)} indicators</small>
+                  {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
-              ))
-            ) : (
-              <div className="empty-state">No child nodes available.</div>
-            )}
-          </div>
-        </section>
+              </header>
+              {!isCollapsed && (
+                <div className="node-child-scroll">
+                  {section.children.map((child, index) => (
+                    <button
+                      className={section.selected?.node_code === child.node_code ? "node-child-card active" : "node-child-card"}
+                      key={child.node_code}
+                      type="button"
+                      onClick={() => handleSelectSectionNode(section.level, child)}
+                    >
+                      <span>{section.level.name ?? "Level"} {child.node_number ?? index + 1}</span>
+                      <strong>{getNodeTitle(child)}</strong>
+                      <small>{getDescendantIndicatorCount(child, childCodesByParent, nodeByCode)} indicators</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
 
         <section className="framework-node-indicator-panel">
-          {selectedChild ? (
+          {indicatorNode ? (
             <>
-              <header style={{ borderColor: `${selectedColor}55`, background: `${selectedColor}10` }}>
-                <span>{nextLevel?.name ?? "Selected"} {selectedChild.node_number}</span>
-                <h3>{getNodeTitle(selectedChild)}</h3>
+              <header>
+                <span>{levelNameForNode(indicatorNode, orderedLevels)} {indicatorNode.node_number}</span>
+                <h3>{getNodeTitle(indicatorNode)}</h3>
               </header>
               <div className="framework-node-indicator-list">
                 {isLoadingIndicators ? (
@@ -617,10 +716,74 @@ function FrameworkNodeDetailView({
               </div>
             </>
           ) : (
-            <div className="empty-state">Select a child node to view indicators.</div>
+            <div className="empty-state">Select the lowest configured hierarchy level to view indicators.</div>
           )}
         </section>
       </div>
     </div>
   );
+}
+
+function getDirectChildren(
+  parent: FrameworkNode | null | undefined,
+  levelCode: string | undefined,
+  childCodesByParent: Map<string, string[]>,
+  nodeByCode: Map<string, FrameworkNode>,
+): FrameworkNode[] {
+  if (!parent) return [];
+  return (childCodesByParent.get(parent.node_code) ?? [])
+    .map((code) => nodeByCode.get(code))
+    .filter((child): child is FrameworkNode => Boolean(child))
+    .filter((child) => !levelCode || child.level_code === levelCode)
+    .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || getNodeTitle(a).localeCompare(getNodeTitle(b)));
+}
+
+function getDescendantCountsByLevel(
+  root: FrameworkNode,
+  orderedLevels: FrameworkLevel[],
+  childCodesByParent: Map<string, string[]>,
+  nodeByCode: Map<string, FrameworkNode>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  const visited = new Set<string>();
+  const walk = (node: FrameworkNode) => {
+    for (const childCode of childCodesByParent.get(node.node_code) ?? []) {
+      if (visited.has(childCode)) continue;
+      visited.add(childCode);
+      const child = nodeByCode.get(childCode);
+      if (!child) continue;
+      counts.set(child.level_code, (counts.get(child.level_code) ?? 0) + 1);
+      walk(child);
+    }
+  };
+  walk(root);
+  orderedLevels.forEach((level) => {
+    if (!counts.has(level.level_code)) counts.set(level.level_code, 0);
+  });
+  return counts;
+}
+
+function getDescendantIndicatorCount(
+  root: FrameworkNode,
+  childCodesByParent: Map<string, string[]>,
+  nodeByCode: Map<string, FrameworkNode>,
+): number {
+  let total = Number(root.indicator_count ?? 0);
+  const visited = new Set<string>();
+  const walk = (node: FrameworkNode) => {
+    for (const childCode of childCodesByParent.get(node.node_code) ?? []) {
+      if (visited.has(childCode)) continue;
+      visited.add(childCode);
+      const child = nodeByCode.get(childCode);
+      if (!child) continue;
+      total += Number(child.indicator_count ?? 0);
+      walk(child);
+    }
+  };
+  walk(root);
+  return total;
+}
+
+function levelNameForNode(node: FrameworkNode, levels: FrameworkLevel[]) {
+  return levels.find((level) => level.level_code === node.level_code)?.name ?? "Selected";
 }

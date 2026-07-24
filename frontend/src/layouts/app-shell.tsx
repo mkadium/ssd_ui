@@ -31,6 +31,14 @@ import {
   type UnitOption,
 } from "../api/session.api";
 import { getFrameworkHierarchy, listFrameworkEditions } from "../api/framework.api";
+import {
+  getNotificationSummary,
+  listUserNotifications,
+  markAllNotificationsRead,
+  setNotificationRead,
+  streamNotificationSummary,
+  type UserNotification,
+} from "../api/notifications.api";
 import { bottomNavigation, navigationModules, type NavItem } from "../routes/navigation";
 
 export function AppShell() {
@@ -39,6 +47,9 @@ export function AppShell() {
   const navigate = useNavigate();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationSummary, setNotificationSummary] = useState({ unreadCount: 0 });
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [openModules, setOpenModules] = useState<string[]>(() => {
     const initialModule = getModuleForPath(location.pathname);
     return initialModule ? [initialModule] : [];
@@ -172,6 +183,23 @@ export function AppShell() {
     };
   }, [selectedLocale, selectedUnitCode]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getNotificationSummary(selectedUnitCode)
+      .then((summary) => {
+        if (!cancelled) setNotificationSummary({ unreadCount: summary.unreadCount ?? 0 });
+      })
+      .catch(() => undefined);
+    const stopStream = streamNotificationSummary((summary) => {
+      setNotificationSummary({ unreadCount: summary.unreadCount ?? 0 });
+      if (notificationsOpen) void refreshNotifications();
+    }, selectedUnitCode);
+    return () => {
+      cancelled = true;
+      stopStream();
+    };
+  }, [selectedUnitCode, notificationsOpen]);
+
   function handleUnitChange(unitCode: string) {
     setSelectedUnitCode(unitCode);
     setSelectedUnitCodeState(unitCode);
@@ -185,6 +213,43 @@ export function AppShell() {
   async function handleLogout() {
     await logout();
     navigate("/login", { replace: true });
+  }
+
+  async function refreshNotifications() {
+    const rows = await listUserNotifications({ unitCode: selectedUnitCode, limit: 20 }).catch(() => []);
+    setNotifications(rows);
+  }
+
+  async function toggleNotifications() {
+    const nextOpen = !notificationsOpen;
+    setNotificationsOpen(nextOpen);
+    if (nextOpen) {
+      setUserMenuOpen(false);
+      await refreshNotifications();
+    }
+  }
+
+  async function openNotification(notification: UserNotification) {
+    if (notification.notificationCode && !notification.isRead) {
+      await setNotificationRead(notification.notificationCode, true).catch(() => undefined);
+    }
+    setNotificationsOpen(false);
+    await refreshNotifications();
+    const summary = await getNotificationSummary(selectedUnitCode).catch(() => ({ unreadCount: 0 }));
+    setNotificationSummary({ unreadCount: summary.unreadCount ?? 0 });
+    const notificationEntity = notification.entityType?.toUpperCase();
+    const dispatchRunCode = notification.entityCode || notification.metadata?.dispatchRunCode;
+    if (notificationEntity === "DISPATCH_RUN" && dispatchRunCode) {
+      navigate(`/requests/dispatch-runs/${encodeURIComponent(String(dispatchRunCode))}?tab=communications`);
+    } else if (notification.linkUrl) {
+      navigate(notification.linkUrl);
+    }
+  }
+
+  async function markNotificationsRead() {
+    await markAllNotificationsRead(selectedUnitCode).catch(() => undefined);
+    setNotificationSummary({ unreadCount: 0 });
+    await refreshNotifications();
   }
 
   function handleScreenReader() {
@@ -315,10 +380,36 @@ export function AppShell() {
               <Clock3 size={16} />
               <span className="notification-dot reminder" />
             </button>
-            <button className="icon-button" type="button" aria-label="Notifications">
-              <Bell size={16} />
-              <span className="notification-dot" />
-            </button>
+            <div className="notification-menu-wrap">
+              <button className="icon-button" type="button" aria-label="Notifications" onClick={() => void toggleNotifications()}>
+                <Bell size={16} />
+                {notificationSummary.unreadCount > 0 ? (
+                  <span className="notification-count">{Math.min(notificationSummary.unreadCount, 99)}</span>
+                ) : null}
+              </button>
+              {notificationsOpen ? (
+                <div className="notification-menu">
+                  <header>
+                    <strong>Notifications</strong>
+                    <button type="button" onClick={() => void markNotificationsRead()}>Mark all read</button>
+                  </header>
+                  <div className="notification-list">
+                    {notifications.length ? notifications.map((notification) => (
+                      <button
+                        className={notification.isRead ? "" : "unread"}
+                        key={notification.notificationCode}
+                        type="button"
+                        onClick={() => void openNotification(notification)}
+                      >
+                        <span>{notification.notificationType?.replace("_", " ") ?? "Notification"}</span>
+                        <strong>{notification.title}</strong>
+                        <small>{notification.body}</small>
+                      </button>
+                    )) : <p>No notifications yet.</p>}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <div className="user-menu-wrap">
               <button className="user-chip" type="button" onClick={() => setUserMenuOpen((value) => !value)}>
                 <div className="user-avatar">{user.displayName.slice(0, 1)}</div>

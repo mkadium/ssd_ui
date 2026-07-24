@@ -681,6 +681,7 @@ export function FrameworkPage() {
         )}
         {!isLoading && activeTab === "relationships" && (
           <RelationshipsTable
+            levels={levels}
             nodes={nodes}
             onDeleteParent={handleDeleteParentRelationships}
             onDeleteRelationship={handleDeleteRelationship}
@@ -933,6 +934,7 @@ function NodesTable({
 }
 
 function RelationshipsTable({
+  levels,
   nodes,
   onDeleteParent,
   onDeleteRelationship,
@@ -942,6 +944,7 @@ function RelationshipsTable({
   onCreate,
   onOpenParentChange,
 }: {
+  levels: FrameworkLevel[];
   nodes: FrameworkNode[];
   onDeleteParent: (parentNodeCode: string) => void;
   onDeleteRelationship: (parentNodeCode: string, childNodeCode: string) => void;
@@ -952,6 +955,9 @@ function RelationshipsTable({
   onOpenParentChange: (parentNodeCode: string | null) => void;
 }) {
   const relationshipGroups = withPendingParentGroups(groupRelationshipsByParent(relationships), pendingParentCodes);
+  const childNodeCodes = new Set(relationships.map((relationship) => relationship.child_node_code));
+  const rootGroups = relationshipGroups.filter((group) => !childNodeCodes.has(group.parentCode) || pendingParentCodes.includes(group.parentCode));
+  const groupsByParent = new Map(relationshipGroups.map((group) => [group.parentCode, group.children]));
   return (
     <>
       <div className="section-action-row">
@@ -968,7 +974,7 @@ function RelationshipsTable({
         <div className="empty-state">No parent or child relationships found.</div>
       ) : (
         <div className="relationship-accordion">
-          {relationshipGroups.map((group) => {
+          {rootGroups.map((group) => {
             const parent = findNode(nodes, group.parentCode);
             const isOpen = openParentCode === group.parentCode;
             return (
@@ -1008,28 +1014,17 @@ function RelationshipsTable({
                       </button>
                     </div>
                     {!group.children.length && <div className="relationship-empty-child">No child linked yet. Use Add Child to create the first relationship.</div>}
-                    {group.children.map((relationship) => {
-                      const child = findNode(nodes, relationship.child_node_code);
-                      return (
-                        <div className="relationship-child-card" key={`${relationship.parent_node_code}-${relationship.child_node_code}`}>
-                          <ColorSwatch node={child} />
-                          <div>
-                            <strong>{formatNodeTitle(child, relationship.child_node_code)}</strong>
-                            <span>{relationship.child_node_code}</span>
-                          </div>
-                          <span>{child?.level_code ?? "-"}</span>
-                          <StatusBadge status={relationship.relationship_type ?? "PARENT_CHILD"} />
-                          <button
-                            className="icon-action danger"
-                            type="button"
-                            onClick={() => onDeleteRelationship(relationship.parent_node_code, relationship.child_node_code)}
-                            title="Remove child link"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      );
-                    })}
+                    {group.children.map((relationship) => (
+                      <RelationshipTreeRow
+                        key={`${relationship.parent_node_code}-${relationship.child_node_code}`}
+                        levels={levels}
+                        nodes={nodes}
+                        onCreate={onCreate}
+                        onDeleteRelationship={onDeleteRelationship}
+                        relationship={relationship}
+                        relationshipsByParent={groupsByParent}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
@@ -1038,6 +1033,68 @@ function RelationshipsTable({
         </div>
       )}
     </>
+  );
+}
+
+function RelationshipTreeRow({
+  levels,
+  nodes,
+  onCreate,
+  onDeleteRelationship,
+  relationship,
+  relationshipsByParent,
+  depth = 0,
+}: {
+  levels: FrameworkLevel[];
+  nodes: FrameworkNode[];
+  onCreate: (parentNodeCode?: string) => void;
+  onDeleteRelationship: (parentNodeCode: string, childNodeCode: string) => void;
+  relationship: FrameworkRelationship;
+  relationshipsByParent: Map<string, FrameworkRelationship[]>;
+  depth?: number;
+}) {
+  const child = findNode(nodes, relationship.child_node_code);
+  const childLinks = relationshipsByParent.get(relationship.child_node_code) ?? [];
+  return (
+    <div className="relationship-tree-branch">
+      <div className="relationship-child-card" style={{ marginLeft: depth * 18 }}>
+        <ColorSwatch node={child} />
+        <div>
+          <strong>{formatNodeTitle(child, relationship.child_node_code)}</strong>
+          <span>{relationship.child_node_code}</span>
+        </div>
+        <span>{levelLabelForNode(child, levels)}</span>
+        <StatusBadge status={relationship.relationship_type ?? "PARENT_CHILD"} />
+        <button
+          className="icon-action"
+          type="button"
+          onClick={() => onCreate(relationship.child_node_code)}
+          title="Add child under this node"
+        >
+          <Plus size={13} />
+        </button>
+        <button
+          className="icon-action danger"
+          type="button"
+          onClick={() => onDeleteRelationship(relationship.parent_node_code, relationship.child_node_code)}
+          title="Remove child link"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+      {childLinks.map((childRelationship) => (
+        <RelationshipTreeRow
+          depth={depth + 1}
+          key={`${childRelationship.parent_node_code}-${childRelationship.child_node_code}`}
+          levels={levels}
+          nodes={nodes}
+          onCreate={onCreate}
+          onDeleteRelationship={onDeleteRelationship}
+          relationship={childRelationship}
+          relationshipsByParent={relationshipsByParent}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -1078,6 +1135,7 @@ function FrameworkDrawer({
           {drawer.mode === "node" && <NodeFields levels={levels} record={drawer.record} />}
           {drawer.mode === "relationship" && (
             <RelationshipFields
+              levels={levels}
               nodes={nodes}
               parentNodeCode={drawer.parentNodeCode}
               pendingParentCodes={pendingParentCodes}
@@ -1170,18 +1228,31 @@ function NodeFields({ levels, record }: { levels: FrameworkLevel[]; record?: Fra
 }
 
 function RelationshipFields({
+  levels,
   nodes,
   parentNodeCode,
   pendingParentCodes,
   relationships,
 }: {
+  levels: FrameworkLevel[];
   nodes: FrameworkNode[];
   parentNodeCode?: string;
   pendingParentCodes: string[];
   relationships: FrameworkRelationship[];
 }) {
-  const levels = Array.from(new Set(nodes.map((node) => node.level_code))).sort();
-  const [childLevelCode, setChildLevelCode] = useState(levels[0] ?? "");
+  const orderedLevels = [...levels]
+    .filter((level) => level.is_active !== false)
+    .sort((a, b) => Number(a.level_number ?? 0) - Number(b.level_number ?? 0));
+  const parentNode = parentNodeCode ? findNode(nodes, parentNodeCode) : undefined;
+  const parentLevel = parentNode ? orderedLevels.find((level) => level.level_code === parentNode.level_code) : undefined;
+  const eligibleChildLevels = parentLevel
+    ? orderedLevels.filter((level) => Number(level.level_number) > Number(parentLevel.level_number))
+    : orderedLevels;
+  const defaultChildLevelCode = eligibleChildLevels[0]?.level_code ?? orderedLevels[0]?.level_code ?? "";
+  const [childLevelCode, setChildLevelCode] = useState(defaultChildLevelCode);
+  useEffect(() => {
+    setChildLevelCode(defaultChildLevelCode);
+  }, [defaultChildLevelCode]);
   const usedParentCodes = new Set([
     ...relationships.map((relationship) => relationship.parent_node_code),
     ...pendingParentCodes,
@@ -1203,9 +1274,9 @@ function RelationshipFields({
           <label className="form-field">
             <span>Child level</span>
             <select value={childLevelCode} onChange={(event) => setChildLevelCode(event.target.value)}>
-              {levels.map((levelCode) => (
-                <option key={levelCode} value={levelCode}>
-                  {levelCode}
+              {eligibleChildLevels.map((level) => (
+                <option key={level.level_code} value={level.level_code}>
+                  Level {level.level_number} - {level.name ?? level.level_code}
                 </option>
               ))}
             </select>
@@ -1442,6 +1513,12 @@ function formatNodeTitle(node: FrameworkNode | undefined, fallbackCode: string):
   }
   const number = node.node_number ? `${node.node_number} - ` : "";
   return `${number}${node.name ?? node.node_code}`;
+}
+
+function levelLabelForNode(node: FrameworkNode | undefined, levels: FrameworkLevel[]): string {
+  if (!node) return "-";
+  const level = levels.find((candidate) => candidate.level_code === node.level_code);
+  return level ? `Level ${level.level_number} - ${level.name ?? level.level_code}` : node.level_code;
 }
 
 function groupRelationshipsByParent(relationships: FrameworkRelationship[]): Array<{ parentCode: string; children: FrameworkRelationship[] }> {

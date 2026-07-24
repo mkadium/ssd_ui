@@ -15,8 +15,13 @@ import { FrameworkPage } from "../pages/framework/framework-page";
 import { GlobalIndicatorsPage } from "../pages/indicators/global-indicators-page";
 import { IndicatorLibraryPage } from "../pages/indicators/indicator-library-page";
 import { MastersReferencePage } from "../pages/masters/masters-reference-page";
+import { DispatchRunDetailPage } from "../pages/requests/dispatch-run-detail-page";
 import { DispatchPlansPage } from "../pages/requests/dispatch-plans-page";
 import { DispatchSettingsPage } from "../pages/requests/dispatch-settings-page";
+import { EmailTemplatesPage } from "../pages/requests/email-templates-page";
+import { NotificationRulesPage } from "../pages/requests/notification-rules-page";
+import { RequestAccessPage } from "../pages/requests/request-access-page";
+import { RequestDataEntryPage } from "../pages/requests/request-data-entry-page";
 import { PlaceholderPage } from "../pages/system/placeholder-page";
 import { TemplateLibraryPage } from "../pages/templates/template-library-page";
 import { TemplateMappingsPage } from "../pages/templates/template-mappings-page";
@@ -58,6 +63,10 @@ const childRoutes = flatNavigation
               <DispatchPlansPage />
             ) : item.path === "/requests/dispatch-settings" ? (
               <DispatchSettingsPage />
+            ) : item.path === "/requests/email-templates" ? (
+              <EmailTemplatesPage />
+            ) : item.path === "/requests/notification-rules" ? (
+              <NotificationRulesPage />
             ) : item.path === "/authentication/access-catalog" || item.path === "/authentication/permission-matrix" ? (
               <AccessManagementPage />
             ) : item.path === "/authentication/users" ? (
@@ -80,6 +89,14 @@ const router = createBrowserRouter([
     element: <LoginPage />,
   },
   {
+    path: "/request-access",
+    element: <RequestAccessPage />,
+  },
+  {
+    path: "/request-data-entry",
+    element: <RequestDataEntryPage />,
+  },
+  {
     path: "/",
     element: <AppShell />,
     children: [
@@ -95,6 +112,10 @@ const router = createBrowserRouter([
       {
         path: "template/studio",
         element: <TemplateStudioPage />,
+      },
+      {
+        path: "requests/dispatch-runs/:dispatchRunCode",
+        element: <DispatchRunDetailPage />,
       },
     ],
   },
