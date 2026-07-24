@@ -107,19 +107,46 @@ function nodeColor(node?: FrameworkNode) {
   return color || "#0b5cab";
 }
 
+function mappingMetadataValue(row: TemplateIndicatorMapping, key: string) {
+  const metadata = row.mapping_metadata;
+  return metadata && typeof metadata === "object" ? metadata[key] : undefined;
+}
+
+function mappingRole(row: TemplateIndicatorMapping) {
+  const role = textValue(row.mapping_role);
+  return role === "-" ? "PRIMARY" : role.toUpperCase();
+}
+
+function isPrimaryMapping(row: TemplateIndicatorMapping) {
+  return row.is_active !== false && mappingRole(row) === "PRIMARY";
+}
+
+function mappingIndicatorCode(row: TemplateIndicatorMapping) {
+  return textValue(row.indicator_code ?? row.national_indicator_code);
+}
+
+function mappingIndicatorNumber(row: TemplateIndicatorMapping) {
+  return textValue(
+    row.indicator_number ??
+      mappingMetadataValue(row, "indicator_number") ??
+      row.national_indicator_code ??
+      row.indicator_code,
+  );
+}
+
+function mappingIndicatorName(row: TemplateIndicatorMapping) {
+  return textValue(
+    row.indicator_name ?? mappingMetadataValue(row, "indicator_name"),
+  );
+}
+
 function selectionsFromMappings(rows: TemplateIndicatorMapping[]) {
   return rows
-    .filter(
-      (row) =>
-        row.is_active !== false &&
-        textValue(row.mapping_role).toUpperCase() === "PRIMARY",
-    )
+    .filter(isPrimaryMapping)
     .map((row) => ({
-      national_indicator_code: textValue(
-        row.indicator_code ?? row.national_indicator_code,
-      ),
-      indicator_number: textValue(row.indicator_number),
-      name: textValue(row.indicator_name),
+      national_indicator_code: mappingIndicatorCode(row),
+      indicator_number: mappingIndicatorNumber(row),
+      name: mappingIndicatorName(row),
     }))
     .filter((row) => row.national_indicator_code !== "-");
 }
@@ -128,6 +155,40 @@ function nodeIndicatorCount(node?: FrameworkNode) {
   return Number(node?.indicator_count ?? 0);
 }
 
+type MappingCacheSnapshot = {
+  cache: Record<string, TemplateIndicatorMapping[]>;
+  failedCount: number;
+};
+
+async function loadMappingCacheForPublishedVersions(
+  items: PublishedTemplateVersion[],
+): Promise<MappingCacheSnapshot> {
+  const versionCodes = [
+    ...new Set(
+      items
+        .map((item) => textValue(item.version.version_code))
+        .filter((versionCode) => versionCode !== "-"),
+    ),
+  ];
+
+  const results = await Promise.all(
+    versionCodes.map(async (versionCode) => {
+      try {
+        const response = await listTemplateIndicatorMappings(versionCode);
+        return { versionCode, mappings: response.data ?? [], failed: false };
+      } catch {
+        return { versionCode, mappings: [], failed: true };
+      }
+    }),
+  );
+
+  return {
+    cache: Object.fromEntries(
+      results.map((result) => [result.versionCode, result.mappings]),
+    ),
+    failedCount: results.filter((result) => result.failed).length,
+  };
+}
 async function loadFrameworkIndicatorBrowser(): Promise<GoalGroup[]> {
   const activeEditionResponse = await listFrameworkEditions(false);
   const activeEdition =
@@ -230,11 +291,7 @@ export function TemplateMappingsPage() {
     [published, selectedVersionCode],
   );
   const mappingCountForVersion = (versionCode: string) =>
-    (mappingCache[versionCode] ?? []).filter(
-      (mapping) =>
-        mapping.is_active !== false &&
-        textValue(mapping.mapping_role).toUpperCase() === "PRIMARY",
-    ).length;
+    (mappingCache[versionCode] ?? []).filter(isPrimaryMapping).length;
 
   const templateMappingSummary = useMemo(() => {
     const mapped = published.filter(
@@ -348,10 +405,15 @@ export function TemplateMappingsPage() {
         }),
       );
       const nextPublished = versionsByTemplate.flat();
-      const browserGroups = await loadFrameworkIndicatorBrowser().catch(
-        () => [],
-      );
+      const [browserGroups, mappingSnapshot] = await Promise.all([
+        loadFrameworkIndicatorBrowser().catch(() => []),
+        loadMappingCacheForPublishedVersions(nextPublished),
+      ]);
+      if (mappingSnapshot.failedCount > 0) {
+        setError("Some template indicator mappings could not be loaded.");
+      }
       setPublished(nextPublished);
+      setMappingCache(mappingSnapshot.cache);
       setSelectedVersionCode((current) =>
         current &&
         nextPublished.some((item) => item.version.version_code === current)
@@ -462,11 +524,7 @@ export function TemplateMappingsPage() {
           (indicator) => indicator.national_indicator_code,
         ),
       );
-      const activeExisting = existing.filter(
-        (mapping) =>
-          mapping.is_active !== false &&
-          textValue(mapping.mapping_role).toUpperCase() === "PRIMARY",
-      );
+      const activeExisting = existing.filter(isPrimaryMapping);
 
       await Promise.all(
         selectedIndicators.map((indicator, index) =>
@@ -490,17 +548,13 @@ export function TemplateMappingsPage() {
           .filter(
             (mapping) =>
               !selectedCodes.has(
-                textValue(
-                  mapping.indicator_code ?? mapping.national_indicator_code,
-                ),
+                mappingIndicatorCode(mapping),
               ),
           )
           .map((mapping) =>
             deactivateTemplateIndicatorMapping(
               versionCode,
-              textValue(
-                mapping.indicator_code ?? mapping.national_indicator_code,
-              ),
+              mappingIndicatorCode(mapping),
               {
                 unit_code: getSelectedUnitCode(),
                 mapping_role: "PRIMARY",
