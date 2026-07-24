@@ -96,6 +96,8 @@ export type DispatchRun = {
   unitCode?: string;
   requestPeriodCode?: string;
   requestPeriodLabel?: string;
+  dispatchCycleCode?: string;
+  dispatchSequence?: number;
   reportingPeriodStartCode?: string | null;
   reportingPeriodEndCode?: string | null;
   reportingPeriodLabel?: string | null;
@@ -107,9 +109,46 @@ export type DispatchRun = {
   dispatchStartedAt?: string | null;
   dispatchCompletedAt?: string | null;
   queuedNotificationEvents?: number;
+  processedNotifications?: Record<string, unknown>;
   items?: Record<string, unknown>[];
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type DispatchBatchItem = {
+  itemId?: string;
+  itemSequence?: number;
+  dispatchPlanCode?: string;
+  itemLabel?: string | null;
+  itemStatus?: string;
+  requestPayload?: Record<string, unknown>;
+  resultPayload?: Record<string, unknown>;
+  dispatchRunCode?: string | null;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type DispatchBatch = {
+  batchCode?: string;
+  batchName?: string | null;
+  unitCode?: string;
+  batchStatus?: string;
+  totalItems?: number;
+  queuedItems?: number;
+  processingItems?: number;
+  succeededItems?: number;
+  failedItems?: number;
+  cancelledItems?: number;
+  jobMetadata?: Record<string, unknown>;
+  createdByUsername?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  items?: DispatchBatchItem[];
 };
 
 export type DispatchPlanPayload = {
@@ -141,6 +180,20 @@ export type DispatchRunPayload = {
   schedule_start_date?: string | null;
   due_date?: string | null;
   run_metadata?: Record<string, unknown>;
+  created_by_username?: string;
+};
+
+export type DispatchBatchPayload = {
+  batch_code?: string;
+  batch_name?: string;
+  unit_code?: string;
+  items: {
+    dispatch_plan_code: string;
+    run: DispatchRunPayload;
+    item_label?: string;
+    item_metadata?: Record<string, unknown>;
+  }[];
+  job_metadata?: Record<string, unknown>;
   created_by_username?: string;
 };
 
@@ -483,6 +536,44 @@ export async function createDispatchRun(
   return result.data.data;
 }
 
+export async function listDispatchBatches(params?: {
+  status?: string;
+  unitCode?: string;
+  limit?: number;
+  offset?: number;
+  locale?: string;
+}): Promise<DispatchBatch[]> {
+  const query = new URLSearchParams({
+    locale: params?.locale ?? getSelectedLocale(),
+    unit_code: params?.unitCode ?? getSelectedUnitCode(),
+    limit: String(params?.limit ?? 200),
+    offset: String(params?.offset ?? 0),
+  });
+  if (params?.status) {
+    query.set("status", params.status);
+  }
+
+  const result = await apiGet<ListResponse<DispatchBatch>>(`/requests/dispatch-batches?${query.toString()}`);
+  return result.data.data;
+}
+
+export async function getDispatchBatch(
+  batchCode: string,
+  unitCode = getSelectedUnitCode(),
+  locale = getSelectedLocale(),
+): Promise<DispatchBatch> {
+  const query = new URLSearchParams({ locale, unit_code: unitCode });
+  const result = await apiGet<DetailResponse<DispatchBatch>>(
+    `/requests/dispatch-batches/${encodeURIComponent(batchCode)}?${query.toString()}`,
+  );
+  return result.data.data;
+}
+
+export async function createDispatchBatch(payload: DispatchBatchPayload): Promise<DispatchBatch> {
+  const result = await apiPost<DetailResponse<DispatchBatch>, DispatchBatchPayload>("/requests/dispatch-batches", payload);
+  return result.data.data;
+}
+
 export async function getDispatchRun(
   dispatchRunCode: string,
   unitCode = getSelectedUnitCode(),
@@ -499,11 +590,12 @@ export async function resendDispatchRunNotification(
   dispatchRunCode: string,
   actionCode = "SEND_REQUEST",
   locale = getSelectedLocale(),
+  payload: { attachments?: Record<string, unknown>[] } = {},
 ): Promise<Record<string, unknown>> {
   const query = new URLSearchParams({ locale });
-  const result = await apiPost<DetailResponse<Record<string, unknown>>, Record<string, never>>(
+  const result = await apiPost<DetailResponse<Record<string, unknown>>, typeof payload>(
     `/requests/dispatch-runs/${encodeURIComponent(dispatchRunCode)}/notifications/${encodeURIComponent(actionCode)}/resend?${query.toString()}`,
-    {},
+    payload,
   );
   return result.data.data;
 }
@@ -608,6 +700,7 @@ export type RequestAccessAssignment = {
   reviewStatus?: string;
   approvalStatus?: string;
   publicationStatus?: string;
+  requestAttachments?: Record<string, unknown>[];
 };
 
 export type RequestAccessOtpResponse = {

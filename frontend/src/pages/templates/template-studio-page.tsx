@@ -87,6 +87,7 @@ type PeriodSelection = { code: string; name: string };
 type PreviewLabel = { code: string; label: string };
 type PreviewRow = PreviewLabel & {
   path?: PreviewLabel[];
+  generatedRollup?: ComputedColumnDraft;
 };
 type PreviewColumn = PreviewLabel & {
   groupCode?: string;
@@ -102,7 +103,7 @@ type ColumnValidationConfig = {
   maxValue: string;
   failureBehavior: "WARNING" | "BLOCK";
 };
-type SettingsTab = "compute" | "calculated" | "rollup";
+type SettingsTab = "compute" | "calculated" | "individual" | "rollup";
 type CalculationMode = "basic" | "advanced";
 type ComputedColumnDraft = {
   code: string;
@@ -114,9 +115,17 @@ type ComputedColumnDraft = {
   showInDataEntry?: boolean;
   showInPreview?: boolean;
   showInPublishedOutput?: boolean;
+  repeatForAllGroups?: boolean;
+  targetGroupKey?: string;
+  targetGroupLabel?: string;
+  targetPath?: PreviewLabel[];
+  rollupDimensionCode?: string;
+  rollupParentMemberCode?: string;
+  rollupAggregationMethod?: string;
 };
 type BilingualLabelScope = "geography" | "dimensions" | "measures";
 type RecipientReadiness = "READY" | "MISSING_SOURCE" | "MISSING_PERIODICITY" | "MISSING_GRAIN" | "MISSING_OFFICER";
+const ALL_GENERATED_GROUPS_KEY = "__ALL_COLUMN_GROUPS__";
 type RecipientSourceGroup = {
   key: string;
   sourceCode: string;
@@ -441,6 +450,14 @@ function hasRowLevelContent(levels: RowLevel[]) {
   return levels.some((level) => level.items.length > 0);
 }
 
+function isTimeLibraryItem(item: LibraryItem) {
+  return item.type === "TIME_SET" || item.type === "TIME_MEMBER";
+}
+
+function levelWithItems<T extends { id: string; label: string; items: LibraryItem[] }>(level: T, items: LibraryItem[]): T {
+  return { ...level, items };
+}
+
 function cartesianPreviewColumns(levelRows: PreviewLabel[][]): PreviewColumn[] {
   if (!levelRows.length) return [];
   return levelRows.reduce<PreviewColumn[]>((current, rows) => {
@@ -471,6 +488,22 @@ function cartesianPreviewRows(levelRows: PreviewLabel[][]): PreviewRow[] {
   }, []);
 }
 
+function previewPathKey(path: PreviewLabel[] | undefined) {
+  return (path ?? []).map((part) => normalizeCode(part.code || part.label)).filter(Boolean).join(">");
+}
+
+function previewPathLabel(path: PreviewLabel[] | undefined) {
+  return (path ?? []).map((part) => part.label || part.code).filter(Boolean).join(" / ");
+}
+
+function isPathPrefix(targetPath: PreviewLabel[] | undefined, columnPath: PreviewLabel[] | undefined) {
+  const target = targetPath ?? [];
+  const path = columnPath ?? [];
+  if (!target.length) return false;
+  if (target.length > path.length) return false;
+  return target.every((part, index) => normalizeCode(part.code || part.label) === normalizeCode(path[index]?.code || path[index]?.label));
+}
+
 function groupedHeaderRows(columns: PreviewColumn[], levelCount: number): PreviewHeaderCell[][] {
   if (!levelCount) return [];
   return Array.from({ length: levelCount }, (_, levelIndex) => {
@@ -492,6 +525,26 @@ function groupedHeaderRows(columns: PreviewColumn[], levelCount: number): Previe
   });
 }
 
+function inferPublicationPeriodicity(columns: PreviewColumn[]) {
+  const years = Array.from(
+    new Set(
+      columns
+        .flatMap((column) => column.path ?? [])
+        .map((part) => textValue(part.label))
+        .filter((label) => /^\d{4}$/.test(label)),
+    ),
+  )
+    .map(Number)
+    .sort((left, right) => left - right);
+  if (years.length >= 2) {
+    const gap = years[1] - years[0];
+    if (gap === 1) return "Annual";
+    if (gap > 1) return `Every ${gap} years`;
+  }
+  if (years.length === 1) return "Annual";
+  return "";
+}
+
 function safeRecordOfLibraryItems(value: unknown): Record<string, LibraryItem> {
   if (!value || typeof value !== "object") return {};
   return Object.entries(value as Record<string, unknown>).reduce<Record<string, LibraryItem>>((next, [key, item]) => {
@@ -505,13 +558,29 @@ function safeComputedColumns(value: unknown): ComputedColumnDraft[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => item as ComputedColumnDraft)
-    .filter((item) => item && item.code && item.label && item.formula && ["compute", "calculated", "rollup"].includes(item.mode))
-    .map((item) => ({
-      ...item,
-      showInDataEntry: Boolean(item.showInDataEntry),
-      showInPreview: item.showInPreview !== false,
-      showInPublishedOutput: item.showInPublishedOutput !== false,
-    }));
+    .filter((item) => item && item.code && item.label && item.formula && ["compute", "calculated", "individual", "rollup"].includes(item.mode))
+    .map((item) => {
+      const repeatForAllGroups = Boolean(item.repeatForAllGroups) || item.targetGroupKey === ALL_GENERATED_GROUPS_KEY;
+      const targetPath = repeatForAllGroups ? undefined : Array.isArray(item.targetPath) ? item.targetPath : undefined;
+      return {
+        ...item,
+        targetPath,
+        repeatForAllGroups,
+        targetGroupKey: repeatForAllGroups ? ALL_GENERATED_GROUPS_KEY : item.targetGroupKey || previewPathKey(targetPath),
+        targetGroupLabel: repeatForAllGroups ? "All groups" : item.targetGroupLabel || previewPathLabel(targetPath),
+        showInDataEntry: Boolean(item.showInDataEntry),
+        showInPreview: item.showInPreview !== false,
+        showInPublishedOutput: Boolean(item.showInPublishedOutput),
+      };
+    });
+}
+
+function safeBooleanMap(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== "object") return {};
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, boolean>>((next, [key, flag]) => {
+    next[key] = flag === true;
+    return next;
+  }, {});
 }
 
 function safeValidationMap(value: unknown): Record<string, ColumnValidationConfig> {
@@ -654,6 +723,7 @@ export function TemplateStudioPage() {
     measure: LibraryItem | null;
   } | null>(null);
   const [columnValidations, setColumnValidations] = useState<Record<string, ColumnValidationConfig>>({});
+  const [publicationColumns, setPublicationColumns] = useState<Record<string, boolean>>({});
   const [availableValidations, setAvailableValidations] = useState<Record<string, ColumnValidationConfig>>({});
   const [validationForm, setValidationForm] = useState<ColumnValidationConfig>(defaultValidationConfig);
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
@@ -667,6 +737,7 @@ export function TemplateStudioPage() {
   const [selectedRollupKey, setSelectedRollupKey] = useState("");
   const [calculatedFunction, setCalculatedFunction] = useState("PERCENTAGE");
   const [calculatedOutputUom, setCalculatedOutputUom] = useState("Percent");
+  const [selectedGeneratedTargetKey, setSelectedGeneratedTargetKey] = useState("");
   const [timeSetName, setTimeSetName] = useState("");
   const [timeSetType, setTimeSetType] = useState("TEMPLATE_SCOPE");
   const [periodSearch, setPeriodSearch] = useState("");
@@ -780,8 +851,23 @@ export function TemplateStudioPage() {
     return builder.rowRepresents.length ? [makeRowLevel(0, builder.rowRepresents)] : [];
   }, [builder.rowRepresents, rowLevels]);
 
+  const rowTimeItemsForColumnPreview = useMemo(
+    () =>
+      activeRowLevels
+        .flatMap((level) => level.items)
+        .filter(isTimeLibraryItem),
+    [activeRowLevels],
+  );
+
+  const previewRowLevels = useMemo(() => {
+    const levels = activeRowLevels
+      .map((level) => levelWithItems(level, level.items.filter((item) => !isTimeLibraryItem(item))))
+      .filter((level) => level.items.length > 0);
+    return levels.length ? levels : activeRowLevels;
+  }, [activeRowLevels]);
+
   const previewRowLevelRows = useMemo(() => {
-    return activeRowLevels
+    return previewRowLevels
       .map((level) =>
         level.items.flatMap((item) => {
           if (item.type === "MEASURE") return [];
@@ -789,12 +875,22 @@ export function TemplateStudioPage() {
         }),
       )
       .filter((rows) => rows.length > 0);
-  }, [activeRowLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache]);
+  }, [previewRowLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache]);
 
   const previewRows = useMemo<PreviewRow[]>(() => {
-    if (previewRowLevelRows.length) return cartesianPreviewRows(previewRowLevelRows);
-    return ["Row 1", "Row 2", "Row 3", "Row 4", "Row 5"].map((label) => ({ code: label, label, path: [{ code: label, label }] }));
-  }, [previewRowLevelRows]);
+    const baseRows = previewRowLevelRows.length
+      ? cartesianPreviewRows(previewRowLevelRows)
+      : ["Row 1", "Row 2", "Row 3", "Row 4", "Row 5"].map((label) => ({ code: label, label, path: [{ code: label, label }] }));
+    const rollupRows = computedColumns
+      .filter((column) => column.mode === "rollup" && column.showInPreview !== false)
+      .map((column) => ({
+        code: column.rollupParentMemberCode || column.code,
+        label: column.label,
+        path: [{ code: column.rollupParentMemberCode || column.code, label: column.label }],
+        generatedRollup: column,
+      }));
+    return [...baseRows, ...rollupRows];
+  }, [computedColumns, previewRowLevelRows]);
 
   const activeColumnLevels = useMemo(() => {
     const levelsWithItems = columnLevels.filter((level) => level.items.length > 0);
@@ -802,8 +898,17 @@ export function TemplateStudioPage() {
     return builder.columns.length ? [makeColumnLevel(0, builder.columns)] : [];
   }, [builder.columns, columnLevels]);
 
+  const previewColumnLevels = useMemo(() => {
+    const hasTimeColumn = activeColumnLevels.some((level) => level.items.some(isTimeLibraryItem));
+    if (hasTimeColumn || !rowTimeItemsForColumnPreview.length) return activeColumnLevels;
+    return [
+      { id: "column-level-time-preview", label: "Time Period", items: rowTimeItemsForColumnPreview },
+      ...activeColumnLevels,
+    ];
+  }, [activeColumnLevels, rowTimeItemsForColumnPreview]);
+
   const previewColumnLevelRows = useMemo(() => {
-    return activeColumnLevels
+    return previewColumnLevels
       .map((level) =>
         level.items.flatMap((item) => {
           if (item.type === "MEASURE") return [{ code: item.code, label: libraryItemLabel(item) }];
@@ -811,7 +916,7 @@ export function TemplateStudioPage() {
         }),
       )
       .filter((rows) => rows.length > 0);
-  }, [activeColumnLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache, secondaryMeasureLabelCache]);
+  }, [previewColumnLevels, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache, secondaryMeasureLabelCache]);
 
   const previewColumnGroups = useMemo<PreviewColumn[]>(() => {
     if (previewColumnLevelRows.length) return cartesianPreviewColumns(previewColumnLevelRows);
@@ -830,19 +935,14 @@ export function TemplateStudioPage() {
     }));
   }, [builder.fields, previewColumnLevelRows, previewSettings.bilingualLabels, secondaryMeasureLabelCache]);
 
-  const generatedFieldColumns = useMemo(
-    () => builder.fields.filter((field) => Boolean(field.generatedMode)),
-    [builder.fields],
-  );
-
   const previewTabItems = useMemo(() => {
     if (!builder.tabsBy.length) return [];
     return builder.tabsBy.flatMap((item) => previewLabelsForItem(item));
   }, [builder.tabsBy, memberCache, previewSettings.bilingualLabels, secondaryMemberLabelCache]);
 
-  const previewColumns = useMemo<PreviewColumn[]>(() => {
-    return previewColumnGroups.flatMap((group) => {
-      const baseColumns = previewTabItems.length
+  const basePreviewColumns = useMemo<PreviewColumn[]>(() => {
+    return previewColumnGroups.flatMap<PreviewColumn>((group) =>
+      previewTabItems.length
         ? previewTabItems.map((tab) => ({
             code: `${group.code}:${tab.code}`,
             label: tab.label,
@@ -850,18 +950,124 @@ export function TemplateStudioPage() {
             groupLabel: group.label,
             path: [...(group.path ?? [{ code: group.code, label: group.label }]), tab],
           }))
-        : [{ ...group, path: group.path ?? [{ code: group.code, label: group.label }] }];
-      const generatedColumns = generatedFieldColumns.map((field) => ({
-        code: `${group.code}:${field.code}`,
-        label: field.label,
-        groupCode: group.code,
-        groupLabel: group.label,
-        generatedMeasure: field,
-        path: [...(group.path ?? [{ code: group.code, label: group.label }]), { code: field.code, label: field.label }],
-      }));
-      return [...baseColumns, ...generatedColumns];
+        : [{ ...group, path: group.path ?? [{ code: group.code, label: group.label }] }],
+    );
+  }, [previewColumnGroups, previewTabItems]);
+
+  const generatedTargetOptions = useMemo(() => {
+    const targets = new Map<string, { key: string; label: string; path: PreviewLabel[] }>();
+    basePreviewColumns.forEach((column) => {
+      const path = column.path ?? [{ code: column.code, label: column.label }];
+      path.forEach((_, index) => {
+        const targetPath = path.slice(0, index + 1);
+        const key = previewPathKey(targetPath);
+        if (key && !targets.has(key)) {
+          targets.set(key, { key, label: previewPathLabel(targetPath), path: targetPath });
+        }
+      });
     });
-  }, [generatedFieldColumns, previewColumnGroups, previewTabItems]);
+    const options = Array.from(targets.values());
+    return options.length ? [{ key: ALL_GENERATED_GROUPS_KEY, label: "All groups", path: [] }, ...options] : options;
+  }, [basePreviewColumns]);
+
+  useEffect(() => {
+    if (settingsTab === "rollup") return;
+    if (selectedGeneratedTargetKey && generatedTargetOptions.some((target) => target.key === selectedGeneratedTargetKey)) return;
+    setSelectedGeneratedTargetKey(generatedTargetOptions[0]?.key ?? "");
+  }, [generatedTargetOptions, selectedGeneratedTargetKey, settingsTab]);
+
+  const previewColumns = useMemo<PreviewColumn[]>(() => {
+    const visibleGeneratedColumns = computedColumns.filter((column) => column.mode !== "rollup" && column.showInPreview !== false);
+    if (!visibleGeneratedColumns.length) return basePreviewColumns;
+    const repeatingGenerated = visibleGeneratedColumns.filter(
+      (column) => Boolean(column.repeatForAllGroups) || column.targetGroupKey === ALL_GENERATED_GROUPS_KEY,
+    );
+    const generatedByTarget = new Map<string, ComputedColumnDraft[]>();
+    const rootGenerated: ComputedColumnDraft[] = [];
+    visibleGeneratedColumns.forEach((column) => {
+      if (Boolean(column.repeatForAllGroups) || column.targetGroupKey === ALL_GENERATED_GROUPS_KEY) return;
+      const targetKey = column.targetGroupKey || previewPathKey(column.targetPath);
+      if (!targetKey) {
+        rootGenerated.push(column);
+        return;
+      }
+      generatedByTarget.set(targetKey, [...(generatedByTarget.get(targetKey) ?? []), column]);
+    });
+    const next: PreviewColumn[] = [];
+    basePreviewColumns.forEach((column, index) => {
+      next.push(column);
+      if (repeatingGenerated.length) {
+        const currentGroupPath = column.path?.slice(0, 1) ?? [{ code: column.code, label: column.label }];
+        const nextColumn = basePreviewColumns[index + 1];
+        if (!nextColumn || !isPathPrefix(currentGroupPath, nextColumn.path)) {
+          const parent = currentGroupPath[currentGroupPath.length - 1];
+          repeatingGenerated.forEach((generated) => {
+            const item: LibraryItem = {
+              id: `MEASURE:${generated.code}`,
+              type: "MEASURE",
+              code: generated.code,
+              label: generated.label,
+              subLabel: `${generated.mode === "individual" ? "Individual" : generated.mode === "compute" ? "Computed" : "Calculated"} | ${generated.formula}`,
+              badge: generated.outputUom || "Calculated",
+              generatedMode: generated.mode,
+            };
+            next.push({
+              code: `${previewPathKey(currentGroupPath)}:${generated.code}`,
+              label: generated.label,
+              groupCode: parent?.code,
+              groupLabel: parent?.label,
+              generatedMeasure: item,
+              path: [...currentGroupPath, { code: generated.code, label: generated.label }],
+            });
+          });
+        }
+      }
+      generatedByTarget.forEach((columns, targetKey) => {
+        const targetPath = columns[0]?.targetPath;
+        if (!targetPath?.length || !isPathPrefix(targetPath, column.path)) return;
+        const nextColumn = basePreviewColumns[index + 1];
+        if (nextColumn && isPathPrefix(targetPath, nextColumn.path)) return;
+        const parent = targetPath[targetPath.length - 1];
+        columns.forEach((generated) => {
+          const item: LibraryItem = {
+            id: `MEASURE:${generated.code}`,
+            type: "MEASURE",
+            code: generated.code,
+            label: generated.label,
+            subLabel: `${generated.mode === "individual" ? "Individual" : generated.mode === "compute" ? "Computed" : "Calculated"} | ${generated.formula}`,
+            badge: generated.outputUom || "Calculated",
+            generatedMode: generated.mode,
+          };
+          next.push({
+            code: `${targetKey}:${generated.code}`,
+            label: generated.label,
+            groupCode: parent?.code,
+            groupLabel: parent?.label,
+            generatedMeasure: item,
+            path: [...targetPath, { code: generated.code, label: generated.label }],
+          });
+        });
+      });
+    });
+    rootGenerated.forEach((generated) => {
+      const item: LibraryItem = {
+        id: `MEASURE:${generated.code}`,
+        type: "MEASURE",
+        code: generated.code,
+        label: generated.label,
+        subLabel: `${generated.mode === "individual" ? "Individual" : generated.mode === "compute" ? "Computed" : "Calculated"} | ${generated.formula}`,
+        badge: generated.outputUom || "Calculated",
+        generatedMode: generated.mode,
+      };
+      next.push({
+        code: generated.code,
+        label: generated.label,
+        generatedMeasure: item,
+        path: [{ code: generated.code, label: generated.label }],
+      });
+    });
+    return next;
+  }, [basePreviewColumns, computedColumns]);
 
   const previewStructuralHeaderDepth = useMemo(() => {
     return previewColumns.reduce((maxDepth, column) => Math.max(maxDepth, (column.path?.length ?? 1) - 1), 0);
@@ -882,6 +1088,14 @@ export function TemplateStudioPage() {
     });
     return keys;
   }, [previewColumns, previewRows]);
+  const publicationPreviewColumns = useMemo(
+    () => previewColumns.filter((column, index) => isPublicationColumnEnabled(column, index)),
+    [previewColumns, publicationColumns],
+  );
+  const publicationPeriodicityText = useMemo(
+    () => inferPublicationPeriodicity(publicationPreviewColumns),
+    [publicationPreviewColumns],
+  );
   const periodFrequencyOptions = useMemo(() => {
     const options = new Map<string, string>();
     allTimePeriods.forEach((period) => {
@@ -1005,21 +1219,17 @@ export function TemplateStudioPage() {
   }, [builder.fields, cellMap, previewColumns, previewSettings.showCodes, previewSettings.bilingualLabels, secondaryMeasureLabelCache]);
 
   const generatedDataEntryColumns = useMemo(() => {
-    const computedByCode = computedColumns.reduce<Record<string, ComputedColumnDraft>>((next, column) => {
-      next[normalizeCode(column.code)] = column;
-      return next;
-    }, {});
-    return generatedFieldColumns.map((field) => {
-      const column = computedByCode[normalizeCode(field.code)];
-      return {
-        code: field.code,
-        label: field.label,
-        mode: field.generatedMode ?? column?.mode ?? "compute",
-        uom: field.badge || column?.outputUom || "Calculated",
-        showInDataEntry: Boolean(column?.showInDataEntry),
-      };
-    });
-  }, [computedColumns, generatedFieldColumns]);
+    return computedColumns
+      .filter((column) => column.mode !== "rollup")
+      .map((column) => ({
+        code: column.code,
+        label: column.label,
+        mode: column.mode,
+        uom: column.outputUom || "Calculated",
+        showInDataEntry: Boolean(column.showInDataEntry),
+        targetGroupLabel: column.targetGroupLabel,
+      }));
+  }, [computedColumns]);
 
   const organizationByCode = useMemo(() => {
     const map = new Map<string, MasterRecord>();
@@ -1127,6 +1337,7 @@ export function TemplateStudioPage() {
         existing.generatedColumnLabels = compactList([...existing.generatedColumnLabels, ...visibleGeneratedColumnLabels]);
         existing.periodicities = compactList([
           ...existing.periodicities,
+          publicationPeriodicityText,
           ...periodicities.map((item) => mappingText(item, ["periodicity_name", "periodicity_code", "mapping_role"])),
           detail?.periodicity_name,
         ]);
@@ -1141,7 +1352,7 @@ export function TemplateStudioPage() {
         const officerLabels = compactList([...embeddedOfficerLabels, ...fallbackOfficerLabels], "Officer mapping pending");
         existing.officers = compactList([...existing.officers, ...officerLabels]);
         if (!sources.length) existing.readiness = "MISSING_SOURCE";
-        else if (!periodicities.length && !detail?.periodicity_name) existing.readiness = "MISSING_PERIODICITY";
+        else if (!publicationPeriodicityText && !periodicities.length && !detail?.periodicity_name) existing.readiness = "MISSING_PERIODICITY";
         else if (!activeRowLevels.length && !activeColumnLevels.length && !builder.tabsBy.length) existing.readiness = "MISSING_GRAIN";
         else if (officerLabels.length === 1 && officerLabels[0] === "Officer mapping pending") existing.readiness = "MISSING_OFFICER";
         groups.set(key, existing);
@@ -1157,6 +1368,7 @@ export function TemplateStudioPage() {
     editableTemplateColumns,
     generatedDataEntryColumns,
     organizationByCode,
+    publicationPeriodicityText,
     previewSettings.bilingualLabels,
     previewSettings.showAllRecipientColumns,
     secondaryMeasureLabelCache,
@@ -1222,6 +1434,13 @@ export function TemplateStudioPage() {
         status: computedColumns.length ? "PASS" : "WARN",
         detail: computedColumns.length ? `${computedColumns.length} computed/calculated/rollup output(s) configured.` : "No generated output columns configured.",
       },
+      {
+        label: "Publication columns",
+        status: publicationPreviewColumns.length ? "PASS" : "BLOCK",
+        detail: publicationPreviewColumns.length
+          ? `${publicationPreviewColumns.length} column(s) selected for final publication${publicationPeriodicityText ? `; periodicity: ${publicationPeriodicityText}` : ""}.`
+          : "Select at least one column for final publication.",
+      },
     ];
     return checks;
   }, [
@@ -1231,6 +1450,8 @@ export function TemplateStudioPage() {
     computedColumns.length,
     dataFieldDetails,
     editableMeasureItems,
+    publicationPeriodicityText,
+    publicationPreviewColumns.length,
     recipientGroups.length,
     selectedVersion?.title,
     selectedVersion?.version_code,
@@ -1302,6 +1523,7 @@ export function TemplateStudioPage() {
       setActiveRowLevelId("row-level-1");
       setCellMap({});
       setColumnValidations({});
+      setPublicationColumns({});
       setAvailableValidations({});
       setComputedColumns([]);
       versionHydratedRef.current = false;
@@ -1324,7 +1546,7 @@ export function TemplateStudioPage() {
       void saveDraftSnapshot({ silent: true });
     }, 1800);
     return () => window.clearTimeout(autosaveTimerRef.current);
-  }, [activeStep, builder, cellMap, columnLevels, rowLevels, columnValidations, computedColumns, previewSettings, selectedVersion?.version_code, isSelectedVersionFrozen, isLoading, isVersionLoading, isPreviewHydrating]);
+  }, [activeStep, builder, cellMap, columnLevels, rowLevels, columnValidations, publicationColumns, computedColumns, previewSettings, selectedVersion?.version_code, isSelectedVersionFrozen, isLoading, isVersionLoading, isPreviewHydrating]);
 
   useEffect(() => {
     if (!["recipients", "preview", "publish"].includes(activeStep)) return undefined;
@@ -1701,6 +1923,9 @@ export function TemplateStudioPage() {
           setColumnValidations(nextValidations);
           setAvailableValidations(nextValidations);
         }
+        if (studioState.publicationColumns && typeof studioState.publicationColumns === "object") {
+          setPublicationColumns(safeBooleanMap(studioState.publicationColumns));
+        }
         if (Array.isArray(studioState.computedColumns)) {
           setComputedColumns(safeComputedColumns(studioState.computedColumns));
         }
@@ -1716,7 +1941,18 @@ export function TemplateStudioPage() {
               show_in_preview?: boolean;
               show_in_published_output?: boolean;
             };
+            target_group_key?: string | null;
+            target_group_label?: string | null;
+            target_path?: PreviewLabel[];
+            repeat_for_all_groups?: boolean;
+            repeat_per_column_group?: boolean;
+            rollup_dimension_code?: string | null;
+            rollup_parent_member_code?: string | null;
+            rollup_aggregation_method?: string | null;
           };
+          const repeatForAllGroups =
+            Boolean(metadata.repeat_for_all_groups ?? metadata.repeat_per_column_group) ||
+            metadata.target_group_key === ALL_GENERATED_GROUPS_KEY;
           return {
             code: formula.formula_code ?? "",
             label: formula.formula_name ?? formula.formula_code ?? "Generated value",
@@ -1726,7 +1962,14 @@ export function TemplateStudioPage() {
             functionCode: formula.function_code ?? undefined,
             showInDataEntry: Boolean(metadata.visibility?.show_in_data_entry),
             showInPreview: metadata.visibility?.show_in_preview !== false,
-            showInPublishedOutput: metadata.visibility?.show_in_published_output !== false,
+            showInPublishedOutput: metadata.visibility?.show_in_published_output === true,
+            repeatForAllGroups,
+            targetGroupKey: repeatForAllGroups ? ALL_GENERATED_GROUPS_KEY : metadata.target_group_key ?? undefined,
+            targetGroupLabel: repeatForAllGroups ? "All groups" : metadata.target_group_label ?? undefined,
+            targetPath: repeatForAllGroups ? undefined : Array.isArray(metadata.target_path) ? metadata.target_path : undefined,
+            rollupDimensionCode: metadata.rollup_dimension_code ?? undefined,
+            rollupParentMemberCode: metadata.rollup_parent_member_code ?? undefined,
+            rollupAggregationMethod: metadata.rollup_aggregation_method ?? undefined,
           } satisfies ComputedColumnDraft;
         });
         setComputedColumns(nextComputedColumns);
@@ -2167,6 +2410,31 @@ export function TemplateStudioPage() {
     return `column:${columnIndex}`;
   }
 
+  function isPublicationColumnEnabled(column: PreviewColumn, columnIndex: number) {
+    const key = measureColumnKey(column, columnIndex);
+    return publicationColumns[key] === true;
+  }
+
+  function togglePublicationColumn(event: MouseEvent, column: PreviewColumn, columnIndex: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isSelectedVersionFrozen) {
+      setError("This template version is published and locked. Create a new version to make changes.");
+      return;
+    }
+    const key = measureColumnKey(column, columnIndex);
+    const nextPublicationColumns = {
+      ...publicationColumns,
+      [key]: publicationColumns[key] !== true,
+    };
+    setPublicationColumns(nextPublicationColumns);
+    void saveDraftSnapshot({ silent: true, overrides: { publicationColumns: nextPublicationColumns } });
+  }
+
+  function isIndividualGeneratedMeasure(measure?: LibraryItem | null) {
+    return normalizeCode(measure?.generatedMode ?? "") === "INDIVIDUAL";
+  }
+
   function measureForColumn(columnIndex: number) {
     const column = previewColumns[columnIndex];
     if (column?.generatedMeasure) return column.generatedMeasure;
@@ -2233,13 +2501,27 @@ export function TemplateStudioPage() {
       return;
     }
     const selectedRollup = availableRollups.find((rollup) => rollupKey(rollup) === selectedRollupKey);
+    const selectedTarget = generatedTargetOptions.find((target) => target.key === selectedGeneratedTargetKey);
+    const repeatForAllGroups = mode !== "rollup" && selectedTarget?.key === ALL_GENERATED_GROUPS_KEY;
     const label = mode === "rollup" && selectedRollup ? rollupLabel(selectedRollup) : computeName.trim();
     const formula =
       mode === "rollup" && selectedRollup
         ? `${selectedRollup.dimension_code ?? "DIMENSION"}.${selectedRollup.rule_code ?? "ROLLUP"}`
+        : mode === "individual"
+          ? (computeFormula.trim() || "INDIVIDUAL_COLUMN")
         : computeFormula.trim();
     if (!label || !formula) {
-      setError(mode === "rollup" ? "Select an available rollup before adding the rollup column." : "Enter a value name and formula before adding the computed column.");
+      setError(
+        mode === "rollup"
+          ? "Select an available rollup before adding the rollup row."
+          : mode === "individual"
+            ? "Enter an individual column name before adding it."
+            : "Enter a value name and formula before adding the computed column.",
+      );
+      return;
+    }
+    if (mode !== "rollup" && !selectedTarget) {
+      setError("Select the column group where this generated value should be added.");
       return;
     }
     const code = createComputedCode(label);
@@ -2251,28 +2533,26 @@ export function TemplateStudioPage() {
       outputUom,
       mode,
       functionCode: mode === "calculated" ? calculatedFunction : undefined,
-      showInDataEntry: false,
+      showInDataEntry: mode === "individual",
       showInPreview: true,
-      showInPublishedOutput: true,
-    };
-    const item: LibraryItem = {
-      id: `MEASURE:${code}`,
-      type: "MEASURE",
-      code,
-      label,
-      subLabel: `${mode === "rollup" ? "Rollup" : mode === "compute" ? "Computed" : "Calculated"} | ${formula}`,
-      badge: outputUom,
-      generatedMode: mode,
+      showInPublishedOutput: false,
+      repeatForAllGroups,
+      targetGroupKey: mode === "rollup" ? undefined : repeatForAllGroups ? ALL_GENERATED_GROUPS_KEY : selectedTarget?.key,
+      targetGroupLabel: mode === "rollup" ? undefined : repeatForAllGroups ? "All groups" : selectedTarget?.label,
+      targetPath: mode === "rollup" || repeatForAllGroups ? undefined : selectedTarget?.path,
+      rollupDimensionCode: selectedRollup?.dimension_code,
+      rollupParentMemberCode: selectedRollup?.parent_member_code,
+      rollupAggregationMethod: selectedRollup?.aggregation_method,
     };
     setComputedColumns((current) => [computed, ...current]);
-    setBuilder((current) => ({
-      ...current,
-      fields: current.fields.some((field) => field.id === item.id) ? current.fields : [...current.fields, item],
-    }));
     setComputeName("");
     setComputeFormula("");
     setComputeColumnSearch("");
-    setNotice(`${mode === "rollup" ? "Rollup" : mode === "calculated" ? "Calculated" : "Computed"} column added to the draft preview.`);
+    setNotice(
+      mode === "rollup"
+        ? "Rollup row added to the draft preview."
+        : `${mode === "individual" ? "Individual" : mode === "calculated" ? "Calculated" : "Computed"} column added under ${repeatForAllGroups ? "all groups" : selectedTarget?.label}.`,
+    );
   }
 
   function toggleGeneratedColumnDataEntryVisibility(code: string) {
@@ -2295,20 +2575,15 @@ export function TemplateStudioPage() {
       setError("This template version is published and locked. Create a new version to make changes.");
       return;
     }
-    const item: LibraryItem = {
-      id: `MEASURE:${column.code}`,
-      type: "MEASURE",
-      code: column.code,
-      label: column.label,
-      subLabel: `${column.mode === "rollup" ? "Rollup" : column.mode === "compute" ? "Computed" : "Calculated"} | ${column.formula}`,
-      badge: column.outputUom || "Calculated",
-      generatedMode: column.mode,
-    };
-    setBuilder((current) => {
-      if (current.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code))) return current;
-      return { ...current, fields: [...current.fields, item] };
-    });
-    setNotice(`${column.label} added to preview fields.`);
+    const normalizedCode = normalizeCode(column.code);
+    setComputedColumns((current) =>
+      current.map((item) =>
+        normalizeCode(item.code) === normalizedCode
+          ? { ...item, showInPreview: true }
+          : item,
+      ),
+    );
+    setNotice(`${column.label} enabled in preview.`);
   }
 
   function removeGeneratedColumn(column: ComputedColumnDraft) {
@@ -2318,10 +2593,6 @@ export function TemplateStudioPage() {
     }
     const normalizedCode = normalizeCode(column.code);
     setComputedColumns((current) => current.filter((item) => normalizeCode(item.code) !== normalizedCode));
-    setBuilder((current) => ({
-      ...current,
-      fields: current.fields.filter((field) => normalizeCode(field.code) !== normalizedCode),
-    }));
     setCellMap((current) => {
       const next = { ...current };
       Object.entries(next).forEach(([key, value]) => {
@@ -2347,6 +2618,14 @@ export function TemplateStudioPage() {
     return next;
   }
 
+  function sanitizePublicationColumnsForPreview(input: Record<string, boolean>) {
+    const next: Record<string, boolean> = {};
+    Object.entries(input).forEach(([key, value]) => {
+      if (activeCellMapKeys.has(key) && value === true) next[key] = true;
+    });
+    return next;
+  }
+
   function buildStudioDraftState(
     overrides: Partial<{
       builder: BuilderState;
@@ -2354,18 +2633,21 @@ export function TemplateStudioPage() {
       columnLevels: ColumnLevel[];
       cellMap: Record<string, LibraryItem>;
       columnValidations: Record<string, ColumnValidationConfig>;
+      publicationColumns: Record<string, boolean>;
       computedColumns: ComputedColumnDraft[];
       previewSettings: typeof defaultPreviewSettings;
       activeStep: StudioStep;
     }> = {},
   ) {
     const nextCellMap = sanitizeCellMapForPreview(overrides.cellMap ?? cellMap);
+    const nextPublicationColumns = sanitizePublicationColumnsForPreview(overrides.publicationColumns ?? publicationColumns);
     return {
       builder: overrides.builder ?? builder,
       rowLevels: overrides.rowLevels ?? rowLevels,
       columnLevels: overrides.columnLevels ?? columnLevels,
       cellMap: nextCellMap,
       columnValidations: overrides.columnValidations ?? columnValidations,
+      publicationColumns: nextPublicationColumns,
       computedColumns: overrides.computedColumns ?? computedColumns,
       previewSettings: overrides.previewSettings ?? previewSettings,
       activeStep: overrides.activeStep ?? activeStep,
@@ -2415,12 +2697,19 @@ export function TemplateStudioPage() {
           source_column_keys: sourceKeysForFormula(column.formula),
           render_metadata: {
             generated_mode: column.mode,
-            repeat_per_column_group: true,
-            preview_behavior: "NON_EDITABLE_GENERATED_COLUMN",
+            repeat_for_all_groups: Boolean(column.repeatForAllGroups),
+            repeat_per_column_group: Boolean(column.repeatForAllGroups),
+            target_group_key: column.repeatForAllGroups ? ALL_GENERATED_GROUPS_KEY : column.targetGroupKey ?? null,
+            target_group_label: column.repeatForAllGroups ? "All groups" : column.targetGroupLabel ?? null,
+            target_path: column.repeatForAllGroups ? [] : column.targetPath ?? [],
+            rollup_dimension_code: column.rollupDimensionCode ?? null,
+            rollup_parent_member_code: column.rollupParentMemberCode ?? null,
+            rollup_aggregation_method: column.rollupAggregationMethod ?? null,
+            preview_behavior: column.mode === "rollup" ? "DERIVED_ROW_ROLLUP" : "NON_EDITABLE_GENERATED_COLUMN",
             visibility: {
               show_in_data_entry: Boolean(column.showInDataEntry),
               show_in_preview: column.showInPreview !== false,
-              show_in_published_output: column.showInPublishedOutput !== false,
+              show_in_published_output: column.showInPublishedOutput === true,
             },
           },
           sort_order: 9000 + index,
@@ -2853,7 +3142,7 @@ export function TemplateStudioPage() {
             ))}
             <tr>
               {Array.from({ length: previewRowHeaderCount }, (_, index) => {
-                const rowLevel = activeRowLevels[index];
+                const rowLevel = previewRowLevels[index];
                 return (
                   <th key={`final-preview-row-header-${index}`} className="template-row-header-cell">
                     {rowLevel?.items.map((item) => libraryItemLabel(item)).join(" / ") || (index === 0 ? "Rows" : `Row Level ${index + 1}`)}
@@ -2885,7 +3174,7 @@ export function TemplateStudioPage() {
                 {Array.from({ length: previewRowHeaderCount }, (_, levelIndex) => {
                   const part = row.path?.[levelIndex] ?? (levelIndex === 0 ? row : { code: "-", label: "-" });
                   return (
-                    <td key={`${row.code}-final-row-level-${levelIndex}`} className="template-row-header-cell">
+                    <td key={`${row.code}-final-row-level-${levelIndex}`} className={`template-row-header-cell ${row.generatedRollup ? "generated-rollup-row" : ""}`}>
                       {previewSettings.showCodes ? part.code : part.label}
                   </td>
                 );
@@ -2894,7 +3183,9 @@ export function TemplateStudioPage() {
                   const originalIndex = previewColumns.indexOf(column);
                   return (
                   <td key={`${row.code}-${column.code}-${originalIndex}`}>
-                    {column.generatedMeasure ? (
+                    {row.generatedRollup ? (
+                      <span className="computed-cell-preview" title={`${row.generatedRollup.label} derives ${row.generatedRollup.rollupAggregationMethod ?? "configured"} values from child rows`}>Auto</span>
+                    ) : column.generatedMeasure && !isIndividualGeneratedMeasure(column.generatedMeasure) ? (
                       <span className="computed-cell-preview" title={column.generatedMeasure.subLabel}>Auto</span>
                     ) : (
                       <span className={measureForColumn(originalIndex) ? "editable-cell-preview" : "empty-cell-preview"} />
@@ -3508,13 +3799,14 @@ export function TemplateStudioPage() {
                       ))}
                       <tr>
                         {Array.from({ length: previewRowHeaderCount }, (_, index) => {
-                          const rowLevel = activeRowLevels[index];
+                          const rowLevel = previewRowLevels[index];
+                          const dropRowLevel = activeRowLevels[index];
                           return (
                             <th
                               key={`preview-row-header-${index}`}
                               className="preview-drop-target template-row-header-cell"
                               onDragOver={(event) => event.preventDefault()}
-                              onDrop={(event) => void onRowLevelDrop(event, rowLevel?.id ?? `row-level-${index + 1}`)}
+                              onDrop={(event) => void onRowLevelDrop(event, dropRowLevel?.id ?? rowLevel?.id ?? `row-level-${index + 1}`)}
                               title={`Drop a dimension/geography/time set here to map row level ${index + 1}`}
                             >
                               <span className="template-preview-header-label">
@@ -3537,6 +3829,18 @@ export function TemplateStudioPage() {
                             >
                               <span className="template-preview-header-label">
                                 <span className="template-preview-header-text">{previewSettings.showCodes ? column.code : column.label}</span>
+                                <button
+                                  className={`template-column-validation-button ${isPublicationColumnEnabled(column, index) ? "configured" : ""}`}
+                                  type="button"
+                                  title={
+                                    isPublicationColumnEnabled(column, index)
+                                      ? "Included in final publication output"
+                                      : "Excluded from final publication output"
+                                  }
+                                  onClick={(event) => togglePublicationColumn(event, column, index)}
+                                >
+                                  <CheckCircle2 size={11} />
+                                </button>
                                 {columnMeasure && (
                                   <>
                                     <span className="template-measure-meta" title={measureTitle(columnMeasure)}>
@@ -3567,7 +3871,7 @@ export function TemplateStudioPage() {
                           {Array.from({ length: previewRowHeaderCount }, (_, levelIndex) => {
                             const part = row.path?.[levelIndex] ?? (levelIndex === 0 ? row : { code: "-", label: "-" });
                             return (
-                              <td key={`${row.code}-row-level-${levelIndex}`} className="template-row-header-cell">
+                              <td key={`${row.code}-row-level-${levelIndex}`} className={`template-row-header-cell ${row.generatedRollup ? "generated-rollup-row" : ""}`}>
                                 {previewSettings.showCodes ? part.code : part.label}
                               </td>
                             );
@@ -3585,7 +3889,11 @@ export function TemplateStudioPage() {
                               onClick={() => toggleCellMeasure(cellKey)}
                               title={cellMap[cellKey] ? "Click to unbind this cell-specific measure" : "Drop a measure here to override this cell"}
                             >
-                              {column.generatedMeasure ? (
+                              {row.generatedRollup ? (
+                                <span className="computed-cell-preview" title={`${row.generatedRollup.label} derives ${row.generatedRollup.rollupAggregationMethod ?? "configured"} values from child rows`}>
+                                  Auto
+                                </span>
+                              ) : column.generatedMeasure && !isIndividualGeneratedMeasure(column.generatedMeasure) ? (
                                 <span className="computed-cell-preview" title={column.generatedMeasure.subLabel}>
                                   Auto
                                 </span>
@@ -3760,21 +4068,21 @@ export function TemplateStudioPage() {
           <aside className="side-drawer template-drawer template-form-drawer">
             <div className="drawer-header">
               <span>Template Settings</span>
-              <h3>Computed, calculated, and rollup values</h3>
+              <h3>Computed, calculated, individual, and rollup values</h3>
               <button type="button" onClick={() => setSettingsDrawerOpen(false)}>x</button>
             </div>
             <div className="drawer-info-note">
               Use editable preview columns as inputs. Generated outputs are non-editable and should later be persisted through the approved template formula contract.
             </div>
             <div className="template-settings-tabs">
-              {(["compute", "calculated", "rollup"] as SettingsTab[]).map((tab) => (
+              {(["compute", "calculated", "individual", "rollup"] as SettingsTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={settingsTab === tab ? "active" : ""}
                   type="button"
                   onClick={() => setSettingsTab(tab)}
                 >
-                  {tab === "compute" ? "Compute" : tab === "calculated" ? "Calculated" : "Rollup"}
+                  {tab === "compute" ? "Compute" : tab === "calculated" ? "Calculated" : tab === "individual" ? "Individual Column" : "Rollup"}
                 </button>
               ))}
             </div>
@@ -3797,6 +4105,18 @@ export function TemplateStudioPage() {
                     <label>
                       Output UOM
                       <input value={calculatedOutputUom} onChange={(event) => setCalculatedOutputUom(event.target.value)} placeholder="e.g. Percent" />
+                    </label>
+                    <label>
+                      Add under column group
+                      <select value={selectedGeneratedTargetKey} onChange={(event) => setSelectedGeneratedTargetKey(event.target.value)}>
+                        {generatedTargetOptions.length === 0 ? (
+                          <option value="">Configure columns first</option>
+                        ) : (
+                          generatedTargetOptions.map((target) => (
+                            <option key={target.key} value={target.key}>{target.label}</option>
+                          ))
+                        )}
+                      </select>
                     </label>
                     <label className="template-validation-wide">
                       Formula
@@ -3873,6 +4193,18 @@ export function TemplateStudioPage() {
                       Output UOM
                       <input value={calculatedOutputUom} onChange={(event) => setCalculatedOutputUom(event.target.value)} placeholder="e.g. Percent" />
                     </label>
+                    <label>
+                      Add under column group
+                      <select value={selectedGeneratedTargetKey} onChange={(event) => setSelectedGeneratedTargetKey(event.target.value)}>
+                        {generatedTargetOptions.length === 0 ? (
+                          <option value="">Configure columns first</option>
+                        ) : (
+                          generatedTargetOptions.map((target) => (
+                            <option key={target.key} value={target.key}>{target.label}</option>
+                          ))
+                        )}
+                      </select>
+                    </label>
                     <label className="template-validation-wide">
                       Formula
                       <textarea
@@ -3897,6 +4229,49 @@ export function TemplateStudioPage() {
                   </div>
                 </section>
               </>
+            )}
+
+            {settingsTab === "individual" && (
+              <section className="template-settings-panel">
+                <div className="template-settings-section-title">
+                  <div>
+                    <h4>Individual Column</h4>
+                    <p>Add a standalone read-only column in all groups, one group, or after the selected group path.</p>
+                  </div>
+                  <span className="template-settings-badge">Manual</span>
+                </div>
+                <div className="template-validation-form">
+                  <label>
+                    Column name
+                    <input value={computeName} onChange={(event) => setComputeName(event.target.value)} placeholder="e.g. Remarks total" />
+                  </label>
+                  <label>
+                    UOM / label
+                    <input value={calculatedOutputUom} onChange={(event) => setCalculatedOutputUom(event.target.value)} placeholder="e.g. Number" />
+                  </label>
+                  <label>
+                    Add under column group
+                    <select value={selectedGeneratedTargetKey} onChange={(event) => setSelectedGeneratedTargetKey(event.target.value)}>
+                      {generatedTargetOptions.length === 0 ? (
+                        <option value="">Configure columns first</option>
+                      ) : (
+                        generatedTargetOptions.map((target) => (
+                          <option key={target.key} value={target.key}>{target.label}</option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  <label className="template-validation-wide">
+                    Note / purpose
+                    <textarea
+                      rows={3}
+                      value={computeFormula === "INDIVIDUAL_COLUMN" ? "" : computeFormula}
+                      onChange={(event) => setComputeFormula(event.target.value)}
+                      placeholder="Optional note for reviewers"
+                    />
+                  </label>
+                </div>
+              </section>
             )}
 
             {settingsTab === "rollup" && (
@@ -3944,17 +4319,17 @@ export function TemplateStudioPage() {
                         <strong>{column.label}</strong>
                       </header>
                       <span>
-                        {column.mode.toUpperCase()} | {column.outputUom} | {column.showInDataEntry ? "Visible to provider" : "Hidden from provider"}
+                        {column.mode.toUpperCase()} | {column.outputUom} | {column.mode === "rollup" ? "Row aggregate" : column.repeatForAllGroups ? "All groups" : column.targetGroupLabel || "Template output"} | {column.showInDataEntry ? "Visible to provider" : "Hidden from provider"}
                       </span>
                       <small>{column.formula}</small>
                       <div className="template-computed-action-row">
                         <button
                           className="secondary-button compact"
                           type="button"
-                          disabled={builder.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code))}
+                          disabled={column.showInPreview !== false}
                           onClick={() => addGeneratedColumnToPreview(column)}
                         >
-                          {builder.fields.some((field) => normalizeCode(field.code) === normalizeCode(column.code)) ? "In Preview" : "Add Preview"}
+                          {column.showInPreview !== false ? "In Preview" : "Show Preview"}
                         </button>
                         <label className="template-toggle-label compact" title="Generated columns are hidden from data-entry recipients by default. Enable only when the data provider should see this read-only output.">
                           <input
@@ -3980,7 +4355,7 @@ export function TemplateStudioPage() {
             <div className="drawer-footer">
               <button className="ghost-button" type="button" onClick={() => setSettingsDrawerOpen(false)}>Cancel</button>
               <button className="primary-button" type="button" onClick={() => addComputedColumn(settingsTab)}>
-                Add {settingsTab === "rollup" ? "Rollup" : settingsTab === "calculated" ? "Calculated" : "Computed"} Column
+                Add {settingsTab === "rollup" ? "Rollup" : settingsTab === "individual" ? "Individual" : settingsTab === "calculated" ? "Calculated" : "Computed"} Column
               </button>
             </div>
           </aside>

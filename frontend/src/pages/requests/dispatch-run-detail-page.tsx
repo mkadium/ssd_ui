@@ -1,11 +1,11 @@
 import { ArrowLeft, Check, Clock, Download, EyeOff, MessageSquareText, Paperclip, Pin, RefreshCw, Search, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { listDataFields } from "../../api/data-fields.api";
 import { listDimensionMembers, listDimensionMemberSetMembers, listGeographies } from "../../api/dimensions.api";
 import { getIndicator, type IndicatorDetail } from "../../api/indicators.api";
-import { DispatchRun, getDispatchRun, publishDispatchRunItemSubmission, resendDispatchRunNotification, reviewDispatchRunItemSubmission } from "../../api/requests.api";
+import { DispatchRun, getDispatchRun, listDispatchRuns, publishDispatchRunItemSubmission, resendDispatchRunNotification, reviewDispatchRunItemSubmission } from "../../api/requests.api";
 import { listAuthReviewWorkflows, type AuthReviewWorkflowLevel } from "../../api/auth-admin.api";
 
 type DispatchTab = "OVERVIEW" | "RECIPIENT" | "PROGRESS" | "SUBMISSION" | "COMMUNICATIONS" | "TIMELINE";
@@ -61,6 +61,12 @@ type PreviewHeaderCell = PreviewPart & { colSpan: number };
 type SubmissionPreviewScope = "SOURCE" | "COMBINED";
 type GeneratedColumnMode = "INCLUDE" | "EXCLUDE" | "ONLY";
 type PublishMode = "ALL_COLUMNS" | "BASE_COLUMNS_ONLY" | "GENERATED_COLUMNS_ONLY" | "SELECTED_COLUMNS";
+type EmailAttachment = {
+  filename: string;
+  contentType: string;
+  size: number;
+  contentBase64: string;
+};
 type PreviewOptions = {
   showCodes: boolean;
   zebraRows: boolean;
@@ -72,6 +78,9 @@ type PreviewOptions = {
     measures: boolean;
   };
 };
+
+const ALL_GENERATED_GROUPS_KEY = "__ALL_COLUMN_GROUPS__";
+const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 function arrayFromRecord(record: Record<string, unknown>, key: string) {
   return Array.isArray(record[key]) ? (record[key] as Record<string, unknown>[]) : [];
@@ -165,6 +174,31 @@ function groupedHeaderRows(columns: PreviewColumn[], levelCount: number): Previe
   });
 }
 
+function previewPathKey(path: PreviewPart[] | undefined) {
+  return (path ?? []).map((part) => normalize(part.code || part.label)).filter(Boolean).join(">");
+}
+
+function isPathPrefix(targetPath: PreviewPart[] | undefined, columnPath: PreviewPart[] | undefined) {
+  const target = targetPath ?? [];
+  const path = columnPath ?? [];
+  if (!target.length || target.length > path.length) return false;
+  return target.every((part, index) => normalize(part.code || part.label) === normalize(path[index]?.code || path[index]?.label));
+}
+
+function generatedFieldsFromStudio(studioState: Record<string, unknown>) {
+  return asArray(studioState.computedColumns)
+    .filter((field) => text(field.mode, "").toLowerCase() !== "rollup")
+    .filter((field) => field.showInPreview !== false)
+    .map((field) => ({
+      ...field,
+      generatedMode: text(field.mode, "compute"),
+      code: text(field.code, ""),
+      label: text(field.label ?? field.code),
+      badge: text(field.outputUom, "Calculated"),
+    }))
+    .filter((field) => field.code);
+}
+
 function rowHeaderLabelsFromStudio(studioState: Record<string, unknown>, rows: PreviewRow[]) {
   const labels = asArray(studioState.rowLevels)
     .map((level) => {
@@ -197,7 +231,10 @@ function buildSubmittedPreview(
     .map((items) => items.flatMap((item) => labelsForStudioItem(item, cache, options, secondaryMemberLabelCache, secondaryMeasureLabelCache)))
     .filter((parts) => parts.length);
   const tabParts = asArray(builder.tabsBy).flatMap((item) => labelsForStudioItem(item, cache, options, secondaryMemberLabelCache, secondaryMeasureLabelCache));
-  const generatedFields = asArray(builder.fields).filter((field) => Boolean(field.generatedMode));
+  const generatedFields = [
+    ...asArray(builder.fields).filter((field) => Boolean(field.generatedMode)),
+    ...generatedFieldsFromStudio(studioState),
+  ];
   const showBaseColumns = generatedMode !== "ONLY";
   const showGeneratedColumns = generatedMode !== "EXCLUDE";
   const rows = cartesian(rowParts) as PreviewRow[];
@@ -211,14 +248,24 @@ function buildSubmittedPreview(
               : [{ ...group, groupCode: group.code, groupLabel: group.label, path: group.path }]
             : []),
           ...(showGeneratedColumns
-            ? generatedFields.map((field) => ({
-                code: `${group.code}:${text(field.code, "")}`,
-                label: text(field.label ?? field.code),
-                groupCode: group.code,
-                groupLabel: group.label,
-                generatedField: field,
-                path: [...group.path, { code: text(field.code, ""), label: text(field.label ?? field.code) }],
-              }))
+            ? generatedFields
+                .filter((field) => {
+                  const generatedField = asRecord(field);
+                  if (generatedField.repeatForAllGroups === true || generatedField.targetGroupKey === ALL_GENERATED_GROUPS_KEY) return true;
+                  const targetPath = Array.isArray(generatedField.targetPath) ? generatedField.targetPath as PreviewPart[] : undefined;
+                  const targetKey = text(generatedField.targetGroupKey, "");
+                  if (targetPath?.length) return isPathPrefix(targetPath, group.path);
+                  if (targetKey) return targetKey === previewPathKey(group.path);
+                  return true;
+                })
+                .map((field) => ({
+                  code: `${group.code}:${text(field.code, "")}`,
+                  label: text(field.label ?? field.code),
+                  groupCode: group.code,
+                  groupLabel: group.label,
+                  generatedField: field,
+                  path: [...group.path, { code: text(field.code, ""), label: text(field.label ?? field.code) }],
+                }))
             : []),
         ],
       )
@@ -281,6 +328,34 @@ function statusLabel(value: unknown) {
   return text(value).replace(/_/g, " ");
 }
 
+function senderDisplay(communication: Record<string, unknown>) {
+  const fromName = text(communication.fromName ?? communication.from_name, "");
+  const fromEmail = text(communication.fromEmail ?? communication.from_email, "");
+  if (fromName && fromEmail) return `${fromName} <${fromEmail}>`;
+  if (fromEmail) return fromEmail;
+  return text(communication.smtpProfileCode ?? communication.smtp_profile_code, "System mailbox");
+}
+
+function fileToEmailAttachment(file: File): Promise<EmailAttachment> {
+  if (file.size > MAX_EMAIL_ATTACHMENT_BYTES) {
+    return Promise.reject(new Error(`${file.name} exceeds the 20 MB attachment limit.`));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve({
+        filename: file.name,
+        contentType: file.type || "application/octet-stream",
+        size: file.size,
+        contentBase64: result.split(",", 2)[1] ?? result,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function recipientRows(source: Record<string, unknown>, bucket: "to" | "cc" | "bcc") {
   const rows = asArray(source[bucket]);
   if (rows.length) return rows;
@@ -306,6 +381,19 @@ function payloadAttachments(payload: Record<string, unknown>) {
   return asArray(payload.attachments);
 }
 
+function attachmentName(attachment: Record<string, unknown>, fallback = "attachment") {
+  return text(attachment.filename ?? attachment.name, fallback);
+}
+
+function attachmentSizeLabel(attachment: Record<string, unknown>) {
+  const size = Number(attachment.size ?? 0);
+  return size > 0 ? `${Math.ceil(size / 1024)} KB` : "";
+}
+
+function attachmentContent(attachment: Record<string, unknown>) {
+  return text(attachment.contentBase64 ?? attachment.content_base64, "");
+}
+
 function approvedObservationPeriod(row: Record<string, unknown>) {
   const direct = text(row.reportingPeriod ?? row.reporting_period ?? row.period ?? row.timePeriod ?? row.time_period, "");
   if (direct) return direct;
@@ -322,6 +410,10 @@ function measureUom(measure: Record<string, unknown>) {
 
 function generatedFieldMode(field: Record<string, unknown>) {
   return text(field.generatedMode ?? field.mode ?? field.formula_type, "compute").toLowerCase();
+}
+
+function isIndividualGeneratedField(field?: Record<string, unknown> | null) {
+  return generatedFieldMode(asRecord(field)) === "individual";
 }
 
 function generatedFieldFormula(field: Record<string, unknown>) {
@@ -343,6 +435,7 @@ function evaluateGeneratedValue(
   const mode = generatedFieldMode(field);
   const formula = generatedFieldFormula(field);
   if (mode === "rollup") return "Rollup pending";
+  if (mode === "individual") return "";
   if (!formula) return "Formula missing";
   const groupColumns = columns.filter((candidate) => candidate.groupCode === column.groupCode && !candidate.generatedField);
   const tokenPattern = /\{\{([^}]+)\}\}/g;
@@ -380,7 +473,6 @@ function evaluateGeneratedValue(
 }
 
 function inferPeriodicityFromColumns(columns: PreviewColumn[], requestPeriod: string) {
-  if (/^\d{4}$/.test(requestPeriod)) return "Annual";
   const years = Array.from(new Set(columns.flatMap((column) => column.path).map((part) => text(part.label, "")).filter((label) => /^\d{4}$/.test(label))))
     .map(Number)
     .sort((left, right) => left - right);
@@ -389,7 +481,22 @@ function inferPeriodicityFromColumns(columns: PreviewColumn[], requestPeriod: st
     if (gap === 1) return "Annual";
     if (gap > 1) return `Every ${gap} years`;
   }
+  if (/^\d{4}$/.test(requestPeriod)) return "Annual";
   return "";
+}
+
+function submittedPublicationColumnKey(column: PreviewColumn, columnIndex: number) {
+  if (column.generatedField) {
+    const field = asRecord(column.generatedField);
+    return `column-generated:${normalize(column.groupCode ?? column.code)}:${normalize(field.code ?? column.label)}`;
+  }
+  if (column.groupCode) return `column-repeat-label:${normalize(column.label)}`;
+  return `column:${columnIndex}`;
+}
+
+function publicationColumnEnabled(studioState: Record<string, unknown>, column: PreviewColumn, columnIndex: number) {
+  const map = asRecord(studioState.publicationColumns);
+  return map[submittedPublicationColumnKey(column, columnIndex)] === true;
 }
 
 function downloadTextFile(filename: string, mimeType: string, content: string) {
@@ -398,6 +505,26 @@ function downloadTextFile(filename: string, mimeType: string, content: string) {
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBase64Attachment(attachment: Record<string, unknown>) {
+  const content = attachmentContent(attachment);
+  if (!content) return;
+  const contentType = text(attachment.contentType ?? attachment.content_type, "application/octet-stream");
+  const binary = atob(content.split(",", 2).pop() || content);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const blob = new Blob([bytes], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = attachmentName(attachment);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -450,8 +577,10 @@ function DetailRows({ rows }: { rows: DetailRow[] }) {
 export function DispatchRunDetailPage() {
   const { dispatchRunCode = "" } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const routeNotice = (location.state as { notice?: string } | null)?.notice;
   const [run, setRun] = useState<DispatchRun | null>(null);
+  const [dispatchHistory, setDispatchHistory] = useState<DispatchRun[]>([]);
   const [indicator, setIndicator] = useState<IndicatorDetail | null>(null);
   const [activeTab, setActiveTab] = useState<DispatchTab>("OVERVIEW");
   const [selectedCommunicationIndex, setSelectedCommunicationIndex] = useState(0);
@@ -469,6 +598,7 @@ export function DispatchRunDetailPage() {
   const [secondaryMeasureLabelCache, setSecondaryMeasureLabelCache] = useState<Record<string, string>>({});
   const [hiddenSubmittedColumns, setHiddenSubmittedColumns] = useState<string[]>([]);
   const [frozenSubmittedColumnCount, setFrozenSubmittedColumnCount] = useState(0);
+  const [resendAttachments, setResendAttachments] = useState<EmailAttachment[]>([]);
   const [isResending, setIsResending] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
@@ -486,7 +616,38 @@ export function DispatchRunDetailPage() {
     try {
       const loadedRun = await getDispatchRun(dispatchRunCode);
       setRun(loadedRun);
+      const loadedRunRecord = loadedRun as Record<string, unknown>;
+      const loadedPlanCode = text(loadedRunRecord.dispatchPlanCode ?? loadedRunRecord.dispatch_plan_code, "");
+      const loadedUnitCode = text(loadedRunRecord.unitCode ?? loadedRunRecord.unit_code, "");
       const loadedItems = asArray((loadedRun as Record<string, unknown>).items);
+      const referenceItem = loadedItems[0] ?? {};
+      const referenceTemplateVersion = text(referenceItem.templateVersionCode ?? referenceItem.template_version_code, "");
+      const referenceIndicator = text(referenceItem.indicatorCode ?? referenceItem.indicator_code, "");
+      const referenceSource = text(referenceItem.sourceOrganizationCode ?? referenceItem.source_organization_code, "");
+      if (loadedPlanCode || loadedUnitCode) {
+        const history = await listDispatchRuns({
+          unitCode: loadedUnitCode || undefined,
+          limit: 500,
+        }).catch(() => []);
+        const matchingHistory = history.filter((historyRun) => {
+          const historyRecord = historyRun as Record<string, unknown>;
+          const historyPlanCode = text(historyRecord.dispatchPlanCode ?? historyRecord.dispatch_plan_code, "");
+          if (loadedPlanCode && historyPlanCode === loadedPlanCode) return true;
+          const historyItems = asArray(historyRecord.items);
+          return historyItems.some((item) => (
+            (!referenceTemplateVersion || text(item.templateVersionCode ?? item.template_version_code, "") === referenceTemplateVersion)
+            && (!referenceIndicator || text(item.indicatorCode ?? item.indicator_code, "") === referenceIndicator)
+            && (!referenceSource || text(item.sourceOrganizationCode ?? item.source_organization_code, "") === referenceSource)
+          ));
+        });
+        setDispatchHistory(
+          (matchingHistory.length ? matchingHistory : [loadedRun]).sort((left, right) => text((right as Record<string, unknown>).createdAt ?? (right as Record<string, unknown>).created_at, "").localeCompare(
+            text((left as Record<string, unknown>).createdAt ?? (left as Record<string, unknown>).created_at, ""),
+          )),
+        );
+      } else {
+        setDispatchHistory([loadedRun]);
+      }
       const firstIndicatorCode = text(loadedItems[0]?.indicatorCode ?? loadedItems[0]?.indicator_code, "");
       if (firstIndicatorCode) {
         const result = await getIndicator(firstIndicatorCode).catch(() => null);
@@ -556,18 +717,44 @@ export function DispatchRunDetailPage() {
     setNotice("");
     setError("");
     try {
-      const queued = await resendDispatchRunNotification(dispatchCode, selectedEmailType);
+      const queued = await resendDispatchRunNotification(dispatchCode, selectedEmailType, undefined, {
+        attachments: resendAttachments,
+      });
       const queuedCount = Number(queued.queuedNotificationEvents ?? 1);
-      setNotice(
-        `${statusLabel(selectedEmailType)} resend queued ${queuedCount} email event(s).`,
-      );
+      const processed = asRecord(queued.processedNotifications);
+      const sentCount = Number(processed.sentEvents ?? 0);
+      const failedCount = Number(processed.failedEvents ?? 0);
+      const skippedCount = Number(processed.skippedEvents ?? 0);
+      setNotice(sentCount > 0
+        ? `${statusLabel(selectedEmailType)} email sent (${sentCount}/${queuedCount}).`
+        : `${statusLabel(selectedEmailType)} resend queued but not sent. Failed: ${failedCount}, skipped: ${skippedCount}.`);
       await loadRun();
+      setResendAttachments([]);
       setActiveTab("COMMUNICATIONS");
       setSelectedCommunicationIndex(0);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Email could not be resent.");
     } finally {
       setIsResending(false);
+    }
+  }
+
+  async function addResendAttachments(files: FileList | null) {
+    if (!files?.length) return;
+    try {
+      const selected = Array.from(files);
+      const totalSize = selected.reduce((sum, file) => sum + file.size, 0) + resendAttachments.reduce((sum, file) => sum + file.size, 0);
+      if (totalSize > MAX_EMAIL_ATTACHMENT_BYTES) {
+        setError("Email attachments cannot exceed 20 MB total.");
+        return;
+      }
+      const nextAttachments = await Promise.all(selected.map(fileToEmailAttachment));
+      setResendAttachments((current) => [...current, ...nextAttachments].filter(
+        (attachment, index, all) => all.findIndex((item) => item.filename === attachment.filename && item.size === attachment.size) === index,
+      ));
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Attachment could not be added.");
     }
   }
 
@@ -648,6 +835,10 @@ export function DispatchRunDetailPage() {
     () => buildSubmittedPreview(templateContract, submissionPreviewOptions, secondaryMemberLabelCache, secondaryMeasureLabelCache, "INCLUDE"),
     [secondaryMeasureLabelCache, secondaryMemberLabelCache, submissionPreviewOptions, templateContract],
   );
+  const publicationSubmittedColumns = useMemo(
+    () => fullGeneratedSubmittedPreview.columns.filter((column, index) => publicationColumnEnabled(studioState, column, index)),
+    [fullGeneratedSubmittedPreview.columns, studioState],
+  );
   const visibleSubmittedColumns = useMemo(
     () => submittedPreview.columns.filter((column) => !hiddenSubmittedColumns.includes(column.code)),
     [hiddenSubmittedColumns, submittedPreview.columns],
@@ -692,6 +883,7 @@ export function DispatchRunDetailPage() {
   ).length;
   const timeline = useMemo(() => asArray(runRecord.timeline), [runRecord.timeline]);
   const resolvedRecipients = asRecord(selectedCommunication.resolvedRecipients ?? selectedCommunication.resolved_recipients);
+  const selectedCommunicationAttachments = asArray(selectedCommunication.attachments);
   const snapshotRecipients = asRecord(runMetadata.recipientSnapshot ?? runMetadata.recipient_snapshot ?? firstItem.recipientSnapshot);
   const effectiveRecipients = Object.keys(resolvedRecipients).length ? resolvedRecipients : snapshotRecipients;
   const dispatchStatus = field(runRecord, "dispatchStatus", "dispatch_status", "READY");
@@ -738,18 +930,30 @@ export function DispatchRunDetailPage() {
   const department = text(provider.departmentName ?? runMetadata.departmentName);
   const measures = asArray(templateContract.measures);
   const uom = text(provider.uom ?? provider.unitOfMeasure ?? provider.unit_of_measure ?? firstItem.uom ?? measures.map(measureUom).filter(Boolean).join(", "), "-");
+  const publicationPeriodicity = inferPeriodicityFromColumns(publicationSubmittedColumns, field(runRecord, "requestPeriodLabel", "request_period_label", ""));
   const periodicity = text(
-    provider.periodicity ??
+    publicationPeriodicity ||
+      (provider.periodicity ??
       provider.periodicityLabel ??
       firstItem.periodicity ??
       runMetadata.periodicity ??
       asRecord(templateContract.version).periodicity ??
-      inferPeriodicityFromColumns(submittedPreview.columns, field(runRecord, "requestPeriodLabel", "request_period_label", "")),
+      inferPeriodicityFromColumns(submittedPreview.columns, field(runRecord, "requestPeriodLabel", "request_period_label", ""))),
     "-",
   );
   const createdAt = field(runRecord, "createdAt", "created_at", "");
   const updatedAt = field(runRecord, "updatedAt", "updated_at", "");
   const sentCommunication = communications.find((item) => text(item.eventStatus ?? item.event_status) === "SENT");
+  const currentTimelineState = useMemo(() => {
+    if (publicationStatus === "PUBLISHED") return { title: "Facts published", description: "Published data is available for reporting." };
+    if (approvalStatus === "APPROVED") return { title: "Approved", description: "Approved and ready to publish facts." };
+    if (reviewStatus === "PENDING_REVIEW" || reviewStatus === "IN_REVIEW") return { title: `Pending ${nextApprovalLevelName}`, description: "Submission is waiting for review action." };
+    if (lifecycleStatus === "SUBMITTED" || submissionStatus === "SUBMITTED" || submissionStatus === "RESUBMITTED") return { title: "Submitted for review", description: "Latest submission is with reviewers." };
+    if (submissionStatus === "IN_PROGRESS" || submissionStatus === "DRAFT") return { title: "Data entry in progress", description: "Officer has started entering data." };
+    if (dispatchStatus === "SENT") return { title: "Waiting for submission", description: sentCommunication ? "Request email was sent to recipient." : "Dispatch is sent; communication is being processed." };
+    if (dispatchStatus === "READY") return { title: "Ready to send", description: "Dispatch is configured but not sent yet." };
+    return { title: statusLabel(dispatchStatus || "Ready"), description: "Current dispatch state." };
+  }, [approvalStatus, dispatchStatus, lifecycleStatus, nextApprovalLevelName, publicationStatus, reviewStatus, sentCommunication, submissionStatus]);
   const combinedSubmissionValues = useMemo(() => {
     const merged: Record<string, unknown> = {};
     items.forEach((item) => {
@@ -769,18 +973,20 @@ export function DispatchRunDetailPage() {
     fullGeneratedSubmittedPreview.rows.forEach((row) => {
       fullGeneratedSubmittedPreview.columns.forEach((column) => {
         if (!column.generatedField) return;
-        generated[cellKey(row, column)] = evaluateGeneratedValue(
-          row,
-          column,
-          fullGeneratedSubmittedPreview.columns,
-          sourceValues,
-        );
+        generated[cellKey(row, column)] = isIndividualGeneratedField(column.generatedField)
+          ? text(sourceValues[cellKey(row, column)], "")
+          : evaluateGeneratedValue(
+              row,
+              column,
+              fullGeneratedSubmittedPreview.columns,
+              sourceValues,
+            );
       });
     });
     return generated;
   }, [fullGeneratedSubmittedPreview, selectedSubmissionPayload]);
   const publishColumns = useMemo(() => {
-    const allColumns = fullGeneratedSubmittedPreview.columns;
+    const allColumns = publicationSubmittedColumns;
     if (publishMode === "BASE_COLUMNS_ONLY") return allColumns.filter((column) => !column.generatedField);
     if (publishMode === "GENERATED_COLUMNS_ONLY") return allColumns.filter((column) => column.generatedField);
     if (publishMode === "SELECTED_COLUMNS") {
@@ -788,7 +994,7 @@ export function DispatchRunDetailPage() {
       return allColumns.filter((column) => visibleCodes.has(column.code));
     }
     return allColumns;
-  }, [fullGeneratedSubmittedPreview.columns, publishMode, visibleSubmittedColumns]);
+  }, [publicationSubmittedColumns, publishMode, visibleSubmittedColumns]);
   const publishCellKeys = useMemo(
     () => fullGeneratedSubmittedPreview.rows.flatMap((row) => publishColumns.map((column) => cellKey(row, column))),
     [fullGeneratedSubmittedPreview.rows, publishColumns],
@@ -889,7 +1095,7 @@ export function DispatchRunDetailPage() {
     const bodyRows = submittedPreview.rows.map((row) => [
       ...Array.from({ length: rowHeaderCount }, (_, index) => submissionPreviewOptions.showCodes ? row.path[index]?.code || row.code : row.path[index]?.label || row.label),
       ...visibleSubmittedColumns.map((column) => {
-        const value = column.generatedField
+        const value = column.generatedField && !isIndividualGeneratedField(column.generatedField)
           ? evaluateGeneratedValue(row, column, visibleSubmittedColumns, effectiveSubmittedValues)
           : text(effectiveSubmittedValues[cellKey(row, column)], "Missing");
         return value || "Missing";
@@ -938,7 +1144,28 @@ export function DispatchRunDetailPage() {
           <Link className="dispatch-back-link" to="/requests/dispatch-plans"><ArrowLeft size={14} /> Template Dispatch</Link>
           <h1>Dispatch {dispatchReference}</h1>
         </div>
-        <button className="secondary-button compact" type="button" onClick={() => void loadRun()}><RefreshCw size={14} /> Refresh</button>
+        <div className="dispatch-detail-title-actions">
+          <select
+            className="secondary-select compact"
+            value={dispatchCode}
+            onChange={(event) => {
+              if (event.target.value && event.target.value !== dispatchCode) {
+                navigate(`/requests/dispatch-runs/${encodeURIComponent(event.target.value)}${location.search || ""}`);
+              }
+            }}
+            title="View previous dispatch cycles for this template/source/period"
+          >
+            {(dispatchHistory.length ? dispatchHistory : run ? [run] : []).map((historyRun, index) => {
+              const record = historyRun as Record<string, unknown>;
+              const code = text(record.dispatchRunCode ?? record.dispatch_run_code, "");
+              const period = text(record.requestPeriodLabel ?? record.request_period_label ?? record.requestPeriodCode, "-");
+              const sequence = Number(record.dispatchSequence ?? record.dispatch_sequence ?? index + 1);
+              const created = formatDate(text(record.createdAt ?? record.created_at, ""));
+              return <option key={code} value={code}>{`DIS-${period}-${String(sequence).padStart(3, "0")} | ${statusLabel(record.dispatchStatus)} | ${created}`}</option>;
+            })}
+          </select>
+          <button className="secondary-button compact" type="button" onClick={() => void loadRun()}><RefreshCw size={14} /> Refresh</button>
+        </div>
       </div>
 
       {routeNotice ? <div className="notice success">{routeNotice}</div> : null}
@@ -1335,9 +1562,9 @@ export function DispatchRunDetailPage() {
                           {submittedAttachments.map((item, index) => (
                             <li key={`${text(item.name)}-${index}`}>
                               <Paperclip size={12} />
-                              <span>{text(item.name)}</span>
-                              <small>{text(item.size, "")}</small>
-                              <button type="button">Download</button>
+                              <span>{attachmentName(item)}</span>
+                              <small>{attachmentSizeLabel(item)}</small>
+                              <button type="button" disabled={!attachmentContent(item)} onClick={() => downloadBase64Attachment(item)}>Download</button>
                             </li>
                           ))}
                         </ul>
@@ -1424,6 +1651,34 @@ export function DispatchRunDetailPage() {
                     {isResending ? "Sending..." : "Resend"}
                   </button>
                 </div>
+                <label className="dispatch-resend-attachment-picker">
+                  <Paperclip size={13} />
+                  <span>Add attachments</span>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={(event) => {
+                      void addResendAttachments(event.target.files);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                {resendAttachments.length ? (
+                  <div className="dispatch-resend-attachments">
+                    {resendAttachments.map((attachment) => (
+                      <span key={`${attachment.filename}-${attachment.size}`}>
+                        {attachment.filename}
+                        <button
+                          type="button"
+                          aria-label={`Remove ${attachment.filename}`}
+                          onClick={() => setResendAttachments((current) => current.filter((item) => item !== attachment))}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <label>
                   <Search size={13} />
                   <input
@@ -1445,7 +1700,7 @@ export function DispatchRunDetailPage() {
                     <span>{dispatchReference}</span>
                     <em>{statusLabel(item.actionCode ?? item.action_code)}</em>
                     <strong>{text(item.subject, text(item.actionCode ?? item.action_code))}</strong>
-                    <small>{formatDate(text(item.processedAt ?? item.processed_at ?? item.createdAt ?? item.created_at, ""))}</small>
+                    <small>{formatDateTime(text(item.processedAt ?? item.processed_at ?? item.createdAt ?? item.created_at, ""))}</small>
                     <span className={`template-dispatch-badge ${statusClass(item.eventStatus ?? item.event_status)}`}>
                       {statusLabel(item.eventStatus ?? item.event_status)}
                     </span>
@@ -1461,7 +1716,7 @@ export function DispatchRunDetailPage() {
                     </header>
                     <DetailRows
                       rows={[
-                        ["From", text(selectedCommunication.smtpProfileCode ?? selectedCommunication.smtp_profile_code, "System mailbox")],
+                        ["From", senderDisplay(selectedCommunication)],
                         ["To", recipientRows(asRecord(selectedCommunication.resolvedRecipients), "to").map((row) => text(row.display_name ?? row.email_address)).join(", ")],
                         ["CC", recipientRows(asRecord(selectedCommunication.resolvedRecipients), "cc").map((row) => text(row.display_name ?? row.email_address)).join(", ")],
                         ["Sent on", formatDateTime(text(selectedCommunication.processedAt ?? selectedCommunication.processed_at, ""))],
@@ -1469,6 +1724,30 @@ export function DispatchRunDetailPage() {
                       ]}
                     />
                     <pre>{text(selectedCommunication.body, "No rendered body captured.")}</pre>
+                    <section className="dispatch-communication-attachments">
+                      <div>
+                        <h4>Attachments</h4>
+                        {selectedCommunicationAttachments.length ? (
+                          <button className="secondary-button compact" type="button" onClick={() => selectedCommunicationAttachments.forEach(downloadBase64Attachment)}>
+                            <Download size={12} /> Download all
+                          </button>
+                        ) : null}
+                      </div>
+                      {selectedCommunicationAttachments.length ? (
+                        <ul className="dispatch-submission-attachment-list">
+                          {selectedCommunicationAttachments.map((attachment, index) => (
+                            <li key={`${attachmentName(attachment)}-${index}`}>
+                              <Paperclip size={12} />
+                              <span>{attachmentName(attachment)}</span>
+                              <small>{attachmentSizeLabel(attachment)}</small>
+                              <button type="button" disabled={!attachmentContent(attachment)} onClick={() => downloadBase64Attachment(attachment)}>
+                                Download
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : <p>No attachments sent with this email.</p>}
+                    </section>
                   </>
                 ) : (
                   <div className="dispatch-submission-empty">
@@ -1500,8 +1779,8 @@ export function DispatchRunDetailPage() {
                 <article>
                   <span className="dispatch-timeline-icon current"><Clock size={13} /></span>
                   <div>
-                    <strong>{sentCommunication ? "Email notification sent" : "Ready"}</strong>
-                    <small>Current state</small>
+                    <strong>{currentTimelineState.title}</strong>
+                    <small>{currentTimelineState.description}</small>
                   </div>
                   <time>Now</time>
                 </article>
@@ -1662,7 +1941,7 @@ function SubmittedTemplatePreview({
               ))}
               {columns.map((column, columnIndex) => {
                 const key = cellKey(row, column);
-                const value = column.generatedField
+                const value = column.generatedField && !isIndividualGeneratedField(column.generatedField)
                   ? evaluateGeneratedValue(row, column, columns, values)
                   : text(values[key], "");
                 const remark = text(remarks[key], "");

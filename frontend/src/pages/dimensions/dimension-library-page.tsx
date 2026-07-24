@@ -52,6 +52,7 @@ import { getSelectedUnitCode, LOCALE_CHANGED_EVENT, UNIT_CHANGED_EVENT } from ".
 
 type DetailTab = "overview" | "members" | "relationships" | "sets" | "rollups" | "aliases";
 type DrawerMode = "dimension" | "member" | "relationship" | "set" | "setItem" | "alias" | "rollup";
+const DETAIL_TABS: DetailTab[] = ["overview", "members", "relationships", "sets", "aliases"];
 
 const STRUCTURE_FILTERS = [
   { value: "ALL", label: "All structures" },
@@ -656,7 +657,7 @@ export function DimensionLibraryPage() {
         <div>
           <div className="breadcrumb">Home / Dimensions / Dimension Library</div>
           <h2>Dimension Library</h2>
-          <p>Manage reusable dimension definitions, members, hierarchies, sets, rollups, and aliases used by templates and reporting.</p>
+          <p>Manage reusable dimension definitions, members, hierarchies, sets, and aliases used by templates and reporting.</p>
         </div>
         <div className="page-actions">
           <button className="secondary-button compact" type="button" onClick={() => void loadPage()}>
@@ -702,7 +703,7 @@ export function DimensionLibraryPage() {
 
       <section className="workflow-card dimension-workflow-card">
         <div className="tab-strip dimension-tab-strip">
-          {(["overview", "members", "relationships", "sets", "rollups", "aliases"] as DetailTab[]).map((tab) => (
+          {DETAIL_TABS.map((tab) => (
             <button className={`tab-button ${activeTab === tab ? "active" : ""}`} type="button" onClick={() => setActiveTab(tab)} key={tab}>
               {tabLabel(tab)}
             </button>

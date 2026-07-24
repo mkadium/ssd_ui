@@ -16,6 +16,7 @@ import { GlobalIndicatorsPage } from "../pages/indicators/global-indicators-page
 import { IndicatorLibraryPage } from "../pages/indicators/indicator-library-page";
 import { MastersReferencePage } from "../pages/masters/masters-reference-page";
 import { DispatchRunDetailPage } from "../pages/requests/dispatch-run-detail-page";
+import { DispatchBatchesPage } from "../pages/requests/dispatch-batches-page";
 import { DispatchPlansPage } from "../pages/requests/dispatch-plans-page";
 import { DispatchSettingsPage } from "../pages/requests/dispatch-settings-page";
 import { EmailTemplatesPage } from "../pages/requests/email-templates-page";
@@ -61,6 +62,8 @@ const childRoutes = flatNavigation
               <TemplateMappingsPage />
             ) : item.path === "/requests/dispatch-plans" ? (
               <DispatchPlansPage />
+            ) : item.path === "/requests/dispatch-batches" ? (
+              <DispatchBatchesPage />
             ) : item.path === "/requests/dispatch-settings" ? (
               <DispatchSettingsPage />
             ) : item.path === "/requests/email-templates" ? (
@@ -116,6 +119,10 @@ const router = createBrowserRouter([
       {
         path: "requests/dispatch-runs/:dispatchRunCode",
         element: <DispatchRunDetailPage />,
+      },
+      {
+        path: "requests/dispatch-batches/:batchCode",
+        element: <DispatchBatchesPage />,
       },
     ],
   },

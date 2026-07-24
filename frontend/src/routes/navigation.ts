@@ -125,6 +125,7 @@ export const navigationModules: NavModule[] = [
       { label: "Email Templates", path: "/requests/email-templates", icon: Mail },
       { label: "Notification Rules", path: "/requests/notification-rules", icon: Settings },
       { label: "Template Dispatch", path: "/requests/dispatch-plans", icon: CalendarDays },
+      { label: "Dispatch Batches", path: "/requests/dispatch-batches", icon: Send },
       { label: "Collections", path: "/requests/collections", icon: Send },
       { label: "Dispatch Preview", path: "/requests/dispatch-preview", icon: FileText },
       { label: "Request Monitor", path: "/requests/monitor", icon: Gauge },

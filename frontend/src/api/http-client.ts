@@ -19,7 +19,8 @@ export async function apiGet<T>(path: string): Promise<ApiResult<T>> {
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    const message = await readErrorMessage(response);
+    throw new Error(message || `API request failed: ${response.status}`);
   }
 
   return {

@@ -385,6 +385,7 @@ export async function listTimePeriods(filters: { frequencyCode?: string; limit?:
       limit: filters.limit ?? 500,
       offset: filters.offset ?? 0,
       locale: filters.locale,
+      unit_code: getSelectedUnitCode(),
     })}`,
   );
   return result.data;
@@ -418,12 +419,12 @@ export async function deactivateTimePeriod(timePeriodCode: string) {
 }
 
 export async function listTimePeriodSets() {
-  const result = await apiGet<ListResponse<DimensionMemberSet>>(`/dimensions/time-period-sets${localeParams()}`);
+  const result = await apiGet<ListResponse<DimensionMemberSet>>(`/dimensions/time-period-sets${localeParams({ unit_code: getSelectedUnitCode() })}`);
   return result.data;
 }
 
 export async function listGeographyLevels() {
-  const result = await apiGet<ListResponse<GeographyLevel>>(`/dimensions/geography-levels${localeParams()}`);
+  const result = await apiGet<ListResponse<GeographyLevel>>(`/dimensions/geography-levels${localeParams({ unit_code: getSelectedUnitCode() })}`);
   return result.data;
 }
 
@@ -441,6 +442,7 @@ export async function listGeographies(filters: {
       limit: filters.limit ?? 500,
       offset: filters.offset ?? 0,
       locale: filters.locale,
+      unit_code: getSelectedUnitCode(),
     })}`,
   );
   return result.data;
@@ -463,7 +465,7 @@ export async function deactivateGeography(geographyCode: string) {
 
 export async function listTimePeriodSetPeriods(setCode: string, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMemberSetItem>>(
-    `/dimensions/time-period-sets/${encodeURIComponent(setCode)}/periods${localeParams({ limit: 1000, offset: 0, locale: options.locale })}`,
+    `/dimensions/time-period-sets/${encodeURIComponent(setCode)}/periods${localeParams({ limit: 1000, offset: 0, locale: options.locale, unit_code: getSelectedUnitCode() })}`,
   );
   return result.data;
 }
@@ -479,23 +481,26 @@ export async function updateTimePeriodSet(setCode: string, payload: TimePeriodSe
 }
 
 export async function listDimensions() {
-  const result = await apiGet<ListResponse<DimensionManagementRow>>(`/dimensions${localeParams()}`);
+  const result = await apiGet<ListResponse<DimensionManagementRow>>(`/dimensions${localeParams({ unit_code: getSelectedUnitCode() })}`);
   return result.data;
 }
 
 export async function getDimension(dimensionCode: string) {
-  const result = await apiGet<DetailResponse<DimensionDetail>>(`/dimensions/${encodeURIComponent(dimensionCode)}${localeParams()}`);
+  const result = await apiGet<DetailResponse<DimensionDetail>>(`/dimensions/${encodeURIComponent(dimensionCode)}${localeParams({ unit_code: getSelectedUnitCode() })}`);
   return result.data;
 }
 
 export async function createDimension(payload: DimensionPayload) {
-  const result = await apiPost<DetailResponse<DimensionDetail>, DimensionPayload>(`/dimensions${localeParams()}`, payload);
+  const result = await apiPost<DetailResponse<DimensionDetail>, DimensionPayload>(
+    `/dimensions${localeParams({ unit_code: getSelectedUnitCode() })}`,
+    payload,
+  );
   return result.data;
 }
 
 export async function updateDimension(dimensionCode: string, payload: DimensionPayload) {
   const result = await apiPatch<DetailResponse<DimensionDetail>, DimensionPayload>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}${localeParams()}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}${localeParams({ unit_code: getSelectedUnitCode() })}`,
     payload,
   );
   return result.data;
@@ -516,7 +521,7 @@ export async function restoreDimension(dimensionCode: string) {
 
 export async function listDimensionMembers(dimensionCode: string, limit = 300, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMember>>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}/members${localeParams({ limit, offset: 0, locale: options.locale })}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}/members${localeParams({ limit, offset: 0, locale: options.locale, unit_code: getSelectedUnitCode() })}`,
   );
   return result.data;
 }
@@ -546,7 +551,7 @@ export async function deactivateDimensionMember(dimensionCode: string, memberCod
 
 export async function listDimensionRelationships(dimensionCode: string, limit = 300) {
   const result = await apiGet<ListResponse<DimensionRelationship>>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}/member-relationships${localeParams({ limit, offset: 0 })}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}/member-relationships${localeParams({ limit, offset: 0, unit_code: getSelectedUnitCode() })}`,
   );
   return result.data;
 }
@@ -571,20 +576,20 @@ export async function deactivateDimensionRelationship(dimensionCode: string, rel
 }
 
 export async function listDimensionMemberSets(dimensionCode: string) {
-  const result = await apiGet<ListResponse<DimensionMemberSet>>(`/dimensions/member-sets${localeParams({ dimension_code: dimensionCode })}`);
+  const result = await apiGet<ListResponse<DimensionMemberSet>>(`/dimensions/member-sets${localeParams({ dimension_code: dimensionCode, unit_code: getSelectedUnitCode() })}`);
   return result.data;
 }
 
 export async function listDimensionMemberSetMembers(setCode: string, limit = 300, options: { locale?: string } = {}) {
   const result = await apiGet<ListResponse<DimensionMemberSetItem>>(
-    `/dimensions/member-sets/${encodeURIComponent(setCode)}/members${localeParams({ limit, offset: 0, locale: options.locale })}`,
+    `/dimensions/member-sets/${encodeURIComponent(setCode)}/members${localeParams({ limit, offset: 0, locale: options.locale, unit_code: getSelectedUnitCode() })}`,
   );
   return result.data;
 }
 
 export async function createDimensionMemberSet(dimensionCode: string, payload: DimensionSetPayload) {
   const result = await apiPost<DetailResponse<DimensionMemberSet>, DimensionSetPayload>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets${localeParams()}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets${localeParams({ unit_code: getSelectedUnitCode() })}`,
     payload,
   );
   return result.data;
@@ -592,7 +597,7 @@ export async function createDimensionMemberSet(dimensionCode: string, payload: D
 
 export async function updateDimensionMemberSet(dimensionCode: string, setCode: string, payload: DimensionSetPayload) {
   const result = await apiPatch<DetailResponse<DimensionMemberSet>, DimensionSetPayload>(
-    `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}${localeParams()}`,
+    `/dimensions/${encodeURIComponent(dimensionCode)}/member-sets/${encodeURIComponent(setCode)}${localeParams({ unit_code: getSelectedUnitCode() })}`,
     payload,
   );
   return result.data;

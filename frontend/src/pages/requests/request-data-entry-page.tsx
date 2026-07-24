@@ -43,6 +43,14 @@ type PreviewOptions = {
     measures: boolean;
   };
 };
+type DataEntryAttachment = {
+  id: string;
+  name: string;
+  filename?: string;
+  size: number;
+  contentType?: string;
+  contentBase64?: string;
+};
 
 function cartesian(parts: PreviewPart[][]): PreviewRow[] {
   if (!parts.length) return [];
@@ -79,6 +87,35 @@ function groupedHeaderRows(columns: PreviewColumn[], levelCount: number): Previe
   });
 }
 
+const ALL_GENERATED_GROUPS_KEY = "__ALL_COLUMN_GROUPS__";
+
+function previewPathKey(path: PreviewPart[] | undefined) {
+  return (path ?? []).map((part) => normalize(part.code || part.label)).filter(Boolean).join(">");
+}
+
+function isPathPrefix(targetPath: PreviewPart[] | undefined, columnPath: PreviewPart[] | undefined) {
+  const target = targetPath ?? [];
+  const path = columnPath ?? [];
+  if (!target.length || target.length > path.length) return false;
+  return target.every((part, index) => normalize(part.code || part.label) === normalize(path[index]?.code || path[index]?.label));
+}
+
+function generatedFieldsFromStudio(studioState: Record<string, unknown>, includeDataEntryOnly: boolean) {
+  return asArray(studioState.computedColumns)
+    .filter((field) => text(field.mode, "").toLowerCase() !== "rollup")
+    .filter((field) => field.showInPreview !== false)
+    .filter((field) => !includeDataEntryOnly || field.showInDataEntry === true)
+    .map((field) => ({
+      ...field,
+      type: "MEASURE",
+      generatedMode: text(field.mode, "compute"),
+      code: text(field.code, ""),
+      label: text(field.label ?? field.code),
+      badge: text(field.outputUom, "Calculated"),
+    }))
+    .filter((field) => field.code);
+}
+
 function axisCodesByRole(axes: Record<string, unknown>[], role: string) {
   return axes
     .filter((axis) => text(axis.axis_role, "").toUpperCase() === role)
@@ -107,6 +144,14 @@ function measureLabel(measure: Record<string, unknown>) {
 
 function measureUom(measure: Record<string, unknown>) {
   return text(measure.measureUnitCode ?? measure.measure_unit_code ?? measure.unit_code ?? measure.uom ?? measure.badge, "");
+}
+
+function generatedMode(measure?: Record<string, unknown> | null) {
+  return text(measure?.generatedMode ?? measure?.generated_mode ?? measure?.mode ?? measure?.formula_type, "").toLowerCase();
+}
+
+function isIndividualColumn(column: PreviewColumn, detail?: { measure?: Record<string, unknown> | null }) {
+  return generatedMode(column.generatedMeasure) === "individual" || generatedMode(detail?.measure) === "individual";
 }
 
 function unique(values: string[]) {
@@ -206,6 +251,12 @@ function measureColumnKey(column: PreviewColumn, columnIndex: number) {
   }
   if (column.groupCode) return `column-repeat-label:${normalize(column.label)}`;
   return `column:${columnIndex}`;
+}
+
+function publicationColumnEnabled(studioState: Record<string, unknown>, column: PreviewColumn, columnIndex: number) {
+  const map = asRecord(studioState.publicationColumns);
+  const key = measureColumnKey(column, columnIndex);
+  return map[key] === true;
 }
 
 function studioMeasureForColumn(column: PreviewColumn, columnIndex: number, fields: Record<string, unknown>[], cellMap: Record<string, unknown>) {
@@ -424,6 +475,25 @@ function downloadTextFile(filename: string, mimeType: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+function fileToDataEntryAttachment(file: File): Promise<DataEntryAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve({
+        id: `${file.name}-${file.size}-${Date.now()}`,
+        name: file.name,
+        filename: file.name,
+        size: file.size,
+        contentType: file.type || "application/octet-stream",
+        contentBase64: result.split(",", 2)[1] ?? result,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function timePeriodStateSignature(
   additions: PreviewPart[],
   overrides: Record<string, string>,
@@ -533,7 +603,7 @@ export function RequestDataEntryPage() {
   const [loadedDerivedTimeSetCode, setLoadedDerivedTimeSetCode] = useState("");
   const [loadedTimePeriodSignature, setLoadedTimePeriodSignature] = useState(timePeriodStateSignature([], {}, []));
   const [deletedDerivedTimeSetCodes, setDeletedDerivedTimeSetCodes] = useState<string[]>([]);
-  const [attachments, setAttachments] = useState<{ id: string; name: string; size: number }[]>([]);
+  const [attachments, setAttachments] = useState<DataEntryAttachment[]>([]);
   const [isSavingEntry, setIsSavingEntry] = useState(false);
   const [isImportingExcel, setIsImportingExcel] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
@@ -640,7 +710,10 @@ export function RequestDataEntryPage() {
   const previewColumns = useMemo<PreviewColumn[]>(() => {
     const studioColumnGroups = cartesian(studioColumnLevelParts);
     if (studioColumnGroups.length || builderFields.length) {
-      const generatedFields = builderFields.filter((field) => field.generatedMode && field.showInDataEntry === true);
+      const generatedFields = [
+        ...builderFields.filter((field) => field.generatedMode && field.showInDataEntry === true),
+        ...generatedFieldsFromStudio(studioState, true),
+      ];
       const baseGroups = studioColumnGroups.length
         ? studioColumnGroups.map((group) => ({
             ...group,
@@ -669,16 +742,26 @@ export function RequestDataEntryPage() {
               path: [...group.path, tab],
             }))
           : [{ ...group, path: group.path, addedPeriod: group.addedPeriod }];
-        const generatedColumns = generatedFields.map((field) => ({
-          code: `${group.code}:${text(field.code, "")}`,
-          label: text(field.label ?? field.code),
-          groupCode: group.code,
-          groupLabel: group.label,
-          generatedMeasure: field,
-          measure: field,
-          addedPeriod: group.addedPeriod,
-          path: [...group.path, { code: text(field.code, ""), label: text(field.label ?? field.code) }],
-        }));
+        const generatedColumns = generatedFields
+          .filter((field) => {
+            const generatedField = asRecord(field);
+            if (generatedField.repeatForAllGroups === true || generatedField.targetGroupKey === ALL_GENERATED_GROUPS_KEY) return true;
+            const targetPath = Array.isArray(generatedField.targetPath) ? generatedField.targetPath as PreviewPart[] : undefined;
+            const targetKey = text(generatedField.targetGroupKey, "");
+            if (targetPath?.length) return isPathPrefix(targetPath, group.path);
+            if (targetKey) return targetKey === previewPathKey(group.path);
+            return true;
+          })
+          .map((field) => ({
+            code: `${group.code}:${text(field.code, "")}`,
+            label: text(field.label ?? field.code),
+            groupCode: group.code,
+            groupLabel: group.label,
+            generatedMeasure: field,
+            measure: field,
+            addedPeriod: group.addedPeriod,
+            path: [...group.path, { code: text(field.code, ""), label: text(field.label ?? field.code) }],
+          }));
         return [...baseColumns, ...generatedColumns];
       });
     }
@@ -705,11 +788,21 @@ export function RequestDataEntryPage() {
       }));
     }
     return ["Column 1", "Column 2", "Column 3"].map((label) => ({ code: label, label, path: [{ code: label, label }] }));
-  }, [additionalTimePeriods, axisMembers, builderFields, columnAxisCodes, measures, removedTimePeriodCodes, studioColumnLevelParts, studioTabParts, timePeriodOverrides]);
+  }, [additionalTimePeriods, axisMembers, builderFields, columnAxisCodes, measures, removedTimePeriodCodes, studioColumnLevelParts, studioState, studioTabParts, timePeriodOverrides]);
   const rowHeaderCount = Math.max(1, studioRowLevelParts.length || rowAxisCodes.length);
   const uomText = unique([assignment.uom || "", ...measures.map(measureUom)]).join(", ") || "-";
   const requestPeriodText = assignment.reportingPeriod || text(dispatch.requestPeriod, "");
-  const periodicityText = meaningful(assignment.periodicity) || (/^\d{4}$/.test(requestPeriodText) ? "Annual" : "") || meaningful(asRecord(templateContract.version).periodicity) || inferPeriodicityFromStudio(studioState, previewColumns) || "-";
+  const publicationPreviewColumns = useMemo(
+    () => previewColumns.filter((column, index) => publicationColumnEnabled(studioState, column, index)),
+    [previewColumns, studioState],
+  );
+  const periodicityText =
+    inferPeriodicityFromStudio(studioState, publicationPreviewColumns) ||
+    meaningful(assignment.periodicity) ||
+    (/^\d{4}$/.test(requestPeriodText) ? "Annual" : "") ||
+    meaningful(asRecord(templateContract.version).periodicity) ||
+    inferPeriodicityFromStudio(studioState, previewColumns) ||
+    "-";
   const visiblePreviewColumns = useMemo(
     () =>
       previewColumns.filter(
@@ -968,8 +1061,11 @@ export function RequestDataEntryPage() {
     if (savedAttachments.length) {
       setAttachments(savedAttachments.map((file, index) => ({
         id: text(file.id, `saved-${index}`),
-        name: text(file.name, "Attachment"),
+        name: text(file.name ?? file.filename, "Attachment"),
+        filename: text(file.filename ?? file.name, "Attachment"),
         size: Number(file.size ?? 0),
+        contentType: text(file.contentType ?? file.content_type, ""),
+        contentBase64: text(file.contentBase64 ?? file.content_base64, ""),
       })));
     }
     setSubmissionNote(text(draft.submissionNote ?? draft.submission_note, ""));
@@ -1158,7 +1254,7 @@ export function RequestDataEntryPage() {
       run_item_code: runItemCode || undefined,
       values: cellValues,
       remarks: cellRemarks,
-      attachments: attachments.map((file) => ({ id: file.id, name: file.name, size: file.size })),
+      attachments,
       submission_note: submissionNote,
       certification: {
         required: certification.required,
@@ -1265,7 +1361,7 @@ export function RequestDataEntryPage() {
   function editableExcelColumns() {
     return visiblePreviewColumns
       .map((column, index) => ({ column, index, detail: columnDetails[index] }))
-      .filter(({ column, detail }) => !column.generatedMeasure && !asRecord(detail?.measure).generatedMode);
+      .filter(({ column, detail }) => isIndividualColumn(column, detail) || (!column.generatedMeasure && !generatedMode(asRecord(detail?.measure))));
   }
 
   function downloadExcelTemplate() {
@@ -1663,7 +1759,7 @@ export function RequestDataEntryPage() {
                               const effectiveMeasure = columnDetails[columnIndex]?.measure ?? studioMeasureForColumn(column, columnIndex, builderFields, cellMap);
                               const binding = valueBindings.find((item) => measureCode(item) === measureCode(effectiveMeasure ?? {}));
                               const required = binding?.is_required !== false;
-                              const generated = Boolean(effectiveMeasure?.generatedMode);
+                              const generated = Boolean(generatedMode(effectiveMeasure)) && !isIndividualColumn(column, columnDetails[columnIndex]);
                               const isFrozen = columnIndex < frozenColumnCount;
                               const validation = cellValidationMap[key];
                               return (
@@ -1787,10 +1883,9 @@ export function RequestDataEntryPage() {
                       disabled={!canAttach}
                       onChange={(event) => {
                         const files = Array.from(event.target.files ?? []);
-                        setAttachments((current) => [
-                          ...current,
-                          ...files.map((file) => ({ id: `${file.name}-${file.size}-${Date.now()}`, name: file.name, size: file.size })),
-                        ]);
+                        void Promise.all(files.map(fileToDataEntryAttachment))
+                          .then((nextAttachments) => setAttachments((current) => [...current, ...nextAttachments]))
+                          .catch((caught) => setError(caught instanceof Error ? caught.message : "Attachment could not be added."));
                         event.target.value = "";
                       }}
                     />

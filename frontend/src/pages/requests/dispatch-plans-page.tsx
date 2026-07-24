@@ -4,6 +4,7 @@ import {
   FileSpreadsheet,
   Layers,
   Mail,
+  Paperclip,
   RefreshCw,
   Search,
   Send,
@@ -17,8 +18,9 @@ import { useNavigate } from "react-router-dom";
 import { getIndicator, type IndicatorSourceOfficerAssignment, type PublishedTemplateUsage } from "../../api/indicators.api";
 import { createMasterRecord, listMasterRecords, type MasterRecord } from "../../api/masters-reference.api";
 import {
-  createDispatchRun,
+  createDispatchBatch,
   DispatchPlan,
+  DispatchBatch,
   DispatchPlanPayload,
   DispatchPolicy,
   DispatchRun,
@@ -90,6 +92,8 @@ type DispatchRow = {
   measureCodes: string[];
   recipientDefaults: { to: string[]; cc: string[]; bcc: string[] };
   recipients: Recipient[];
+  periodicityCode: string;
+  periodicityName: string;
   reportingStartCode: string;
   reportingPeriodHint: string;
 };
@@ -99,6 +103,7 @@ type SendDraft = {
   requestPeriodCode: string;
   requestPeriodLabel: string;
   scheduleStartDate: string;
+  attachments: SendAttachment[];
   to: string[];
   cc: string[];
   bcc: string[];
@@ -111,7 +116,16 @@ type SendDraft = {
   showOfficerForm: boolean;
 };
 
-type ViewMode = "TABLE" | "MINISTRY";
+type ViewMode = "TABLE" | "MINISTRY" | "PERIODICITY";
+
+type SendAttachment = {
+  filename: string;
+  contentType: string;
+  size: number;
+  contentBase64: string;
+};
+
+const MAX_SEND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 function textValue(value: unknown, fallback = "-") {
   if (value === undefined || value === null || value === "") return fallback;
@@ -163,6 +177,10 @@ function runRequestPeriod(run?: DispatchRun) {
   return textValue(run?.requestPeriodLabel ?? run?.requestPeriodCode ?? (run as Record<string, unknown> | undefined)?.request_period_code, "-");
 }
 
+function runRequestPeriodCode(run?: DispatchRun) {
+  return textValue(run?.requestPeriodCode ?? (run as Record<string, unknown> | undefined)?.request_period_code, "");
+}
+
 function runCode(run?: DispatchRun) {
   return textValue(run?.dispatchRunCode ?? (run as Record<string, unknown> | undefined)?.dispatch_run_code, "");
 }
@@ -187,12 +205,6 @@ function compactDispatchReference(run: DispatchRun | undefined, index: number, f
   const parsed = createdAt ? new Date(createdAt) : null;
   const year = parsed && !Number.isNaN(parsed.getTime()) ? parsed.getFullYear() : new Date().getFullYear();
   return `DIS-${year}-${String(index + 1).padStart(3, "0")}`;
-}
-
-function makeDispatchRunCode(periodLabel: string) {
-  const year = periodLabel || String(new Date().getFullYear());
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  return `DIS-${year}-${stamp}`;
 }
 
 function studioUrl(row: DispatchRow) {
@@ -271,12 +283,50 @@ function reportingHint(axes: TemplateAxis[]) {
   return textValue(axis.label ?? axis.member_set_code ?? axis.axis_code, "Template time period");
 }
 
+function usagePeriodicity(rows: PublishedTemplateUsage[]) {
+  const first = rows.find((usage) => usage.periodicity_code || usage.periodicity_name);
+  return {
+    code: textValue(first?.periodicity_code, "PERIODICITY_PENDING"),
+    name: textValue(first?.periodicity_name ?? first?.periodicity_code, "Periodicity pending"),
+  };
+}
+
 function requestPeriodOptions() {
   const year = new Date().getFullYear();
-  return [year, year - 1, year - 2, year - 3].map((item) => ({
+  return [year, year + 1, year - 1, year - 2, year - 3].map((item) => ({
     code: `CALENDAR_YEAR_${item}`,
     label: String(item),
   }));
+}
+
+function selectedPeriodOption(periodCode: string) {
+  return requestPeriodOptions().find((item) => item.code === periodCode) ?? { code: periodCode, label: periodCode.replace(/^CALENDAR_YEAR_/, "") };
+}
+
+function dispatchCycleCode(hasExistingRunForPeriod: boolean) {
+  if (!hasExistingRunForPeriod) return "INITIAL";
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
+  return `MANUAL_${timestamp}`;
+}
+
+function fileToSendAttachment(file: File): Promise<SendAttachment> {
+  if (file.size > MAX_SEND_ATTACHMENT_BYTES) {
+    return Promise.reject(new Error(`${file.name} exceeds the 20 MB attachment limit.`));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve({
+        filename: file.name,
+        contentType: file.type || "application/octet-stream",
+        size: file.size,
+        contentBase64: result.split(",", 2)[1] ?? result,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function formatDate(value?: string) {
@@ -474,9 +524,9 @@ function makePlanPayload(row: DispatchRow, unitCode: string): DispatchPlanPayloa
   };
 }
 
-function makeRunPayload(draft: SendDraft, unitCode: string): DispatchRunPayload {
+function makeRunPayload(draft: SendDraft, unitCode: string, hasExistingRunForPeriod: boolean): DispatchRunPayload {
+  const cycleCode = dispatchCycleCode(hasExistingRunForPeriod);
   return {
-    dispatch_run_code: makeDispatchRunCode(draft.requestPeriodLabel),
     unit_code: unitCode,
     request_period_code: draft.requestPeriodCode,
     request_period_label: draft.requestPeriodLabel,
@@ -493,6 +543,8 @@ function makeRunPayload(draft: SendDraft, unitCode: string): DispatchRunPayload 
       indicatorNumber: draft.row.indicatorLabel.includes(" - ") ? draft.row.indicatorLabel.split(" - ")[0] : draft.row.indicatorCode,
       indicatorName: draft.row.indicatorLabel.includes(" - ") ? draft.row.indicatorLabel.split(" - ").slice(1).join(" - ") : draft.row.indicatorLabel,
       templateVersionCode: draft.row.versionCode,
+      dispatchCycleCode: cycleCode,
+      attachments: draft.attachments,
       submissionBaseUrl: `${window.location.origin}/request-access`,
       recipientSnapshot: { to: draft.to, cc: draft.cc, bcc: draft.bcc },
     },
@@ -514,7 +566,10 @@ export function DispatchPlansPage() {
   const [ministryFilter, setMinistryFilter] = useState("ALL");
   const [dispatchFilter, setDispatchFilter] = useState("ALL");
   const [submissionFilter, setSubmissionFilter] = useState("ALL");
+  const [selectedRequestPeriodCode, setSelectedRequestPeriodCode] = useState(requestPeriodOptions()[0].code);
   const [viewMode, setViewMode] = useState<ViewMode>("MINISTRY");
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+  const [isBatchSending, setIsBatchSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -611,7 +666,7 @@ export function DispatchPlansPage() {
           const planRuns = [...(runsByPlan.get(normalize(planCode(matchingPlan))) ?? [])].sort(
             (left, right) => runCreatedAt(right).localeCompare(runCreatedAt(left)) || runCode(right).localeCompare(runCode(left)),
           );
-          const latestRun = planRuns[0];
+          const latestRun = planRuns.find((run) => normalize(runRequestPeriodCode(run)) === normalize(selectedRequestPeriodCode));
           const latestRunCode = runCode(latestRun);
           const storedPolicyCode = textValue(
             matchingPlan?.dispatchPolicyCode ?? (matchingPlan as Record<string, unknown> | undefined)?.dispatch_policy_code,
@@ -625,6 +680,8 @@ export function DispatchPlansPage() {
               .map((usage) => textValue(usage.template_measure_code ?? usage.measure_code, ""))
               .filter(Boolean),
           ]);
+          const rowUsageRows = scopedUsageRows.filter((usage) => normalize(usage.source_organization_code) === normalize(sourceCode));
+          const periodicity = usagePeriodicity(rowUsageRows.length ? rowUsageRows : scopedUsageRows);
           rows.push({
             rowKey: `${currentVersionCode}:${indicatorCode || "UNMAPPED"}:${source.code}:${index}`,
             dispatchId: latestRun ? textValue(runReferences.get(normalize(latestRunCode)), compactDispatchReference(latestRun, 0)) : "Not generated",
@@ -639,8 +696,10 @@ export function DispatchPlansPage() {
             latestRun,
             policy: effectivePolicy,
             measureCodes,
-            recipientDefaults: recipientsFromUsage(scopedUsageRows.filter((usage) => normalize(usage.source_organization_code) === normalize(sourceCode))),
-            recipients: recipientDetailsFromUsage(scopedUsageRows.filter((usage) => normalize(usage.source_organization_code) === normalize(sourceCode))),
+            recipientDefaults: recipientsFromUsage(rowUsageRows),
+            recipients: recipientDetailsFromUsage(rowUsageRows),
+            periodicityCode: periodicity.code,
+            periodicityName: periodicity.name,
             reportingStartCode: reportingStartFromAxes(item.axes),
             reportingPeriodHint: reportingHint(item.axes),
           });
@@ -653,7 +712,7 @@ export function DispatchPlansPage() {
         `${right.source.ministryName} ${right.source.departmentName} ${right.templateName}`,
       ),
     );
-  }, [defaultPolicy, plans, policyByCode, publishedTemplates, runs, sourceNames]);
+  }, [defaultPolicy, plans, policyByCode, publishedTemplates, runs, selectedRequestPeriodCode, sourceNames]);
 
   const ministries = useMemo(() => {
     const rows = new Map<string, string>();
@@ -700,6 +759,7 @@ export function DispatchPlansPage() {
           row.indicatorLabel,
           row.source.ministryName,
           row.source.departmentName,
+          row.periodicityName,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q));
@@ -710,10 +770,18 @@ export function DispatchPlansPage() {
   const groupedRows = useMemo(() => {
     const groups = new Map<string, DispatchRow[]>();
     filteredRows.forEach((row) => {
-      groups.set(row.source.ministryName, [...(groups.get(row.source.ministryName) ?? []), row]);
+      const groupName = viewMode === "PERIODICITY" ? row.periodicityName : row.source.ministryName;
+      groups.set(groupName, [...(groups.get(groupName) ?? []), row]);
     });
     return Array.from(groups.entries()).sort((left, right) => left[0].localeCompare(right[0]));
-  }, [filteredRows]);
+  }, [filteredRows, viewMode]);
+
+  const selectedRows = useMemo(
+    () => filteredRows.filter((row) => selectedRowKeys.includes(row.rowKey)),
+    [filteredRows, selectedRowKeys],
+  );
+
+  const allVisibleSelected = filteredRows.length > 0 && filteredRows.every((row) => selectedRowKeys.includes(row.rowKey));
 
   const metrics = useMemo(
     () => ({
@@ -739,6 +807,10 @@ export function DispatchPlansPage() {
     }, 3500);
     return () => window.clearTimeout(timeout);
   }, [notice, error]);
+
+  useEffect(() => {
+    setSelectedRowKeys((current) => current.filter((key) => dispatchRows.some((row) => row.rowKey === key)));
+  }, [dispatchRows]);
 
   async function loadPage() {
     setIsLoading(true);
@@ -846,8 +918,8 @@ export function DispatchPlansPage() {
     return saved;
   }
 
-  function openSend(row: DispatchRow) {
-    const period = requestPeriodOptions()[0];
+  function draftForRow(row: DispatchRow, attachments: SendAttachment[] = []): SendDraft {
+    const period = selectedPeriodOption(selectedRequestPeriodCode);
     const officers = officersBySource[normalize(row.source.code)] ?? [];
     const extraRecipients = officers
       .filter((officer) => officer.email)
@@ -855,18 +927,23 @@ export function DispatchPlansPage() {
     const recipients = [...row.recipients, ...extraRecipients].filter(
       (recipient, index, all) => all.findIndex((item) => item.email.toLowerCase() === recipient.email.toLowerCase()) === index,
     );
-    setSendDraft({
+    return {
       row,
       requestPeriodCode: period.code,
       requestPeriodLabel: period.label,
       scheduleStartDate: new Date().toISOString().slice(0, 10),
+      attachments,
       to: uniqueValues([...row.recipientDefaults.to, ...officers.map((officer) => officer.email)]),
       cc: uniqueValues(row.recipientDefaults.cc),
       bcc: uniqueValues(row.recipientDefaults.bcc),
       recipients,
       newOfficer: { displayName: "", email: "", designation: "" },
       showOfficerForm: false,
-    });
+    };
+  }
+
+  function openSend(row: DispatchRow) {
+    setSendDraft(draftForRow(row));
   }
 
   function openTemplateView(row: DispatchRow) {
@@ -919,6 +996,65 @@ export function DispatchPlansPage() {
     }
   }
 
+  async function addSendAttachments(files: FileList | null) {
+    if (!sendDraft || !files?.length) return;
+    try {
+      const selected = Array.from(files);
+      const totalSize = selected.reduce((sum, file) => sum + file.size, 0) + sendDraft.attachments.reduce((sum, file) => sum + file.size, 0);
+      if (totalSize > MAX_SEND_ATTACHMENT_BYTES) {
+        setError("Initial email attachments cannot exceed 20 MB total.");
+        return;
+      }
+      const nextAttachments = await Promise.all(selected.map(fileToSendAttachment));
+      setSendDraft({
+        ...sendDraft,
+        attachments: [...sendDraft.attachments, ...nextAttachments].filter(
+          (attachment, index, all) => all.findIndex((item) => item.filename === attachment.filename && item.size === attachment.size) === index,
+        ),
+      });
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Attachment could not be added.");
+    }
+  }
+
+  async function createDispatchBatchFromDrafts(drafts: SendDraft[], batchName: string): Promise<DispatchBatch> {
+    const items = [];
+    for (const draft of drafts) {
+      const readyPlan = await ensureReadyPlan(draft.row);
+      const readyPlanCode = planCode(readyPlan);
+      const hasExistingRunForPeriod = runs.some(
+        (run) =>
+          normalize(runPlanCode(run)) === normalize(readyPlanCode) &&
+          normalize(runRequestPeriodCode(run)) === normalize(draft.requestPeriodCode),
+      );
+      items.push({
+        dispatch_plan_code: readyPlanCode,
+        item_label: `${draft.row.source.ministryName} - ${draft.row.indicatorCode} - ${draft.requestPeriodLabel}`,
+        item_metadata: {
+          rowKey: draft.row.rowKey,
+          templateVersionCode: draft.row.versionCode,
+          indicatorCode: draft.row.indicatorCode,
+          ministryName: draft.row.source.ministryName,
+          departmentName: draft.row.source.departmentName,
+        },
+        run: makeRunPayload(draft, unitCode, hasExistingRunForPeriod),
+      });
+    }
+    return createDispatchBatch({
+      unit_code: unitCode,
+      batch_name: batchName,
+      items,
+      job_metadata: {
+        source: "TEMPLATE_DISPATCH",
+        selectedCount: drafts.length,
+        requestPeriodCode: drafts[0]?.requestPeriodCode,
+        requestPeriodLabel: drafts[0]?.requestPeriodLabel,
+      },
+      created_by_username: "ui-template-dispatch",
+    });
+  }
+
   async function sendDispatch(event: FormEvent) {
     event.preventDefault();
     if (!sendDraft) return;
@@ -928,20 +1064,65 @@ export function DispatchPlansPage() {
     }
     setError("");
     try {
-      const readyPlan = await ensureReadyPlan(sendDraft.row);
-      const saved = await createDispatchRun(planCode(readyPlan), makeRunPayload(sendDraft, unitCode));
-      setRuns((current) => [saved, ...current.filter((run) => textValue(run.dispatchRunCode) !== textValue(saved.dispatchRunCode))]);
+      const saved = await createDispatchBatchFromDrafts([sendDraft], `Template dispatch - ${sendDraft.requestPeriodLabel}`);
       setSendDraft(null);
-      const sendNotice = `Dispatch queued ${saved.queuedNotificationEvents ?? 0} email event(s).`;
+      const sendNotice = "Dispatch batch queued. Open the batch monitor to track email/send status.";
       setNotice(sendNotice);
-      const savedRunCode = runCode(saved);
-      if (savedRunCode) {
-        navigate(`/requests/dispatch-runs/${encodeURIComponent(savedRunCode)}`, {
+      const savedBatchCode = textValue(saved.batchCode);
+      if (savedBatchCode) {
+        navigate(`/requests/dispatch-batches/${encodeURIComponent(savedBatchCode)}`, {
           state: { notice: sendNotice },
         });
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Template dispatch could not be sent.");
+    }
+  }
+
+  function toggleRow(row: DispatchRow, checked: boolean) {
+    setSelectedRowKeys((current) => {
+      if (checked) return Array.from(new Set([...current, row.rowKey]));
+      return current.filter((key) => key !== row.rowKey);
+    });
+  }
+
+  function toggleRows(rows: DispatchRow[], checked: boolean) {
+    const keys = rows.map((row) => row.rowKey);
+    setSelectedRowKeys((current) => {
+      if (checked) return Array.from(new Set([...current, ...keys]));
+      return current.filter((key) => !keys.includes(key));
+    });
+  }
+
+  async function sendSelectedDispatches() {
+    if (selectedRows.length === 0 || isBatchSending) return;
+    if (selectedRows.length === 1) {
+      openSend(selectedRows[0]);
+      return;
+    }
+    setIsBatchSending(true);
+    setError("");
+    try {
+      const drafts = selectedRows.map((row) => draftForRow(row));
+      const missingRecipients = drafts.filter((draft) => draft.to.length === 0);
+      if (missingRecipients.length > 0) {
+        setError(`${missingRecipients.length} selected dispatch(es) do not have TO recipients. Open them individually and add officers.`);
+        return;
+      }
+      const saved = await createDispatchBatchFromDrafts(drafts, `Template dispatch batch - ${drafts[0]?.requestPeriodLabel || "selected period"}`);
+      setSelectedRowKeys([]);
+      const noticeText = `Batch queued for ${drafts.length} selected dispatch item(s).`;
+      setNotice(noticeText);
+      const savedBatchCode = textValue(saved.batchCode);
+      if (savedBatchCode) {
+        navigate(`/requests/dispatch-batches/${encodeURIComponent(savedBatchCode)}`, {
+          state: { notice: noticeText },
+        });
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Selected dispatches could not be sent.");
+    } finally {
+      setIsBatchSending(false);
     }
   }
 
@@ -955,6 +1136,9 @@ export function DispatchPlansPage() {
       <div className="template-dispatch-title-row">
         <h1>Template Dispatch</h1>
         <div className="template-dispatch-title-actions">
+          <button className="secondary-button compact" type="button" onClick={() => navigate("/requests/dispatch-batches")}>
+            <Layers size={14} /> Batches
+          </button>
           <button className="secondary-button compact" type="button">
             <Download size={14} /> Export
           </button>
@@ -986,6 +1170,11 @@ export function DispatchPlansPage() {
           <option value="ALL">Ministry</option>
           {ministries.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
         </select>
+        <select value={selectedRequestPeriodCode} onChange={(event) => setSelectedRequestPeriodCode(event.target.value)}>
+          {requestPeriodOptions().map((period) => (
+            <option value={period.code} key={period.code}>Period {period.label}</option>
+          ))}
+        </select>
         <select value={dispatchFilter} onChange={(event) => setDispatchFilter(event.target.value)}>
           <option value="ALL">Dispatch Status</option>
           <option value="READY">Ready</option>
@@ -1005,11 +1194,28 @@ export function DispatchPlansPage() {
       <div className="template-dispatch-viewbar">
         <span>{summaryText}</span>
         <div>
+          {selectedRows.length > 0 ? (
+            <span className="template-dispatch-selection-summary">
+              {selectedRows.length} selected
+              <button type="button" onClick={() => setSelectedRowKeys([])}>Clear</button>
+            </span>
+          ) : null}
+          <button
+            className="template-dispatch-send-selected"
+            type="button"
+            disabled={selectedRows.length === 0 || isBatchSending}
+            onClick={() => void sendSelectedDispatches()}
+          >
+            <Send size={14} /> {isBatchSending ? "Sending..." : selectedRows.length > 1 ? "Send Selected" : "Send"}
+          </button>
           <button className={viewMode === "TABLE" ? "active" : ""} type="button" onClick={() => setViewMode("TABLE")}>
             <Table2 size={14} /> Table View
           </button>
           <button className={viewMode === "MINISTRY" ? "active" : ""} type="button" onClick={() => setViewMode("MINISTRY")}>
             <Layers size={14} /> By Ministry
+          </button>
+          <button className={viewMode === "PERIODICITY" ? "active" : ""} type="button" onClick={() => setViewMode("PERIODICITY")}>
+            <RefreshCw size={14} /> By Periodicity
           </button>
         </div>
       </div>
@@ -1022,11 +1228,20 @@ export function DispatchPlansPage() {
           <table className="template-dispatch-grid-table">
             <thead>
               <tr>
+                <th className="template-dispatch-select-col">
+                  <input
+                    aria-label="Select all visible dispatches"
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={(event) => toggleRows(filteredRows, event.target.checked)}
+                  />
+                </th>
                 <th>Dispatch Info</th>
                 <th>Template</th>
                 <th>Indicator</th>
                 <th>Ministry</th>
                 <th>Department</th>
+                <th>Periodicity</th>
                 <th>Due Date</th>
                 <th>Dispatch Status</th>
                 <th>Submission Status</th>
@@ -1036,6 +1251,14 @@ export function DispatchPlansPage() {
             <tbody>
               {filteredRows.map((row) => (
                 <tr key={row.rowKey}>
+                  <td className="template-dispatch-select-col">
+                    <input
+                      aria-label={`Select ${row.templateCode} ${row.indicatorCode}`}
+                      type="checkbox"
+                      checked={selectedRowKeys.includes(row.rowKey)}
+                      onChange={(event) => toggleRow(row, event.target.checked)}
+                    />
+                  </td>
                   <td>
                     <strong>{row.dispatchId}</strong>
                     <small>{row.latestRun ? `Sent: ${runRequestPeriod(row.latestRun)}` : "Ready to send"}</small>
@@ -1051,6 +1274,10 @@ export function DispatchPlansPage() {
                   </td>
                   <td>{row.source.ministryName}</td>
                   <td>{row.source.departmentName}</td>
+                  <td>
+                    <strong>{row.periodicityName}</strong>
+                    <small>{row.periodicityCode}</small>
+                  </td>
                   <td>{runDueDate(row.latestRun) ? formatDate(runDueDate(row.latestRun)) : `Generated on send (+${dueDays(row.policy)} days)`}</td>
                   <td><span className={`template-dispatch-badge ${normalize(dispatchStatus(row)).toLowerCase()}`}>{statusLabel(dispatchStatus(row))}</span></td>
                   <td><span className={`template-dispatch-badge ${normalize(submissionStatus(row)).toLowerCase()}`}>{statusLabel(submissionStatus(row))}</span></td>
@@ -1060,7 +1287,12 @@ export function DispatchPlansPage() {
                         <FileSpreadsheet size={12} />
                       </button>
                       {row.latestRun ? (
-                        <button className="secondary-button compact" type="button" onClick={() => openDispatchRun(row)}>View</button>
+                        <>
+                          <button className="secondary-button compact" type="button" onClick={() => openDispatchRun(row)}>View</button>
+                          <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
+                            <Send size={12} /> Send Again
+                          </button>
+                        </>
                       ) : (
                         <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
                           <Send size={12} /> Send
@@ -1079,13 +1311,27 @@ export function DispatchPlansPage() {
         <div className="template-dispatch-ministry-list">
           {groupedRows.map(([ministryName, rows]) => {
             const isOpen = expandedSources[ministryName] ?? true;
+            const groupSelected = rows.every((row) => selectedRowKeys.includes(row.rowKey));
+            const groupSomeSelected = rows.some((row) => selectedRowKeys.includes(row.rowKey));
             return (
               <section className="template-dispatch-ministry-card" key={ministryName}>
-                <button
-                  className="template-dispatch-ministry-header"
-                  type="button"
-                  onClick={() => setExpandedSources((current) => ({ ...current, [ministryName]: !isOpen }))}
-                >
+                <div className="template-dispatch-ministry-header">
+                  <label className="template-dispatch-group-select" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      aria-label={`Select ${ministryName}`}
+                      type="checkbox"
+                      checked={groupSelected}
+                      ref={(input) => {
+                        if (input) input.indeterminate = !groupSelected && groupSomeSelected;
+                      }}
+                      onChange={(event) => toggleRows(rows, event.target.checked)}
+                    />
+                  </label>
+                  <button
+                    className="template-dispatch-ministry-toggle"
+                    type="button"
+                    onClick={() => setExpandedSources((current) => ({ ...current, [ministryName]: !isOpen }))}
+                  >
                   <span>
                     <strong>{ministryName}</strong>
                     <small>
@@ -1096,11 +1342,137 @@ export function DispatchPlansPage() {
                     </small>
                   </span>
                   <ChevronDown size={16} className={isOpen ? "open" : ""} />
-                </button>
+                  </button>
+                </div>
                 {isOpen ? (
                   <div className="template-dispatch-ministry-rows">
                     {rows.map((row) => (
                       <article className="template-dispatch-group-row" key={row.rowKey}>
+                        <label className="template-dispatch-row-select">
+                          <input
+                            aria-label={`Select ${row.templateCode} ${row.indicatorCode}`}
+                            type="checkbox"
+                            checked={selectedRowKeys.includes(row.rowKey)}
+                            onChange={(event) => toggleRow(row, event.target.checked)}
+                          />
+                        </label>
+                        <div>
+                          <span>Dispatch Info</span>
+                          <strong>{row.dispatchId}</strong>
+                          <small>{row.latestRun ? `Sent: ${runRequestPeriod(row.latestRun)}` : "Ready to send"}</small>
+                        </div>
+                        <div>
+                          <span>Template</span>
+                          <strong>{row.templateCode}</strong>
+                          <small>{row.templateName}</small>
+                          <small>{row.versionCode}</small>
+                        </div>
+                        <div>
+                          <span>Indicator</span>
+                          <strong className="template-dispatch-indicator">{row.indicatorCode || "-"}</strong>
+                          <small>{row.indicatorLabel}</small>
+                        </div>
+                        <div>
+                          <span>Ministry</span>
+                          <strong>{row.source.ministryName}</strong>
+                        </div>
+                        <div>
+                          <span>Department</span>
+                          <strong>{row.source.departmentName}</strong>
+                        </div>
+                        <div>
+                          <span>Periodicity</span>
+                          <strong>{row.periodicityName}</strong>
+                          <small>{row.periodicityCode}</small>
+                        </div>
+                        <div>
+                          <span>Due Date</span>
+                          <strong>{runDueDate(row.latestRun) ? formatDate(runDueDate(row.latestRun)) : `Generated on send (+${dueDays(row.policy)} days)`}</strong>
+                        </div>
+                        <div>
+                          <span>Dispatch</span>
+                          <em className={`template-dispatch-badge ${normalize(dispatchStatus(row)).toLowerCase()}`}>{statusLabel(dispatchStatus(row))}</em>
+                        </div>
+                        <div>
+                          <span>Submission</span>
+                          <em className={`template-dispatch-badge ${normalize(submissionStatus(row)).toLowerCase()}`}>{statusLabel(submissionStatus(row))}</em>
+                        </div>
+                        <div className="template-dispatch-actions">
+                          <button className="secondary-button compact icon-only" type="button" title="View template" onClick={() => openTemplateView(row)}>
+                            <FileSpreadsheet size={12} />
+                          </button>
+                          {row.latestRun ? (
+                            <>
+                              <button className="secondary-button compact" type="button" onClick={() => openDispatchRun(row)}>View</button>
+                              <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
+                                <Send size={12} /> Send Again
+                              </button>
+                            </>
+                          ) : (
+                            <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
+                              <Send size={12} /> Send
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {!isLoading && filteredRows.length > 0 && viewMode === "PERIODICITY" ? (
+        <div className="template-dispatch-ministry-list template-dispatch-periodicity-list">
+          {groupedRows.map(([periodicityName, rows]) => {
+            const isOpen = expandedSources[periodicityName] ?? true;
+            const groupSelected = rows.every((row) => selectedRowKeys.includes(row.rowKey));
+            const groupSomeSelected = rows.some((row) => selectedRowKeys.includes(row.rowKey));
+            return (
+              <section className="template-dispatch-ministry-card periodicity" key={periodicityName}>
+                <div className="template-dispatch-ministry-header">
+                  <label className="template-dispatch-group-select" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      aria-label={`Select ${periodicityName}`}
+                      type="checkbox"
+                      checked={groupSelected}
+                      ref={(input) => {
+                        if (input) input.indeterminate = !groupSelected && groupSomeSelected;
+                      }}
+                      onChange={(event) => toggleRows(rows, event.target.checked)}
+                    />
+                  </label>
+                  <button
+                    className="template-dispatch-ministry-toggle"
+                    type="button"
+                    onClick={() => setExpandedSources((current) => ({ ...current, [periodicityName]: !isOpen }))}
+                  >
+                    <span>
+                      <strong>{periodicityName}</strong>
+                      <small>
+                        {rows.length} Dispatches&nbsp;&nbsp;
+                        {rows.filter((row) => dispatchStatus(row) === "SENT").length} Sent&nbsp;&nbsp;
+                        {rows.filter((row) => dispatchStatus(row) === "READY").length} Ready&nbsp;&nbsp;
+                        {rows.filter((row) => submissionStatus(row) === "SUBMITTED").length} Submitted
+                      </small>
+                    </span>
+                    <ChevronDown size={16} className={isOpen ? "open" : ""} />
+                  </button>
+                </div>
+                {isOpen ? (
+                  <div className="template-dispatch-ministry-rows">
+                    {rows.map((row) => (
+                      <article className="template-dispatch-group-row" key={row.rowKey}>
+                        <label className="template-dispatch-row-select">
+                          <input
+                            aria-label={`Select ${row.templateCode} ${row.indicatorCode}`}
+                            type="checkbox"
+                            checked={selectedRowKeys.includes(row.rowKey)}
+                            onChange={(event) => toggleRow(row, event.target.checked)}
+                          />
+                        </label>
                         <div>
                           <span>Dispatch Info</span>
                           <strong>{row.dispatchId}</strong>
@@ -1142,7 +1514,12 @@ export function DispatchPlansPage() {
                             <FileSpreadsheet size={12} />
                           </button>
                           {row.latestRun ? (
-                            <button className="secondary-button compact" type="button" onClick={() => openDispatchRun(row)}>View</button>
+                            <>
+                              <button className="secondary-button compact" type="button" onClick={() => openDispatchRun(row)}>View</button>
+                              <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
+                                <Send size={12} /> Send Again
+                              </button>
+                            </>
                           ) : (
                             <button className="primary-button compact" type="button" onClick={() => openSend(row)}>
                               <Send size={12} /> Send
@@ -1187,7 +1564,7 @@ export function DispatchPlansPage() {
                 <h4>Request Period</h4>
                 <div className="template-dispatch-inline-fields">
                   <label>
-                    Period
+                    Preset period
                     <select
                       value={sendDraft.requestPeriodCode}
                       onChange={(event) => {
@@ -1205,6 +1582,21 @@ export function DispatchPlansPage() {
                     </select>
                   </label>
                   <label>
+                    Requesting/reporting period
+                    <input
+                      value={sendDraft.requestPeriodLabel}
+                      onChange={(event) => {
+                        const label = event.target.value;
+                        setSendDraft({
+                          ...sendDraft,
+                          requestPeriodLabel: label,
+                          requestPeriodCode: label.trim() ? `CALENDAR_YEAR_${label.trim().replace(/[^A-Za-z0-9]+/g, "_")}` : sendDraft.requestPeriodCode,
+                        });
+                      }}
+                      placeholder="Example: 2026 or Q1 2026"
+                    />
+                  </label>
+                  <label>
                     Send date
                     <input
                       type="date"
@@ -1214,6 +1606,43 @@ export function DispatchPlansPage() {
                   </label>
                 </div>
                 <p className="field-help">Due date is generated by backend from the active dispatch policy.</p>
+              </section>
+
+              <section className="template-dispatch-form-section">
+                <div className="template-dispatch-section-title">
+                  <h4>Initial Email Attachments</h4>
+                  <small>Maximum 20 MB total</small>
+                </div>
+                <label className="template-dispatch-attachment-picker">
+                  <Paperclip size={14} />
+                  <span>Add attachments</span>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={(event) => {
+                      void addSendAttachments(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+                {sendDraft.attachments.length ? (
+                  <div className="template-dispatch-attachments">
+                    {sendDraft.attachments.map((attachment) => (
+                      <span key={`${attachment.filename}-${attachment.size}`}>
+                        {attachment.filename}
+                        <button
+                          type="button"
+                          onClick={() => setSendDraft({
+                            ...sendDraft,
+                            attachments: sendDraft.attachments.filter((item) => item !== attachment),
+                          })}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </section>
 
               <section className="template-dispatch-form-section">

@@ -203,6 +203,9 @@ export function AppShell() {
   function handleUnitChange(unitCode: string) {
     setSelectedUnitCode(unitCode);
     setSelectedUnitCodeState(unitCode);
+    if (location.pathname !== "/framework") {
+      navigate("/framework", { replace: false });
+    }
   }
 
   function handleLocaleChange(locale: string) {

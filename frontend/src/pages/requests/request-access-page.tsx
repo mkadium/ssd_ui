@@ -1,4 +1,4 @@
-import { CheckCircle2, Edit3, KeyRound, RefreshCw, Send } from "lucide-react";
+import { CheckCircle2, Download, Edit3, KeyRound, Paperclip, RefreshCw, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -38,6 +38,48 @@ function statusLabel(value: unknown) {
   return labels[status] ?? status.replace(/_/g, " ").toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
 }
 
+function text(value: unknown, fallback = "") {
+  if (value === undefined || value === null || value === "") return fallback;
+  return String(value);
+}
+
+function asArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+}
+
+function attachmentName(attachment: Record<string, unknown>, fallback = "attachment") {
+  return text(attachment.filename ?? attachment.name, fallback);
+}
+
+function attachmentContent(attachment: Record<string, unknown>) {
+  return text(attachment.contentBase64 ?? attachment.content_base64, "");
+}
+
+function attachmentSizeLabel(attachment: Record<string, unknown>) {
+  const size = Number(attachment.size ?? 0);
+  return size > 0 ? `${Math.ceil(size / 1024)} KB` : "";
+}
+
+function downloadBase64Attachment(attachment: Record<string, unknown>) {
+  const content = attachmentContent(attachment);
+  if (!content) return;
+  const contentType = text(attachment.contentType ?? attachment.content_type, "application/octet-stream");
+  const binary = atob(content.split(",", 2).pop() || content);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const blob = new Blob([bytes], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = attachmentName(attachment);
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function RequestAccessPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -51,6 +93,7 @@ export function RequestAccessPage() {
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [otpResendAt, setOtpResendAt] = useState<number>(0);
+  const [openAttachmentAssignment, setOpenAttachmentAssignment] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -246,7 +289,7 @@ export function RequestAccessPage() {
                 </button>
               </section>
             ) : (
-              <section className="request-access-card">
+              <section className="request-access-card request-access-assigned-card">
                 <h2><CheckCircle2 size={16} /> Assigned Templates</h2>
                 <div className="request-access-table-wrap">
                   <table className="request-access-table">
@@ -258,6 +301,7 @@ export function RequestAccessPage() {
                         <th>Department</th>
                         <th>Status</th>
                         <th>Version</th>
+                        <th>Attachments</th>
                         <th>Action</th>
                       </tr>
                     </thead>
@@ -270,6 +314,52 @@ export function RequestAccessPage() {
                           <td>{assignment.department || "-"}</td>
                           <td>{statusLabel(assignment.status)}</td>
                           <td>{assignment.latestSubmissionVersion ? `v${assignment.latestSubmissionVersion}` : "-"}</td>
+                          <td className="request-access-attachment-cell">
+                            {asArray(assignment.requestAttachments).length ? (
+                              <>
+                                <button
+                                  className="secondary-button compact icon-only"
+                                  type="button"
+                                  title="View request attachments"
+                                  onClick={() => setOpenAttachmentAssignment((current) => current === (assignment.runItemCode ?? String(index)) ? "" : (assignment.runItemCode ?? String(index)))}
+                                >
+                                  <Paperclip size={13} />
+                                  <span>{asArray(assignment.requestAttachments).length}</span>
+                                </button>
+                                {openAttachmentAssignment === (assignment.runItemCode ?? String(index)) ? (
+                                  <div className="request-access-attachment-popover">
+                                    <div>
+                                      <strong>Request Attachments</strong>
+                                      <button type="button" title="Close" onClick={() => setOpenAttachmentAssignment("")}>
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                    <button
+                                      className="secondary-button compact"
+                                      type="button"
+                                      onClick={() => asArray(assignment.requestAttachments).forEach(downloadBase64Attachment)}
+                                    >
+                                      <Download size={12} /> Download all
+                                    </button>
+                                    <ul>
+                                      {asArray(assignment.requestAttachments).map((attachment, attachmentIndex) => (
+                                        <li key={`${attachmentName(attachment)}-${attachmentIndex}`}>
+                                          <span>
+                                            <Paperclip size={12} />
+                                            {attachmentName(attachment)}
+                                            <small>{attachmentSizeLabel(attachment)}</small>
+                                          </span>
+                                          <button type="button" disabled={!attachmentContent(attachment)} onClick={() => downloadBase64Attachment(attachment)}>
+                                            <Download size={12} />
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : null}
+                              </>
+                            ) : "-"}
+                          </td>
                           <td>
                             <button
                               className="secondary-button compact"
